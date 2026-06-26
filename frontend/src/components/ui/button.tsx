@@ -4,19 +4,20 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const variants = cva(
-  'inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-sm px-5 text-sm font-medium leading-none text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:pointer-events-none disabled:bg-primary-disabled disabled:text-muted-foreground disabled:opacity-100 [&_svg]:pointer-events-none [&_svg:not([class*=size-])]:size-4',
   {
     variants: {
       variant: {
-        default: 'bg-zinc-900 text-white hover:bg-zinc-800 focus-visible:outline-zinc-900',
-        outline: 'border border-zinc-300 bg-white text-zinc-900 hover:bg-zinc-100',
-        ghost: 'text-zinc-700 hover:bg-zinc-100',
-        danger: 'bg-red-600 text-white hover:bg-red-700 focus-visible:outline-red-600',
+        default: 'bg-primary text-primary-foreground hover:bg-primary-active',
+        outline: 'border border-border bg-background text-foreground hover:bg-card',
+        ghost: 'text-muted-foreground hover:bg-card hover:text-foreground',
+        secondary: 'border border-border bg-background text-foreground hover:bg-card',
+        danger: 'bg-destructive text-primary-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20',
       },
       size: {
-        default: 'h-9 px-3',
-        sm: 'h-8 px-2 text-xs',
-        icon: 'size-9 px-0',
+        default: 'h-10 px-5',
+        sm: 'h-9 gap-1.5 px-3 text-sm',
+        icon: 'size-9 rounded-full px-0',
       },
     },
     defaultVariants: { variant: 'default', size: 'default' },

@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"ai-upstream-monitor/internal/monitor"
 
 	_ "modernc.org/sqlite"
 )
@@ -26,6 +29,36 @@ func TestMigrateIsRepeatable(t *testing.T) {
 	s := testStore(t)
 	if err := s.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestProbesForCardSinceNormalizesTimeZone(t *testing.T) {
+	s := testStore(t)
+	if _, err := s.SaveProbe(t.Context(), "u1", "c1", monitor.ProbeResult{Success: true}); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().In(time.FixedZone("CST", 8*60*60)).Add(-time.Minute)
+	rows, err := s.ProbesForCardSince(t.Context(), "c1", since, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+}
+
+func TestProbesForCardSinceReadsLegacyTimestampFormat(t *testing.T) {
+	s := testStore(t)
+	if _, err := s.exec(t.Context(), `INSERT INTO probe_runs (id, upstream_id, card_id, checked_at, model, input, http_status, latency_ms, success, error)
+		VALUES ('p1', 'u1', 'c1', ?, 'gpt-5.5', 'ping', 200, 12, 1, '')`, time.Now().UTC().Add(-time.Minute).Format("2006-01-02 15:04:05.000Z")); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ProbesForCardSince(t.Context(), "c1", time.Now().Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
 	}
 }
 
@@ -56,5 +89,62 @@ func TestPocketBaseMigrationIsIdempotent(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Name != "上游" {
 		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestPocketBaseMigrationCopiesLegacyColumnsFast(t *testing.T) {
+	ctx := context.Background()
+	oldPath := filepath.Join(t.TempDir(), "data.db")
+	old, err := sql.Open("sqlite", oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = old.ExecContext(ctx, `CREATE TABLE upstreams (id TEXT PRIMARY KEY, name TEXT, type TEXT, base_url TEXT, enabled INTEGER);
+		CREATE TABLE upstream_keys (id TEXT PRIMARY KEY, upstream TEXT, remote_id TEXT, name TEXT, "group" TEXT);
+		CREATE TABLE model_cards (id TEXT PRIMARY KEY, upstream TEXT, key TEXT, name TEXT, model TEXT, enabled INTEGER);
+		INSERT INTO upstreams VALUES ('u1', '上游', 'newapi', 'https://example.test', 1);
+		INSERT INTO upstream_keys VALUES ('k1', 'u1', 'r1', 'key', '分组');
+		INSERT INTO model_cards VALUES ('c1', 'u1', 'k1', '卡片', 'gpt-5.5', 1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = old.Close()
+
+	s := testStore(t)
+	if err := s.MigratePocketBase(ctx, oldPath); err != nil {
+		t.Fatal(err)
+	}
+	var group string
+	if err := s.row(ctx, `SELECT group_name FROM api_keys WHERE id='k1'`).Scan(&group); err != nil {
+		t.Fatal(err)
+	}
+	if group != "分组" {
+		t.Fatalf("group = %q", group)
+	}
+}
+
+func TestExportImportData(t *testing.T) {
+	ctx := context.Background()
+	src := testStore(t)
+	if _, err := src.exec(ctx, `INSERT INTO upstreams (id, name, type, base_url, enabled, created_at, updated_at) VALUES ('u1', '上游', 'newapi', 'https://example.test', 1, ?, ?)`, nowText(), nowText()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.exec(ctx, `INSERT INTO api_keys (id, upstream_id, remote_id, name, created_at, updated_at) VALUES ('k1', 'u1', 'r1', 'key', ?, ?)`, nowText(), nowText()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := src.ExportData(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := testStore(t)
+	if err := dst.ImportData(ctx, data); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := dst.row(ctx, `SELECT COUNT(*) FROM api_keys WHERE id='k1' AND upstream_id='u1'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("imported keys = %d", n)
 	}
 }

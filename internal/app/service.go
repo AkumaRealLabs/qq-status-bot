@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -175,6 +177,47 @@ func (s *Service) CheckAll(ctx context.Context) error {
 	return nil
 }
 
+func (s *Service) RefreshBalances(ctx context.Context) error {
+	upstreams, err := s.Store.ListUpstreams(ctx)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 3)
+	for _, u := range upstreams {
+		if !u.Enabled {
+			continue
+		}
+		upstreamID := u.ID
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = ctx.Err()
+				}
+				mu.Unlock()
+				return
+			}
+			if err := s.CheckUpstream(ctx, upstreamID); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	return firstErr
+}
+
 func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
 	u, err := s.Store.Upstream(ctx, upstreamID)
 	if err != nil {
@@ -246,11 +289,11 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 		return err
 	}
 	if card.KeyID == "" {
-		run, err := s.Store.SaveProbe(ctx, u.ID, card.ID, monitor.ProbeResult{Success: false, Error: "未选择 Key"})
-		if err == nil {
-			_ = run
+		msg := "未选择 Key"
+		if _, err := s.Store.SaveProbe(ctx, u.ID, card.ID, monitor.ProbeResult{Success: false, Error: msg}); err != nil {
+			return err
 		}
-		return err
+		return s.Store.UpdateCardProbeState(ctx, card.ID, msg, card.FailureCount+1)
 	}
 	key, err := s.Store.Key(ctx, card.KeyID)
 	if err != nil {
@@ -319,6 +362,7 @@ func (s *Service) enrichedCards(ctx context.Context, since time.Time) ([]domain.
 				cards[i].KeyName = k.Name
 				cards[i].KeyGroup = k.Group
 				cards[i].KeyRatio = k.GroupRatio
+				cards[i].EffectiveRatio = effectiveRatio(k.GroupRatio, domain.BalanceRate(u))
 			}
 		}
 		history, err := s.Store.ProbesForCardSince(ctx, cards[i].ID, since, 60)
@@ -329,6 +373,15 @@ func (s *Service) enrichedCards(ctx context.Context, since time.Time) ([]domain.
 		cards[i].History = history
 	}
 	return cards, nil
+}
+
+func effectiveRatio(groupRatio string, balanceRate float64) string {
+	ratio, err := strconv.ParseFloat(strings.TrimSpace(groupRatio), 64)
+	if err != nil {
+		return groupRatio
+	}
+	out := fmt.Sprintf("%.6f", ratio*balanceRate)
+	return strings.TrimRight(strings.TrimRight(out, "0"), ".")
 }
 
 func (s *Service) BalanceRows(ctx context.Context) ([]map[string]any, error) {
@@ -362,7 +415,10 @@ func (s *Service) UpstreamRows(ctx context.Context) ([]map[string]any, error) {
 	}
 	out := make([]map[string]any, 0, len(upstreams))
 	for _, u := range upstreams {
-		keys, _ := s.Store.ListKeys(ctx, u.ID)
+		keys, err := s.Store.ListKeys(ctx, u.ID)
+		if err != nil {
+			return nil, err
+		}
 		row := map[string]any{"upstream": u, "keys": keys}
 		if b, err := s.Store.LatestBalance(ctx, u.ID); err == nil {
 			row["balance"] = b
@@ -428,7 +484,7 @@ func windowSince(window string) (time.Time, string) {
 	if _, ok := windows[window]; !ok {
 		window = "1h"
 	}
-	return time.Now().Add(-windows[window]), window
+	return time.Now().UTC().Add(-windows[window]), window
 }
 
 func percent(part, total int) float64 {

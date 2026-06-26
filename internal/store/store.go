@@ -26,6 +26,23 @@ type Store struct {
 	Driver string
 }
 
+type ExportData struct {
+	Version string              `json:"version"`
+	Tables  map[string][]RowMap `json:"tables"`
+}
+
+type RowMap map[string]any
+
+var exportTables = []string{
+	"settings",
+	"upstreams",
+	"api_keys",
+	"model_cards",
+	"balance_snapshots",
+	"probe_runs",
+	"alert_events",
+}
+
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	if dsn == "" {
 		dsn = "/app/data/monitor.sqlite"
@@ -44,7 +61,11 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	}
 	s := &Store{DB: db, Driver: driver}
 	if driver == "sqlite" {
+		db.SetMaxOpenConns(1)
 		if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
+			return nil, err
+		}
+		if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=10000"); err != nil {
 			return nil, err
 		}
 	}
@@ -69,7 +90,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS settings (
 			id TEXT PRIMARY KEY, check_interval_minutes INTEGER NOT NULL, telegram_bot_token TEXT NOT NULL DEFAULT '',
-			telegram_chat_id TEXT NOT NULL DEFAULT '', probe_model TEXT NOT NULL DEFAULT 'gpt-5.5'
+			telegram_chat_id TEXT NOT NULL DEFAULT '', probe_model TEXT NOT NULL DEFAULT 'gpt-5.5',
+			site_name TEXT NOT NULL DEFAULT 'AI 上游监控', site_icon TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS upstreams (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, base_url TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
@@ -115,8 +137,46 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.addColumnIfMissing(ctx, "settings", "site_name", "TEXT NOT NULL DEFAULT 'AI 上游监控'"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "settings", "site_icon", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	_, err := s.exec(ctx, `INSERT INTO settings (id, check_interval_minutes, probe_model) VALUES ('default', 5, ?) ON CONFLICT(id) DO NOTHING`, domain.ProbeModel)
 	return err
+}
+
+func (s *Store) addColumnIfMissing(ctx context.Context, table, column, def string) error {
+	cols, err := s.columns(ctx, table)
+	if err != nil {
+		return err
+	}
+	if cols[column] {
+		return nil
+	}
+	_, err = s.DB.ExecContext(ctx, `ALTER TABLE `+quoteIdent(table)+` ADD COLUMN `+quoteIdent(column)+` `+def)
+	return err
+}
+
+func (s *Store) columns(ctx context.Context, table string) (map[string]bool, error) {
+	if s.Driver != "postgres" {
+		return tableColumns(ctx, s.DB, table)
+	}
+	rows, err := s.query(ctx, `SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=?`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = true
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) exec(ctx context.Context, q string, args ...any) (sql.Result, error) {
@@ -241,21 +301,27 @@ func (s *Store) CleanupSessions(ctx context.Context) error {
 
 func (s *Store) Settings(ctx context.Context) (domain.Settings, error) {
 	var cfg domain.Settings
-	err := s.row(ctx, `SELECT check_interval_minutes, telegram_bot_token, telegram_chat_id, probe_model FROM settings WHERE id='default'`).
-		Scan(&cfg.CheckIntervalMinutes, &cfg.TelegramBotToken, &cfg.TelegramChatID, &cfg.ProbeModel)
+	err := s.row(ctx, `SELECT check_interval_minutes, telegram_bot_token, telegram_chat_id, probe_model, site_name, site_icon FROM settings WHERE id='default'`).
+		Scan(&cfg.CheckIntervalMinutes, &cfg.TelegramBotToken, &cfg.TelegramChatID, &cfg.ProbeModel, &cfg.SiteName, &cfg.SiteIcon)
 	if err != nil {
 		return cfg, err
 	}
 	cfg.CheckIntervalMinutes = domain.NormalizeCheckInterval(cfg.CheckIntervalMinutes)
 	cfg.ProbeModel = domain.ProbeModel
+	if cfg.SiteName == "" {
+		cfg.SiteName = "AI 上游监控"
+	}
 	return cfg, nil
 }
 
 func (s *Store) UpdateSettings(ctx context.Context, cfg domain.Settings) (domain.Settings, error) {
 	cfg.CheckIntervalMinutes = domain.NormalizeCheckInterval(cfg.CheckIntervalMinutes)
 	cfg.ProbeModel = domain.ProbeModel
-	_, err := s.exec(ctx, `UPDATE settings SET check_interval_minutes=?, telegram_bot_token=?, telegram_chat_id=?, probe_model=? WHERE id='default'`,
-		cfg.CheckIntervalMinutes, cfg.TelegramBotToken, cfg.TelegramChatID, cfg.ProbeModel)
+	if cfg.SiteName == "" {
+		cfg.SiteName = "AI 上游监控"
+	}
+	_, err := s.exec(ctx, `UPDATE settings SET check_interval_minutes=?, telegram_bot_token=?, telegram_chat_id=?, probe_model=?, site_name=?, site_icon=? WHERE id='default'`,
+		cfg.CheckIntervalMinutes, cfg.TelegramBotToken, cfg.TelegramChatID, cfg.ProbeModel, cfg.SiteName, cfg.SiteIcon)
 	return cfg, err
 }
 
@@ -404,7 +470,7 @@ func (s *Store) ListKeys(ctx context.Context, upstreamID string) ([]domain.APIKe
 		return nil, err
 	}
 	defer rows.Close()
-	var out []domain.APIKey
+	out := []domain.APIKey{}
 	for rows.Next() {
 		k, err := scanKeyRows(rows)
 		if err != nil {
@@ -543,8 +609,12 @@ func (s *Store) UpdateCardProbeState(ctx context.Context, id, lastError string, 
 }
 
 func (s *Store) ProbesForCardSince(ctx context.Context, cardID string, since time.Time, limit int) ([]domain.ProbeRun, error) {
+	timeFilter := "checked_at>=?"
+	if s.Driver == "sqlite" {
+		timeFilter = "unixepoch(checked_at)>=unixepoch(?)"
+	}
 	rows, err := s.query(ctx, `SELECT id, upstream_id, card_id, checked_at, model, input, http_status, latency_ms, success, error
-		FROM probe_runs WHERE card_id=? AND checked_at>=? ORDER BY checked_at DESC LIMIT ?`, cardID, since.Format(time.RFC3339Nano), limit)
+		FROM probe_runs WHERE card_id=? AND `+timeFilter+` ORDER BY checked_at DESC LIMIT ?`, cardID, since.UTC().Format(time.RFC3339Nano), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -603,6 +673,120 @@ func (s *Store) MarkMigration(ctx context.Context, source string) error {
 	return err
 }
 
+func (s *Store) ExportData(ctx context.Context) (ExportData, error) {
+	out := ExportData{Version: "1", Tables: map[string][]RowMap{}}
+	for _, table := range exportTables {
+		rows, err := s.query(ctx, `SELECT * FROM `+quoteIdent(table))
+		if err != nil {
+			return out, err
+		}
+		cols, err := rows.Columns()
+		if err != nil {
+			rows.Close()
+			return out, err
+		}
+		for rows.Next() {
+			vals := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				rows.Close()
+				return out, err
+			}
+			row := RowMap{}
+			for i, col := range cols {
+				if b, ok := vals[i].([]byte); ok {
+					row[col] = string(b)
+				} else {
+					row[col] = vals[i]
+				}
+			}
+			out.Tables[table] = append(out.Tables[table], row)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return out, err
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
+func (s *Store) ImportData(ctx context.Context, in ExportData) error {
+	if in.Version != "1" {
+		return errors.New("unsupported export version")
+	}
+	if len(in.Tables) == 0 {
+		return errors.New("empty import data")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	done := false
+	defer func() {
+		if !done {
+			_ = tx.Rollback()
+		}
+	}()
+	for i := len(exportTables) - 1; i >= 0; i-- {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+quoteIdent(exportTables[i])); err != nil {
+			return err
+		}
+	}
+	for _, table := range exportTables {
+		cols, err := queryColumns(ctx, tx, table)
+		if err != nil {
+			return err
+		}
+		for _, row := range in.Tables[table] {
+			var names []string
+			var vals []any
+			for name, val := range row {
+				if cols[name] {
+					names = append(names, name)
+					vals = append(vals, val)
+				}
+			}
+			if len(names) == 0 {
+				continue
+			}
+			q := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s)`,
+				quoteIdent(table), quoteIdents(names), strings.TrimRight(strings.Repeat("?,", len(names)), ","))
+			if _, err := tx.ExecContext(ctx, s.rebind(q), vals...); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, s.rebind(`INSERT INTO settings (id, check_interval_minutes, probe_model, site_name) VALUES ('default', 5, ?, 'AI 上游监控') ON CONFLICT(id) DO NOTHING`), domain.ProbeModel); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	done = true
+	return nil
+}
+
+func queryColumns(ctx context.Context, db tableQueryer, table string) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT * FROM `+quoteIdent(table)+` WHERE 1=0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, col := range cols {
+		out[col] = true
+	}
+	return out, nil
+}
+
 func (s *Store) MigratePocketBase(ctx context.Context, oldPath string) error {
 	if oldPath == "" {
 		oldPath = "/app/pb_data/data.db"
@@ -614,6 +798,9 @@ func (s *Store) MigratePocketBase(ctx context.Context, oldPath string) error {
 	done, err := s.MigrationDone(ctx, source)
 	if err != nil || done {
 		return err
+	}
+	if s.Driver == "sqlite" {
+		return s.migratePocketBaseSQLite(ctx, oldPath, source)
 	}
 	oldDB, err := sql.Open("sqlite", "file:"+filepath.ToSlash(oldPath)+"?mode=ro&cache=shared")
 	if err != nil {
@@ -640,14 +827,77 @@ func (s *Store) MigratePocketBase(ctx context.Context, oldPath string) error {
 	return s.MarkMigration(ctx, source)
 }
 
-func tableExists(ctx context.Context, db *sql.DB, table string) bool {
+func (s *Store) migratePocketBaseSQLite(ctx context.Context, oldPath, source string) error {
+	oldDB, err := sql.Open("sqlite", "file:"+filepath.ToSlash(oldPath)+"?mode=ro&cache=shared")
+	if err != nil {
+		return err
+	}
+	defer oldDB.Close()
+	conn, err := s.DB.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout=10000"); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, `ATTACH DATABASE `+quoteSQLString("file:"+filepath.ToSlash(oldPath)+"?mode=ro&cache=shared")+` AS pb`); err != nil {
+		return err
+	}
+	defer conn.ExecContext(context.Background(), `DETACH DATABASE pb`) //nolint:errcheck
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(context.Background(), `ROLLBACK`) //nolint:errcheck
+		}
+	}()
+	if err := copyPBTableSQLite(ctx, conn, oldDB, "upstreams", "upstreams", map[string]string{}); err != nil {
+		return err
+	}
+	if err := copyPBTableSQLite(ctx, conn, oldDB, "upstream_keys", "api_keys", map[string]string{"upstream": "upstream_id", "group": "group_name"}); err != nil {
+		return err
+	}
+	if err := copyPBTableSQLite(ctx, conn, oldDB, "model_cards", "model_cards", map[string]string{"upstream": "upstream_id", "key": "key_id"}); err != nil {
+		return err
+	}
+	for _, table := range []string{"balance_snapshots", "probe_runs", "alert_events"} {
+		if err := copyPBTableSQLite(ctx, conn, oldDB, table, table, map[string]string{"upstream": "upstream_id", "card": "card_id"}); err != nil {
+			return err
+		}
+	}
+	if err := migratePBSettingsSQLite(ctx, conn, oldDB); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO migration_records (source, migrated_at) VALUES (?, ?) ON CONFLICT(source) DO NOTHING`, source, nowText()); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+type tableQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+type tableRowQueryer interface {
+	tableQueryer
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func tableExists(ctx context.Context, db tableRowQueryer, table string) bool {
 	var name string
 	err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
 	return err == nil
 }
 
-func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
-	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+func tableColumns(ctx context.Context, db tableQueryer, table string) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+quoteIdent(table)+`)`)
 	if err != nil {
 		return nil, err
 	}
@@ -666,6 +916,61 @@ func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]boo
 	return out, rows.Err()
 }
 
+func quoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+func quoteIdents(cols []string) string {
+	out := make([]string, len(cols))
+	for i, col := range cols {
+		out[i] = quoteIdent(col)
+	}
+	return strings.Join(out, ",")
+}
+
+func quoteSQLString(s string) string {
+	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
+}
+
+func copyPBTableSQLite(ctx context.Context, conn *sql.Conn, oldDB *sql.DB, sourceTable, dstTable string, aliases map[string]string) error {
+	if !tableExists(ctx, oldDB, sourceTable) {
+		return nil
+	}
+	oldCols, err := tableColumns(ctx, oldDB, sourceTable)
+	if err != nil {
+		return err
+	}
+	dstCols, err := tableColumns(ctx, conn, dstTable)
+	if err != nil {
+		return err
+	}
+	var selectExprs, insertCols []string
+	for oldCol := range oldCols {
+		newCol := oldCol
+		if v := aliases[oldCol]; v != "" {
+			newCol = v
+		}
+		if dstCols[newCol] {
+			selectExprs = append(selectExprs, quoteIdent(oldCol))
+			insertCols = append(insertCols, newCol)
+		}
+	}
+	for _, col := range []string{"created_at", "updated_at"} {
+		if dstCols[col] && !oldCols[col] {
+			selectExprs = append(selectExprs, quoteSQLString(nowText()))
+			insertCols = append(insertCols, col)
+		}
+	}
+	if len(insertCols) == 0 {
+		return nil
+	}
+	_, err = conn.ExecContext(ctx, fmt.Sprintf(
+		`INSERT OR IGNORE INTO %s (%s) SELECT %s FROM pb.%s`,
+		quoteIdent(dstTable), quoteIdents(insertCols), strings.Join(selectExprs, ","), quoteIdent(sourceTable),
+	))
+	return err
+}
+
 func copyPBTable(ctx context.Context, oldDB *sql.DB, dst *Store, sourceTable, dstTable string, aliases map[string]string) error {
 	if !tableExists(ctx, oldDB, sourceTable) {
 		return nil
@@ -678,7 +983,7 @@ func copyPBTable(ctx context.Context, oldDB *sql.DB, dst *Store, sourceTable, ds
 	if err != nil {
 		return err
 	}
-	var selectCols, insertCols []string
+	var selectCols, insertCols, defaultCols []string
 	for oldCol := range oldCols {
 		newCol := oldCol
 		if v := aliases[oldCol]; v != "" {
@@ -689,18 +994,29 @@ func copyPBTable(ctx context.Context, oldDB *sql.DB, dst *Store, sourceTable, ds
 			insertCols = append(insertCols, newCol)
 		}
 	}
+	for _, col := range []string{"created_at", "updated_at"} {
+		if dstCols[col] && !oldCols[col] {
+			insertCols = append(insertCols, col)
+			defaultCols = append(defaultCols, col)
+		}
+	}
 	if len(insertCols) == 0 {
 		return nil
 	}
-	rows, err := oldDB.QueryContext(ctx, `SELECT `+strings.Join(selectCols, ",")+` FROM `+sourceTable)
+	var realSelectCols, quotedSelectCols []string
+	for _, col := range selectCols {
+		realSelectCols = append(realSelectCols, col)
+		quotedSelectCols = append(quotedSelectCols, quoteIdent(col))
+	}
+	rows, err := oldDB.QueryContext(ctx, `SELECT `+strings.Join(quotedSelectCols, ",")+` FROM `+quoteIdent(sourceTable))
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		vals := make([]any, len(selectCols))
-		ptrs := make([]any, len(selectCols))
-		for i := range vals {
+		vals := make([]any, len(realSelectCols))
+		ptrs := make([]any, len(realSelectCols))
+		for i := range realSelectCols {
 			ptrs[i] = &vals[i]
 		}
 		if err := rows.Scan(ptrs...); err != nil {
@@ -711,13 +1027,53 @@ func copyPBTable(ctx context.Context, oldDB *sql.DB, dst *Store, sourceTable, ds
 				vals[i] = string(b)
 			}
 		}
+		for range defaultCols {
+			vals = append(vals, nowText())
+		}
 		q := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s) ON CONFLICT(id) DO NOTHING`,
-			dstTable, strings.Join(insertCols, ","), strings.TrimRight(strings.Repeat("?,", len(insertCols)), ","))
+			quoteIdent(dstTable), quoteIdents(insertCols), strings.TrimRight(strings.Repeat("?,", len(insertCols)), ","))
 		if _, err := dst.exec(ctx, q, vals...); err != nil {
 			return err
 		}
 	}
 	return rows.Err()
+}
+
+func migratePBSettingsSQLite(ctx context.Context, conn *sql.Conn, oldDB *sql.DB) error {
+	if !tableExists(ctx, oldDB, "settings") {
+		return nil
+	}
+	cols, err := tableColumns(ctx, oldDB, "settings")
+	if err != nil {
+		return err
+	}
+	pick := func(name string) string {
+		if cols[name] {
+			return quoteIdent(name)
+		}
+		return "''"
+	}
+	row := oldDB.QueryRowContext(ctx, `SELECT `+pick("telegram_bot_token")+`, `+pick("telegram_chat_id")+`, `+pick("check_interval_minutes")+` FROM settings LIMIT 1`)
+	var token, chat string
+	var interval any
+	if err := row.Scan(&token, &chat, &interval); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	minutes := 5
+	switch v := interval.(type) {
+	case int64:
+		minutes = int(v)
+	case string:
+		if n, err := strconv.Atoi(v); err == nil {
+			minutes = n
+		}
+	}
+	_, err = conn.ExecContext(ctx, `UPDATE settings SET telegram_bot_token=?, telegram_chat_id=?, check_interval_minutes=?, probe_model=? WHERE id='default'`,
+		token, chat, domain.NormalizeCheckInterval(minutes), domain.ProbeModel)
+	return err
 }
 
 func migratePBSettings(ctx context.Context, oldDB *sql.DB, dst *Store) error {

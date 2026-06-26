@@ -1,10 +1,34 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ElementType, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Database, KeyRound, LogOut, Plus, RefreshCcw, Save, Settings, WalletCards } from 'lucide-react'
+import {
+  Activity,
+  CheckCircle2,
+  ChevronRight,
+  Database,
+  Download,
+  ExternalLink,
+  KeyRound,
+  Loader2,
+  LogOut,
+  MonitorCheck,
+  Plus,
+  RefreshCcw,
+  Save,
+  Settings,
+  Trash2,
+  Upload,
+  WalletCards,
+  XCircle,
+} from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { cn } from '@/lib/utils'
 
 type Upstream = {
   id: string
@@ -43,7 +67,7 @@ type UpstreamRow = {
   }
 }
 
-type Card = {
+type ModelCard = {
   id: string
   name: string
   upstream_id: string
@@ -52,6 +76,7 @@ type Card = {
   key_name: string
   key_group: string
   key_group_ratio: string
+  effective_ratio: string
   enabled: boolean
   last_error: string
   history?: Probe[]
@@ -84,7 +109,7 @@ type MonitorStatus = {
   failed: number
   success_rate: number
   avg_latency: number
-  rows: Card[]
+  rows: ModelCard[]
 }
 
 type SettingsData = {
@@ -92,6 +117,50 @@ type SettingsData = {
   telegram_bot_token?: string
   telegram_chat_id?: string
   probe_model: string
+  site_name: string
+  site_icon: string
+}
+
+type TabID = 'status' | 'balances' | 'upstreams' | 'settings'
+
+const tabs: Array<{ id: TabID; label: string; short: string; icon: ElementType }> = [
+  { id: 'status', label: '状态监控', short: '状态', icon: Activity },
+  { id: 'balances', label: '余额监控', short: '余额', icon: WalletCards },
+  { id: 'upstreams', label: '上游管理', short: '上游', icon: Database },
+  { id: 'settings', label: '设置', short: '设置', icon: Settings },
+]
+
+const windows = ['1h', '3h', '5h', '1d', '7d', '15d']
+
+const tabPaths: Record<TabID, string> = {
+  status: '/status',
+  balances: '/balances',
+  upstreams: '/upstreams',
+  settings: '/settings',
+}
+
+const emptyUpstream: Upstream = {
+  id: '',
+  name: '',
+  type: 'newapi',
+  base_url: '',
+  enabled: true,
+  balance_rate: 1,
+  low_balance_threshold: 0,
+}
+
+let browserLoginWindow: Window | null = null
+const browserVNCURL = '/browser/vnc.html?autoconnect=true&resize=scale'
+
+function tabFromPath(pathname: string): TabID {
+  return tabs.find((item) => tabPaths[item.id] === pathname)?.id ?? 'status'
+}
+
+function closeBrowserLoginWindow() {
+  browserLoginWindow?.close()
+  browserLoginWindow = null
+  const win = window.open('', 'ai-upstream-monitor-vnc')
+  win?.close()
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -108,81 +177,147 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json()
 }
 
-const emptyUpstream: Upstream = {
-  id: '',
-  name: '',
-  type: 'newapi',
-  base_url: '',
-  enabled: true,
-  balance_rate: 1,
-  low_balance_threshold: 0,
-}
-
 export default function App() {
   const qc = useQueryClient()
-  const [tab, setTab] = useState('status')
+  const [tab, setTab] = useState<TabID>(() => tabFromPath(location.pathname))
+  const [loggingOut, setLoggingOut] = useState(false)
   const setup = useQuery({ queryKey: ['setup'], queryFn: () => api<{ initialized: boolean }>('/api/setup/status') })
   const me = useQuery({ queryKey: ['me'], queryFn: () => api('/api/auth/me'), retry: false, enabled: setup.data?.initialized })
+  const settings = useQuery({ queryKey: ['settings'], queryFn: () => api<SettingsData>('/api/settings'), enabled: me.isSuccess })
+
+  useEffect(() => {
+    const onPopState = () => setTab(tabFromPath(location.pathname))
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  useEffect(() => {
+    const cfg = settings.data
+    if (!cfg) return
+    document.title = cfg.site_name || 'AI 上游监控'
+    const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]') ?? document.createElement('link')
+    icon.rel = 'icon'
+    icon.href = cfg.site_icon || '/favicon.ico'
+    document.head.appendChild(icon)
+  }, [settings.data])
 
   if (setup.isLoading) return <ShellLoading />
   if (!setup.data?.initialized) return <SetupPage onDone={() => void setup.refetch()} />
   if (me.isError) return <LoginPage onDone={() => void me.refetch()} />
 
+  const active = tabs.find((item) => item.id === tab) ?? tabs[0]
+  const siteName = settings.data?.site_name || 'AI 上游监控'
+  const siteIcon = settings.data?.site_icon || ''
+  const navigate = (next: TabID) => {
+    setTab(next)
+    if (location.pathname !== tabPaths[next]) window.history.pushState(null, '', tabPaths[next])
+  }
   const logout = async () => {
-    await api('/api/auth/logout', { method: 'POST' })
-    qc.clear()
-    location.reload()
+    setLoggingOut(true)
+    try {
+      await api('/api/auth/logout', { method: 'POST' })
+      qc.clear()
+      location.reload()
+    } catch (error) {
+      setLoggingOut(false)
+      window.alert(errorMessage(error))
+    }
   }
 
   return (
-    <div className="min-h-screen bg-[#f6f7f9]">
-      <aside className="fixed inset-y-0 left-0 hidden w-60 border-r border-zinc-200 bg-white lg:block">
-        <div className="flex h-14 items-center border-b border-zinc-200 px-5 font-semibold">AI 上游监控</div>
-        <nav className="grid gap-1 p-3">
-          <Nav id="status" tab={tab} setTab={setTab} icon={<Activity className="size-4" />} text="状态监控" />
-          <Nav id="balances" tab={tab} setTab={setTab} icon={<WalletCards className="size-4" />} text="余额监控" />
-          <Nav id="upstreams" tab={tab} setTab={setTab} icon={<Database className="size-4" />} text="上游管理" />
-          <Nav id="settings" tab={tab} setTab={setTab} icon={<Settings className="size-4" />} text="设置" />
-        </nav>
-      </aside>
-      <main className="lg:pl-60">
-        <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-zinc-200 bg-white/90 px-4 backdrop-blur lg:px-6">
-          <div className="flex gap-2 lg:hidden">
-            {['status', 'balances', 'upstreams', 'settings'].map((id) => (
-              <Button key={id} variant={tab === id ? 'default' : 'outline'} size="sm" onClick={() => setTab(id)}>
-                {id === 'status' ? '状态' : id === 'balances' ? '余额' : id === 'upstreams' ? '上游' : '设置'}
-              </Button>
-            ))}
+    <div className="min-h-svh bg-background text-body">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-border bg-sidebar lg:flex lg:flex-col">
+        <div className="flex h-16 items-center gap-3 border-b border-border px-4">
+          <BrandIcon src={siteIcon} />
+          <div className="min-w-0">
+            <div className="truncate font-display text-xl font-normal leading-none text-foreground">{siteName}</div>
           </div>
-          <div className="hidden text-sm text-zinc-500 lg:block">探测模型固定为 gpt-5.5</div>
-          <Button variant="ghost" onClick={logout}>
-            <LogOut className="size-4" /> 退出
+        </div>
+        <nav className="grid gap-1 p-3">
+          {tabs.map((item) => (
+            <NavItem key={item.id} item={item} active={tab === item.id} onClick={() => navigate(item.id)} />
+          ))}
+        </nav>
+        <div className="mt-auto border-t border-border p-3">
+          <Button variant="ghost" className="w-full justify-start" onClick={logout} disabled={loggingOut}>
+            {loggingOut ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
+            退出登录
+          </Button>
+        </div>
+      </aside>
+
+      <div className="lg:pl-64">
+        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:px-6">
+          <div className="min-w-0">
+            <div className="text-base font-medium text-foreground">{active.label}</div>
+          </div>
+          <Button variant="outline" size="sm" className="lg:hidden" onClick={logout} disabled={loggingOut}>
+            {loggingOut ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
+            退出
           </Button>
         </header>
-        <section className="p-4 lg:p-6">
+
+        <main className="mx-auto grid w-full max-w-[1200px] animate-in gap-4 p-4 fade-in-50 duration-300 lg:p-6">
+          <MobileTabs tab={tab} setTab={navigate} />
           {tab === 'status' && <StatusPage />}
           {tab === 'balances' && <BalancesPage />}
           {tab === 'upstreams' && <UpstreamsPage />}
           {tab === 'settings' && <SettingsPage />}
-        </section>
-      </main>
+        </main>
+      </div>
+    </div>
+  )
+}
+
+function NavItem({ item, active, onClick }: { item: (typeof tabs)[number]; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      className={cn(
+        'flex h-9 items-center gap-2 rounded-sm px-3 text-sm font-medium transition-colors',
+        active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground',
+      )}
+      onClick={onClick}
+    >
+      <item.icon className="size-4" />
+      <span className="flex-1 text-left">{item.label}</span>
+      {active && <ChevronRight className="size-4 text-primary" />}
+    </button>
+  )
+}
+
+function BrandIcon({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false)
+  if (src && !failed) {
+    return <img src={src} alt="" className="size-9 rounded-lg object-cover" onError={() => setFailed(true)} />
+  }
+  return (
+    <div className="flex size-9 items-center justify-center rounded-lg bg-surface-dark text-on-dark">
+      <MonitorCheck className="size-5" />
+    </div>
+  )
+}
+
+function MobileTabs({ tab, setTab }: { tab: TabID; setTab: (tab: TabID) => void }) {
+  return (
+    <div className="mb-4 grid grid-cols-4 gap-2 md:hidden">
+      {tabs.map((item) => (
+        <Button key={item.id} variant={tab === item.id ? 'secondary' : 'outline'} size="sm" onClick={() => setTab(item.id)}>
+          <item.icon className="size-4" />
+          {item.short}
+        </Button>
+      ))}
     </div>
   )
 }
 
 function ShellLoading() {
-  return <div className="grid min-h-screen place-items-center text-sm text-zinc-500">加载中</div>
-}
-
-function Nav(props: { id: string; tab: string; setTab: (v: string) => void; icon: React.ReactNode; text: string }) {
   return (
-    <button
-      className={`flex h-9 items-center gap-2 rounded-md px-3 text-sm ${props.tab === props.id ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}
-      onClick={() => props.setTab(props.id)}
-    >
-      {props.icon}
-      {props.text}
-    </button>
+    <div className="grid min-h-svh place-items-center bg-background">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+        加载中
+      </div>
+    </div>
   )
 }
 
@@ -194,17 +329,18 @@ function SetupPage({ onDone }: { onDone: () => void }) {
     onSuccess: onDone,
   })
   return (
-    <AuthFrame title="初始化管理员">
+    <AuthFrame title="初始化管理员" subtitle="创建第一个管理员账号">
       <FormError error={mutation.error} />
-      <div className="field">
-        <label>用户名</label>
+      <Field label="用户名">
         <Input value={username} onChange={(e) => setUsername(e.target.value)} />
-      </div>
-      <div className="field">
-        <label>密码</label>
+      </Field>
+      <Field label="密码">
         <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      </div>
-      <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>创建管理员</Button>
+      </Field>
+      <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+        {mutation.isPending && <Loader2 className="size-4 animate-spin" />}
+        创建管理员
+      </Button>
     </AuthFrame>
   )
 }
@@ -217,168 +353,395 @@ function LoginPage({ onDone }: { onDone: () => void }) {
     onSuccess: onDone,
   })
   return (
-    <AuthFrame title="登录">
+    <AuthFrame title="登录" subtitle="进入 AI 上游监控后台">
       <FormError error={mutation.error} />
-      <div className="field">
-        <label>用户名</label>
+      <Field label="用户名">
         <Input value={username} onChange={(e) => setUsername(e.target.value)} />
-      </div>
-      <div className="field">
-        <label>密码</label>
+      </Field>
+      <Field label="密码">
         <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      </div>
-      <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>登录</Button>
+      </Field>
+      <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+        {mutation.isPending && <Loader2 className="size-4 animate-spin" />}
+        登录
+      </Button>
     </AuthFrame>
   )
 }
 
-function AuthFrame({ title, children }: { title: string; children: React.ReactNode }) {
+function AuthFrame({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
   return (
-    <div className="grid min-h-screen place-items-center bg-[#f6f7f9] p-4">
-      <div className="grid w-full max-w-sm gap-4 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-        <h1 className="text-xl font-semibold">{title}</h1>
-        {children}
-      </div>
+    <div className="grid min-h-svh place-items-center bg-background p-4">
+      <Card className="animate-in w-full max-w-sm bg-card fade-in-50 zoom-in-95 duration-300">
+        <CardHeader className="gap-2 text-center">
+          <div className="mx-auto flex size-10 items-center justify-center rounded-lg bg-surface-dark text-on-dark">
+            <MonitorCheck className="size-5" />
+          </div>
+          <CardTitle className="font-display text-3xl font-normal">{title}</CardTitle>
+          <CardDescription>{subtitle}</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">{children}</CardContent>
+      </Card>
     </div>
   )
 }
 
 function FormError({ error }: { error: unknown }) {
   if (!error) return null
-  return <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{(error as Error).message}</div>
+  return (
+    <div className="animate-in rounded-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive fade-in slide-in-from-top-1">
+      {(error as Error).message}
+    </div>
+  )
 }
 
 function StatusPage() {
   const [windowValue, setWindowValue] = useState('1h')
-  const q = useQuery({ queryKey: ['status', windowValue], queryFn: () => api<MonitorStatus>(`/api/monitor/status?window=${windowValue}`), refetchInterval: 60000 })
+  const q = useQuery({
+    queryKey: ['status', windowValue],
+    queryFn: () => api<MonitorStatus>(`/api/monitor/status?window=${windowValue}`),
+    refetchInterval: 60000,
+  })
   const cards = q.data?.rows ?? []
+  const rate = `${Math.round(q.data?.success_rate ?? 0)}%`
   return (
-    <Page title="状态监控" actions={<WindowSelect value={windowValue} setValue={setWindowValue} />}>
-      <div className="grid gap-3 sm:grid-cols-4">
+    <Page
+      title="状态监控"
+      description="探测结果与最近检查历史"
+      actions={
+        <div className="flex items-center gap-2">
+          {q.isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          <WindowSelect value={windowValue} setValue={setWindowValue} />
+        </div>
+      }
+    >
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Metric label="请求数" value={q.data?.requests ?? 0} />
-        <Metric label="成功" value={q.data?.success ?? 0} />
-        <Metric label="失败" value={q.data?.failed ?? 0} />
+        <Metric label="成功" value={q.data?.success ?? 0} accent="success" />
+        <Metric label="失败" value={q.data?.failed ?? 0} accent="danger" />
+        <Metric label="成功率" value={rate} />
         <Metric label="平均延迟" value={`${q.data?.avg_latency ?? 0} ms`} />
       </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr><th>卡片</th><th>上游</th><th>Key</th><th>状态点</th><th>错误</th><th>操作</th></tr>
-          </thead>
-          <tbody>
-            {cards.map((c) => <CardRow key={c.id} card={c} />)}
-            {cards.length === 0 && <EmptyRow colSpan={6} text="暂无卡片" />}
-          </tbody>
-        </table>
-      </div>
+      {q.isLoading && <SkeletonCardGrid count={6} />}
+      {!q.isLoading && cards.length > 0 && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {cards.map((card) => <StatusMonitorCard key={card.id} card={card} windowValue={windowValue} />)}
+        </div>
+      )}
+      {!q.isLoading && cards.length === 0 && <EmptyPanel text="暂无卡片" />}
     </Page>
   )
 }
 
-function CardRow({ card }: { card: Card }) {
+function StatusMonitorCard({ card, windowValue }: { card: ModelCard; windowValue: string }) {
   const qc = useQueryClient()
+  const [message, setMessage] = useState('')
+  useEffect(() => {
+    if (message !== '检查完成') return
+    const timer = window.setTimeout(() => setMessage(''), 1800)
+    return () => window.clearTimeout(timer)
+  }, [message])
   const check = useMutation({
     mutationFn: () => api(`/api/cards/${card.id}/check`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
+    onMutate: () => setMessage('检查中...'),
+    onSuccess: async () => {
+      setMessage('检查完成')
+      await qc.invalidateQueries({ queryKey: ['status'] })
+    },
+    onError: (error) => setMessage(errorMessage(error)),
   })
+  const history = (card.history ?? []).slice(-12)
+  const latest = history.at(-1)
+  const ok = latest?.success ?? !card.last_error
+  const successCount = history.filter((probe) => probe.success).length
+  const uptime = history.length ? `${((successCount / history.length) * 100).toFixed(2)}%` : '-'
+  const groupName = card.key_group || '-'
+  const ratio = card.effective_ratio || card.key_group_ratio || '-'
   return (
-    <tr>
-      <td className="font-medium">{card.name}</td>
-      <td>{card.upstream_name}</td>
-      <td>{card.key_name || card.key_group || '-'}</td>
-      <td>
-        <div className="flex gap-1">
-          {(card.history ?? []).slice(-40).map((p, i) => (
-            <span
-              key={`${p.checked_at}-${i}`}
-              className={`dot ${p.success ? 'bg-emerald-500' : 'bg-red-500'}`}
-              title={`${p.success ? '成功' : '失败'} / ${p.latency_ms}ms / ${fmtTime(p.checked_at)}${p.error ? ` / ${p.error}` : ''}`}
-            />
-          ))}
+    <Card className={cn('bg-card', !ok && 'border-destructive/40')}>
+      <CardHeader className="min-h-20 gap-3 border-b border-border">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+          <div className="min-w-0 pt-1">
+            <CardTitle className="break-words text-xl leading-tight">{card.upstream_name} · {ratio}</CardTitle>
+            <CardDescription className="mt-2 grid gap-1 text-sm leading-relaxed">
+              <span>分组：{groupName}</span>
+              <span>模型：gpt-5.5</span>
+            </CardDescription>
+          </div>
+          <div className="flex min-w-20 shrink-0 flex-col items-end gap-2">
+            <StatusBadge ok={ok} okText="正常" failText="异常" />
+            <Button variant="outline" size="sm" onClick={() => check.mutate()} disabled={check.isPending}>
+              {check.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCcw className="size-3" />}
+              检查
+            </Button>
+          </div>
         </div>
-      </td>
-      <td className="max-w-[260px] truncate text-red-600">{card.last_error || '-'}</td>
-      <td><Button variant="outline" size="sm" onClick={() => check.mutate()}><RefreshCcw className="size-3" />检查</Button></td>
-    </tr>
+      </CardHeader>
+      <CardContent className="grid gap-3 pt-3">
+        <div className="grid grid-cols-2 gap-3">
+          <MiniStat label="对话延迟" value={latest ? `${latest.latency_ms} ms` : '-'} />
+          <MiniStat label="端点 PING" value={latest?.http_status ? String(latest.http_status) : '-'} />
+        </div>
+        <div className="border-t border-border pt-3">
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <div className="text-sm text-muted-foreground">可用性 · {windowValue}</div>
+            <div className={cn('font-display text-3xl font-normal', ok ? 'text-success' : 'text-destructive')}>{uptime}</div>
+          </div>
+          <div className="grid grid-cols-12 gap-1">
+            {history.map((probe, index) => (
+              <span
+                key={`${probe.checked_at}-${index}`}
+                className={cn('h-[18px] rounded-sm', probe.success ? 'bg-success' : 'bg-destructive')}
+                title={`${probe.success ? '成功' : '失败'} / ${probe.latency_ms}ms / ${fmtTime(probe.checked_at)}${probe.error ? ` / ${probe.error}` : ''}`}
+              />
+            ))}
+            {history.length === 0 &&
+              Array.from({ length: 12 }).map((_, index) => <span key={index} className="h-[18px] rounded-sm bg-surface-cream-strong" />)}
+          </div>
+          <div className="mt-2 flex justify-between text-xs text-muted-foreground">
+            <span>PAST</span>
+            <span>{history.length} 次记录</span>
+            <span>NOW</span>
+          </div>
+        </div>
+        {(message || card.last_error) && (
+          <div className={cn('truncate rounded-sm px-3 py-2 text-sm', check.isError || card.last_error ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}>
+            {message || card.last_error}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
 function BalancesPage() {
+  const qc = useQueryClient()
+  const [message, setMessage] = useState('')
   const q = useQuery({ queryKey: ['balances'], queryFn: () => api<BalanceRow[]>('/api/monitor/balances'), refetchInterval: 60000 })
+  useAutoClear(message, '刷新完成', setMessage)
+  const refresh = useMutation({
+    mutationFn: () => api('/api/monitor/balances/refresh', { method: 'POST' }),
+    onMutate: () => setMessage('刷新中...'),
+    onSuccess: async () => {
+      setMessage('刷新完成')
+      await Promise.all([qc.invalidateQueries({ queryKey: ['balances'] }), qc.invalidateQueries({ queryKey: ['upstreams'] })])
+    },
+    onError: (error) => setMessage(errorMessage(error)),
+  })
+  const rows = q.data ?? []
+  const total = rows.reduce((sum, row) => sum + (row.remain ?? 0), 0)
+  const low = rows.filter((row) => row.low_balance).length
+  const lastRefresh = latestRefreshTime(rows)
   return (
-    <Page title="余额监控">
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>上游</th><th>类型</th><th>倍率</th><th>余额 RMB</th><th>源余额</th><th>更新时间</th><th>状态</th></tr></thead>
-          <tbody>
-            {(q.data ?? []).map((b) => (
-              <tr key={b.id}>
-                <td className="font-medium">{b.name}</td>
-                <td>{b.type}</td>
-                <td>{b.balance_rate}</td>
-                <td>{num(b.remain)}</td>
-                <td>{num(b.source_remain)}</td>
-                <td>{fmtTime(b.last_check)}</td>
-                <td>{b.low_balance ? <span className="text-red-600">低余额</span> : <span className="text-emerald-700">正常</span>}</td>
-              </tr>
-            ))}
-            {(q.data ?? []).length === 0 && <EmptyRow colSpan={7} text="暂无余额数据" />}
-          </tbody>
-        </table>
+    <Page
+      title="余额监控"
+      description="余额、倍率、折算金额与更新时间"
+      actions={
+        <div className="flex items-center gap-2">
+          {lastRefresh && <span className="text-sm text-muted-foreground">最后刷新：{fmtTime(lastRefresh)}</span>}
+          {message && <span className={cn('text-sm', refresh.isError ? 'text-destructive' : 'text-muted-foreground')}>{message}</span>}
+          <Button variant="outline" size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+            {refresh.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCcw className="size-3" />}
+            刷新余额
+          </Button>
+        </div>
+      }
+    >
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Metric label="上游数量" value={rows.length} />
+        <Metric label="折算余额" value={`${num(total)} 元`} />
+        <Metric label="低余额" value={low} accent={low > 0 ? 'danger' : 'success'} />
       </div>
+      {q.isLoading && <SkeletonCardGrid count={6} />}
+      {!q.isLoading && rows.length > 0 && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {rows.map((row) => <BalanceMonitorCard key={row.id} row={row} />)}
+        </div>
+      )}
+      {!q.isLoading && rows.length === 0 && <EmptyPanel text="暂无余额数据" />}
     </Page>
+  )
+}
+
+function BalanceMonitorCard({ row }: { row: BalanceRow }) {
+  return (
+    <Card className={cn('bg-card', row.low_balance && 'border-destructive/40')}>
+      <CardHeader className="gap-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle className="truncate">{row.name}</CardTitle>
+            <CardDescription><TypeBadge type={row.type} /></CardDescription>
+          </div>
+          <StatusBadge ok={!row.low_balance} okText="正常" failText="低余额" />
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div>
+          <div className="text-sm text-muted-foreground">余额折算</div>
+          <div className="font-display text-4xl font-normal">{num(row.remain)} 元</div>
+          <div className="mt-2 text-sm text-muted-foreground">最后刷新：{fmtTime(row.last_check)}</div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
 function UpstreamsPage() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: ['upstreams'], queryFn: () => api<UpstreamRow[]>('/api/upstreams') })
-  const cards = useQuery({ queryKey: ['cards'], queryFn: () => api<Card[]>('/api/cards') })
+  const [cardError, setCardError] = useState('')
+  const upstreams = useQuery({ queryKey: ['upstreams'], queryFn: () => api<UpstreamRow[]>('/api/upstreams') })
+  const cards = useQuery({ queryKey: ['cards'], queryFn: () => api<ModelCard[]>('/api/cards') })
   const createCard = useMutation({
     mutationFn: (body: { upstream_id: string; key_id: string }) => api('/api/cards', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => void Promise.all([qc.invalidateQueries({ queryKey: ['cards'] }), qc.invalidateQueries({ queryKey: ['status'] })]),
+    onMutate: () => setCardError(''),
+    onSuccess: () => void invalidateMonitor(qc),
+    onError: (error) => setCardError(errorMessage(error)),
+  })
+  const upstreamRows = upstreams.data ?? []
+  const cardRows = cards.data ?? []
+  return (
+    <Page
+      title="上游管理"
+      description="上游凭据、Key 同步和状态卡片"
+      actions={
+        <div className="flex items-center gap-2">
+          {(upstreams.isFetching || cards.isFetching) && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          <UpstreamDialog />
+        </div>
+      }
+    >
+      <Card>
+        <CardHeader>
+          <CardTitle>上游</CardTitle>
+          <CardDescription>new-api 与 sub2api 普通用户接入</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>名称</TableHead>
+                <TableHead>类型</TableHead>
+                <TableHead>地址</TableHead>
+                <TableHead>Key</TableHead>
+                <TableHead>余额</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>错误</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {upstreams.isLoading && <SkeletonRows cells={8} />}
+              {!upstreams.isLoading &&
+                upstreamRows.map((row) => (
+                  <UpstreamTableRow key={row.upstream.id} row={row} />
+                ))}
+              {!upstreams.isLoading && upstreamRows.length === 0 && <EmptyRow colSpan={8} text="暂无上游" />}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="items-start gap-3 sm:flex sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle>状态卡片</CardTitle>
+            <CardDescription>名称由后端按上游名称和 Key 名称生成</CardDescription>
+          </div>
+          <CardDialog rows={upstreamRows} onSubmit={(body) => createCard.mutate(body)} pending={createCard.isPending} />
+        </CardHeader>
+        <CardContent>
+          {cardError && <FormError error={cardError} />}
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>名称</TableHead>
+                <TableHead>上游</TableHead>
+                <TableHead>Key</TableHead>
+                <TableHead>启用</TableHead>
+                <TableHead>错误</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {cards.isLoading && <SkeletonRows cells={6} />}
+              {!cards.isLoading && cardRows.map((card) => <ManagedCardRow key={card.id} card={card} />)}
+              {!cards.isLoading && cardRows.length === 0 && <EmptyRow colSpan={6} text="暂无卡片" />}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </Page>
+  )
+}
+
+function UpstreamTableRow({ row }: { row: UpstreamRow }) {
+  const qc = useQueryClient()
+  const upstream = row.upstream
+  const remove = useMutation({
+    mutationFn: () => api(`/api/upstreams/${upstream.id}`, { method: 'DELETE' }),
+    onSuccess: () => void invalidateMonitor(qc),
+    onError: (error) => window.alert(errorMessage(error)),
   })
   return (
-    <Page title="上游管理" actions={<UpstreamDialog />}>
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>名称</th><th>类型</th><th>地址</th><th>Key</th><th>余额</th><th>错误</th><th>操作</th></tr></thead>
-          <tbody>
-            {(q.data ?? []).map((row) => (
-              <tr key={row.upstream.id}>
-                <td className="font-medium">{row.upstream.name}</td>
-                <td>{row.upstream.type}</td>
-                <td className="max-w-[260px] truncate">{row.upstream.base_url}</td>
-                <td>{row.keys.length}</td>
-                <td>{num(row.balance?.remain)}</td>
-                <td className="max-w-[220px] truncate text-red-600">{row.upstream.last_error || row.balance?.error || '-'}</td>
-                <td className="flex gap-2">
-                  <UpstreamDialog upstream={row.upstream} />
-                  <Action path={`/api/upstreams/${row.upstream.id}/sync-keys`} label="同步 Key" />
-                  <Action path={`/api/upstreams/${row.upstream.id}/check`} label="检查" />
-                </td>
-              </tr>
-            ))}
-            {(q.data ?? []).length === 0 && <EmptyRow colSpan={7} text="暂无上游" />}
-          </tbody>
-        </table>
-      </div>
-      <section className="grid gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold">状态卡片</h2>
-          <CardDialog rows={q.data ?? []} onSubmit={(body) => createCard.mutate(body)} />
+    <TableRow>
+      <TableCell className="font-medium">{upstream.name}</TableCell>
+      <TableCell>
+        <TypeBadge type={upstream.type} />
+      </TableCell>
+      <TableCell className="max-w-72 truncate">{upstream.base_url}</TableCell>
+      <TableCell>{keysOf(row).length}</TableCell>
+      <TableCell>{num(row.balance?.remain)}</TableCell>
+      <TableCell>
+        <StatusBadge ok={upstream.enabled} okText="启用" failText="停用" />
+      </TableCell>
+      <TableCell className="max-w-64 truncate text-destructive">{upstream.last_error || row.balance?.error || '-'}</TableCell>
+      <TableCell>
+        <div className="flex justify-end gap-2">
+          <UpstreamDialog upstream={upstream} />
+          <Action path={`/api/upstreams/${upstream.id}/sync-keys`} label="同步 Key" />
+          <Action path={`/api/upstreams/${upstream.id}/check`} label="检查" />
+          <IconAction title="删除" onClick={() => confirmDelete(upstream.name) && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />
         </div>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>名称</th><th>上游</th><th>Key</th><th>启用</th></tr></thead>
-            <tbody>
-              {(cards.data ?? []).map((c) => <tr key={c.id}><td>{c.name}</td><td>{c.upstream_name}</td><td>{c.key_name || c.key_group || '-'}</td><td>{c.enabled ? '是' : '否'}</td></tr>)}
-              {(cards.data ?? []).length === 0 && <EmptyRow colSpan={4} text="暂无卡片" />}
-            </tbody>
-          </table>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function ManagedCardRow({ card }: { card: ModelCard }) {
+  const qc = useQueryClient()
+  const toggle = useMutation({
+    mutationFn: () =>
+      api(`/api/cards/${card.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ upstream_id: card.upstream_id, key_id: card.key_id, enabled: !card.enabled }),
+      }),
+    onSuccess: () => void invalidateMonitor(qc),
+    onError: (error) => window.alert(errorMessage(error)),
+  })
+  const remove = useMutation({
+    mutationFn: () => api(`/api/cards/${card.id}`, { method: 'DELETE' }),
+    onSuccess: () => void invalidateMonitor(qc),
+    onError: (error) => window.alert(errorMessage(error)),
+  })
+  return (
+    <TableRow>
+      <TableCell className="font-medium">{card.name}</TableCell>
+      <TableCell>{card.upstream_name}</TableCell>
+      <TableCell>{card.key_name || card.key_group || '-'}</TableCell>
+      <TableCell>
+        <StatusBadge ok={card.enabled} okText="启用" failText="停用" />
+      </TableCell>
+      <TableCell className="max-w-72 truncate text-destructive">{card.last_error || '-'}</TableCell>
+      <TableCell>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={() => toggle.mutate()} disabled={toggle.isPending}>
+            {toggle.isPending && <Loader2 className="size-3 animate-spin" />}
+            {card.enabled ? '停用' : '启用'}
+          </Button>
+          <IconAction title="删除" onClick={() => confirmDelete(card.name) && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />
         </div>
-      </section>
-    </Page>
+      </TableCell>
+    </TableRow>
   )
 }
 
@@ -386,75 +749,202 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<Upstream>(upstream ?? emptyUpstream)
+  const [tokenMessage, setTokenMessage] = useState('')
+  useAutoClear(tokenMessage, '浏览器已打开|采集完成', setTokenMessage)
   const save = useMutation({
-    mutationFn: () => api(upstream ? `/api/upstreams/${upstream.id}` : '/api/upstreams', { method: upstream ? 'PATCH' : 'POST', body: JSON.stringify(form) }),
+    mutationFn: () =>
+      api(upstream ? `/api/upstreams/${upstream.id}` : '/api/upstreams', {
+        method: upstream ? 'PATCH' : 'POST',
+        body: JSON.stringify(form),
+      }),
     onSuccess: () => {
       setOpen(false)
-      void qc.invalidateQueries({ queryKey: ['upstreams'] })
+      void invalidateMonitor(qc)
     },
   })
+  const browserLogin = useMutation({
+    mutationFn: () => api<{ vnc_url: string }>(`/api/upstreams/${upstream?.id ?? ''}/browser-login`, { method: 'POST' }),
+  })
+  const browserCapture = useMutation({
+    mutationFn: () => api<{ access_token: boolean; refresh_token: boolean }>(`/api/upstreams/${upstream?.id ?? ''}/browser-capture`, { method: 'POST' }),
+    onMutate: () => setTokenMessage('采集中...'),
+    onSuccess: async (out) => {
+      setTokenMessage('采集完成')
+      await qc.invalidateQueries({ queryKey: ['upstreams'] })
+      if (out.access_token || out.refresh_token) {
+        closeBrowserLoginWindow()
+      }
+    },
+    onError: (error) => setTokenMessage(errorMessage(error)),
+  })
+  const update = (patch: Partial<Upstream>) => setForm((value) => ({ ...value, ...patch }))
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (next) setForm(upstream ?? emptyUpstream)
+      }}
+    >
       <DialogTrigger asChild>
-        <Button variant={upstream ? 'outline' : 'default'} size="sm">{upstream ? '编辑' : <><Plus className="size-4" />新增上游</>}</Button>
+        <Button variant={upstream ? 'outline' : 'default'} size="sm">
+          {upstream ? '编辑' : <><Plus className="size-4" />新增上游</>}
+        </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogTitle>{upstream ? '编辑上游' : '新增上游'}</DialogTitle>
         <FormError error={save.error} />
-        <div className="grid gap-3 md:grid-cols-2">
-          <Field label="名称"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="名称">
+            <Input value={form.name} onChange={(e) => update({ name: e.target.value })} />
+          </Field>
           <Field label="类型">
-            <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v as Upstream['type'] })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="newapi">new-api</SelectItem><SelectItem value="sub2api">sub2api</SelectItem></SelectContent>
+            <Select value={form.type} onValueChange={(value) => update({ type: value as Upstream['type'] })}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newapi">new-api</SelectItem>
+                <SelectItem value="sub2api">sub2api</SelectItem>
+              </SelectContent>
             </Select>
           </Field>
-          <Field label="Base URL"><Input value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} /></Field>
-          <Field label="余额倍率"><Input type="number" value={form.balance_rate} onChange={(e) => setForm({ ...form, balance_rate: Number(e.target.value) })} /></Field>
-          <Field label="低余额阈值"><Input type="number" value={form.low_balance_threshold} onChange={(e) => setForm({ ...form, low_balance_threshold: Number(e.target.value) })} /></Field>
-          {form.type === 'newapi' ? (
+          <Field label="Base URL">
+            <Input value={form.base_url} onChange={(e) => update({ base_url: e.target.value })} />
+          </Field>
+          <Field label="状态">
+            <Select value={form.enabled ? 'true' : 'false'} onValueChange={(value) => update({ enabled: value === 'true' })}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="true">启用</SelectItem>
+                <SelectItem value="false">停用</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="余额倍率">
+            <Input type="number" value={form.balance_rate} onChange={(e) => update({ balance_rate: Number(e.target.value) })} />
+          </Field>
+          <Field label="低余额阈值">
+            <Input type="number" value={form.low_balance_threshold} onChange={(e) => update({ low_balance_threshold: Number(e.target.value) })} />
+          </Field>
+          {form.type === 'newapi' && (
             <>
-              <Field label="New-Api-User"><Input value={form.user_id ?? ''} onChange={(e) => setForm({ ...form, user_id: e.target.value })} /></Field>
-              <Field label="Access Token"><Input value={form.access_token ?? ''} onChange={(e) => setForm({ ...form, access_token: e.target.value })} /></Field>
-            </>
-          ) : (
-            <>
-              <Field label="邮箱"><Input value={form.email ?? ''} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-              <Field label="密码"><Input type="password" value={form.password ?? ''} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
-              <Field label="Access Token"><Input value={form.sub2api_access_token ?? ''} onChange={(e) => setForm({ ...form, sub2api_access_token: e.target.value })} /></Field>
-              <Field label="Refresh Token"><Input value={form.sub2api_refresh_token ?? ''} onChange={(e) => setForm({ ...form, sub2api_refresh_token: e.target.value })} /></Field>
+              <Field label="New-Api-User">
+                <Input value={form.user_id ?? ''} onChange={(e) => update({ user_id: e.target.value })} />
+              </Field>
+              <Field label="Access Token">
+                <Input value={form.access_token ?? ''} onChange={(e) => update({ access_token: e.target.value })} />
+              </Field>
             </>
           )}
         </div>
-        <div className="flex justify-end"><Button onClick={() => save.mutate()}><Save className="size-4" />保存</Button></div>
+        {form.type === 'sub2api' && upstream && (
+          <div className="rounded-sm border border-border bg-secondary/50 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setTokenMessage('打开浏览器...')
+                  openBrowserLogin(browserLogin, () => setTokenMessage('浏览器已打开'), (error) => setTokenMessage(errorMessage(error)))
+                }}
+                disabled={browserLogin.isPending}
+              >
+                {browserLogin.isPending ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4" />}
+                浏览器登录
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => browserCapture.mutate()} disabled={browserCapture.isPending}>
+                {browserCapture.isPending ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
+                采集 Token
+              </Button>
+              {tokenMessage && (
+                <span className={cn('text-sm', browserCapture.isError || browserLogin.isError ? 'text-destructive' : 'text-muted-foreground')}>{tokenMessage}</span>
+              )}
+            </div>
+          </div>
+        )}
+        <div className="flex justify-end">
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+            {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            保存
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   )
 }
 
-function CardDialog({ rows, onSubmit }: { rows: UpstreamRow[]; onSubmit: (body: { upstream_id: string; key_id: string }) => void }) {
+function CardDialog({
+  rows,
+  onSubmit,
+  pending,
+}: {
+  rows: UpstreamRow[]
+  onSubmit: (body: { upstream_id: string; key_id: string }) => void
+  pending: boolean
+}) {
   const [open, setOpen] = useState(false)
   const [upstreamID, setUpstreamID] = useState('')
   const [keyID, setKeyID] = useState('')
-  const keys = useMemo(() => rows.find((r) => r.upstream.id === upstreamID)?.keys ?? [], [rows, upstreamID])
+  const keys = useMemo(() => keysOf(rows.find((row) => row.upstream.id === upstreamID)), [rows, upstreamID])
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild><Button size="sm"><KeyRound className="size-4" />新增卡片</Button></DialogTrigger>
+      <DialogTrigger asChild>
+        <Button size="sm">
+          <KeyRound className="size-4" />
+          新增卡片
+        </Button>
+      </DialogTrigger>
       <DialogContent>
         <DialogTitle>新增状态卡片</DialogTitle>
         <Field label="上游">
-          <Select value={upstreamID} onValueChange={(v) => { setUpstreamID(v); setKeyID('') }}>
-            <SelectTrigger><SelectValue placeholder="选择上游" /></SelectTrigger>
-            <SelectContent>{rows.map((r) => <SelectItem key={r.upstream.id} value={r.upstream.id}>{r.upstream.name}</SelectItem>)}</SelectContent>
+          <Select
+            value={upstreamID}
+            onValueChange={(value) => {
+              setUpstreamID(value)
+              setKeyID('')
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="选择上游" />
+            </SelectTrigger>
+            <SelectContent>
+              {rows.map((row) => (
+                <SelectItem key={row.upstream.id} value={row.upstream.id}>
+                  {row.upstream.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
         </Field>
         <Field label="Key">
           <Select value={keyID} onValueChange={setKeyID}>
-            <SelectTrigger><SelectValue placeholder="选择 Key" /></SelectTrigger>
-            <SelectContent>{keys.map((k) => <SelectItem key={k.id} value={k.id}>{k.name || k.description || k.id}</SelectItem>)}</SelectContent>
+            <SelectTrigger>
+              <SelectValue placeholder="选择 Key" />
+            </SelectTrigger>
+            <SelectContent>
+              {keys.map((key) => (
+                <SelectItem key={key.id} value={key.id}>
+                  {key.name || key.description || key.id}
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
         </Field>
-        <div className="flex justify-end"><Button onClick={() => { onSubmit({ upstream_id: upstreamID, key_id: keyID }); setOpen(false) }}>保存</Button></div>
+        <div className="flex justify-end">
+          <Button
+            onClick={() => {
+              onSubmit({ upstream_id: upstreamID, key_id: keyID })
+              setOpen(false)
+            }}
+            disabled={pending || !upstreamID || !keyID}
+          >
+            {pending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            保存
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   )
@@ -464,80 +954,361 @@ function SettingsPage() {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ['settings'], queryFn: () => api<SettingsData>('/api/settings') })
   const [form, setForm] = useState<SettingsData | null>(null)
+  const [message, setMessage] = useState('')
+  const [backupMessage, setBackupMessage] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const data = form ?? q.data
+  useAutoClear(message, '已保存', setMessage)
+  useAutoClear(backupMessage, '已导出|导入完成', setBackupMessage)
   const save = useMutation({
     mutationFn: () => api('/api/settings', { method: 'PATCH', body: JSON.stringify(data) }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['settings'] }),
+    onMutate: () => setMessage('保存中...'),
+    onSuccess: () => {
+      setMessage('已保存')
+      setForm(null)
+      void qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+    onError: (error) => setMessage(errorMessage(error)),
   })
+  const importData = useMutation({
+    mutationFn: (text: string) => api('/api/settings/import', { method: 'POST', body: text }),
+    onMutate: () => setBackupMessage('导入中...'),
+    onSuccess: () => {
+      setBackupMessage('导入完成')
+      setForm(null)
+      void invalidateMonitor(qc)
+      void qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+    onError: (error) => setBackupMessage(errorMessage(error)),
+  })
+  async function exportData() {
+    setBackupMessage('导出中...')
+    try {
+      const res = await fetch('/api/settings/export', { credentials: 'include' })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `ai-upstream-monitor-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      setBackupMessage('已导出')
+    } catch (error) {
+      setBackupMessage(errorMessage(error))
+    }
+  }
+  async function onImportFile(file?: File) {
+    if (!file) return
+    if (!window.confirm('导入会替换当前业务数据，继续吗？')) return
+    importData.mutate(await file.text())
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
   if (!data) return <ShellLoading />
   return (
-    <Page title="设置">
-      <div className="grid max-w-xl gap-4 rounded-lg border border-zinc-200 bg-white p-4">
-        <Field label="检查间隔（分钟）"><Input type="number" value={data.check_interval_minutes} onChange={(e) => setForm({ ...data, check_interval_minutes: Number(e.target.value) })} /></Field>
-        <Field label="Telegram Bot Token"><Input value={data.telegram_bot_token ?? ''} onChange={(e) => setForm({ ...data, telegram_bot_token: e.target.value })} /></Field>
-        <Field label="Telegram Chat ID"><Input value={data.telegram_chat_id ?? ''} onChange={(e) => setForm({ ...data, telegram_chat_id: e.target.value })} /></Field>
-        <Field label="探测模型"><Input value={data.probe_model} disabled /></Field>
-        <div><Button onClick={() => save.mutate()}><Save className="size-4" />保存</Button></div>
-      </div>
+    <Page title="设置" description="监控周期和 Telegram 告警">
+      <Card className="max-w-2xl bg-card">
+        <CardHeader>
+          <CardTitle>基础设置</CardTitle>
+          <CardDescription>探测模型由后端固定为 gpt-5.5</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <Field label="站点名称">
+            <Input value={data.site_name ?? ''} onChange={(e) => setForm({ ...data, site_name: e.target.value })} />
+          </Field>
+          <Field label="站点图标 URL">
+            <Input value={data.site_icon ?? ''} placeholder="/favicon.ico 或 https://..." onChange={(e) => setForm({ ...data, site_icon: e.target.value })} />
+          </Field>
+          <Field label="检查间隔（分钟）">
+            <Input type="number" value={data.check_interval_minutes} onChange={(e) => setForm({ ...data, check_interval_minutes: Number(e.target.value) })} />
+          </Field>
+          <Field label="Telegram Bot Token">
+            <Input value={data.telegram_bot_token ?? ''} onChange={(e) => setForm({ ...data, telegram_bot_token: e.target.value })} />
+          </Field>
+          <Field label="Telegram Chat ID">
+            <Input value={data.telegram_chat_id ?? ''} onChange={(e) => setForm({ ...data, telegram_chat_id: e.target.value })} />
+          </Field>
+          <Field label="探测模型">
+            <Input value={data.probe_model} disabled />
+          </Field>
+          {message && <div className={cn('rounded-sm px-3 py-2 text-sm', save.isError ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}>{message}</div>}
+          <div>
+            <Button onClick={() => save.mutate()} disabled={save.isPending}>
+              {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+              保存
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="max-w-2xl bg-card">
+        <CardHeader>
+          <CardTitle>数据备份</CardTitle>
+          <CardDescription>导出和导入上游、Key、卡片、余额、检查记录和告警记录</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          {backupMessage && (
+            <div className={cn('rounded-sm px-3 py-2 text-sm', importData.isError ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}>{backupMessage}</div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => void exportData()}>
+              <Download className="size-4" />
+              导出 JSON
+            </Button>
+            <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={importData.isPending}>
+              {importData.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+              导入 JSON
+            </Button>
+            <input ref={fileInputRef} className="hidden" type="file" accept="application/json,.json" onChange={(e) => void onImportFile(e.target.files?.[0])} />
+          </div>
+        </CardContent>
+      </Card>
     </Page>
   )
 }
 
 function Action({ path, label }: { path: string; label: string }) {
   const qc = useQueryClient()
+  const [message, setMessage] = useState('')
+  const verb = label.replace(' Key', '')
+  useAutoClear(message, `${verb}完成`, setMessage)
   const mutation = useMutation({
     mutationFn: () => api(path, { method: 'POST' }),
-    onSuccess: () => void Promise.all([qc.invalidateQueries({ queryKey: ['upstreams'] }), qc.invalidateQueries({ queryKey: ['balances'] }), qc.invalidateQueries({ queryKey: ['status'] })]),
+    onMutate: () => setMessage(`${verb}中...`),
+    onSuccess: async () => {
+      setMessage(`${verb}完成`)
+      await invalidateMonitor(qc)
+    },
+    onError: (error) => setMessage(errorMessage(error)),
   })
-  return <Button variant="outline" size="sm" onClick={() => mutation.mutate()} disabled={mutation.isPending}>{label}</Button>
-}
-
-function WindowSelect({ value, setValue }: { value: string; setValue: (v: string) => void }) {
   return (
-    <Select value={value} onValueChange={setValue}>
-      <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-      <SelectContent>{['1h', '3h', '5h', '1d', '7d', '15d'].map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent>
-    </Select>
+    <div className="relative">
+      <Button variant="outline" size="sm" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+        {mutation.isPending && <Loader2 className="size-3 animate-spin" />}
+        {mutation.isPending ? `${verb}中` : label}
+      </Button>
+      {message && !mutation.isPending && <div className="absolute right-0 top-10 z-10 whitespace-nowrap rounded-sm border border-border bg-background px-2 py-1 text-xs text-muted-foreground">{message}</div>}
+    </div>
   )
 }
 
-function Page({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
+function IconAction({
+  title,
+  icon: Icon,
+  onClick,
+  pending,
+  danger,
+}: {
+  title: string
+  icon: ElementType
+  onClick: () => void
+  pending: boolean
+  danger?: boolean
+}) {
   return (
-    <div className="grid gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold tracking-normal">{title}</h1>
+    <Button variant={danger ? 'danger' : 'outline'} size="icon" onClick={onClick} disabled={pending} title={title}>
+      {pending ? <Loader2 className="size-4 animate-spin" /> : <Icon className="size-4" />}
+      <span className="sr-only">{title}</span>
+    </Button>
+  )
+}
+
+function openBrowserLogin(
+  mutation: { mutate: (variables: void, options: { onSuccess: (out: { vnc_url: string }) => void; onError: (error: unknown) => void }) => void },
+  onSuccess?: () => void,
+  onError?: (error: unknown) => void,
+) {
+  const win = window.open(browserVNCURL, 'ai-upstream-monitor-vnc', 'popup=yes,width=1280,height=900')
+  browserLoginWindow = win
+  mutation.mutate(undefined, {
+    onSuccess: () => onSuccess?.(),
+    onError: (error) => {
+      closeBrowserLoginWindow()
+      if (onError) {
+        onError(error)
+      } else {
+        window.alert(errorMessage(error))
+      }
+    },
+  })
+}
+
+function WindowSelect({ value, setValue }: { value: string; setValue: (value: string) => void }) {
+  return (
+    <div className="flex overflow-hidden rounded-sm border border-border bg-background">
+      {windows.map((item) => (
+        <button
+          key={item}
+          className={cn('h-9 min-w-12 border-r border-border px-3 text-sm last:border-r-0', value === item ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary')}
+          onClick={() => setValue(item)}
+        >
+          {item}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function Page({
+  title,
+  description,
+  actions,
+  children,
+}: {
+  title: string
+  description?: string
+  actions?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <section className="grid animate-in fade-in-50 slide-in-from-bottom-1 gap-4 duration-300">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="font-display text-4xl font-normal leading-tight">{title}</h1>
+          {description && <p className="text-sm text-muted-foreground">{description}</p>}
+        </div>
         {actions}
       </div>
+      {children}
+    </section>
+  )
+}
+
+function Metric({ label, value, accent }: { label: string; value: ReactNode; accent?: 'success' | 'danger' }) {
+  return (
+    <Card className="gap-2 bg-card py-4">
+      <CardContent className="px-4">
+        <div className="text-sm text-muted-foreground">{label}</div>
+        <div className={cn('font-display mt-1 text-3xl font-normal', accent === 'success' && 'text-success', accent === 'danger' && 'text-destructive')}>
+          {value}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function MiniStat({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="rounded-sm border border-border bg-background px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate font-medium">{value}</div>
+    </div>
+  )
+}
+
+function EmptyPanel({ text }: { text: string }) {
+  return (
+    <Card className="bg-card">
+      <CardContent className="py-12 text-center text-muted-foreground">{text}</CardContent>
+    </Card>
+  )
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid gap-2">
+      <label className="text-sm font-medium leading-none text-foreground">{label}</label>
       {children}
     </div>
   )
 }
 
-function Metric({ label, value }: { label: string; value: React.ReactNode }) {
+function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4">
-      <div className="text-sm text-zinc-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold">{value}</div>
+    <TableRow>
+      <TableCell colSpan={colSpan} className="h-24 text-center text-muted-foreground">
+        {text}
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function SkeletonRows({ cells, rows = 3 }: { cells: number; rows?: number }) {
+  return Array.from({ length: rows }).map((_, row) => (
+    <TableRow key={row}>
+      {Array.from({ length: cells }).map((__, cell) => (
+        <TableCell key={cell}>
+          <Skeleton className="h-5 w-full min-w-16" />
+        </TableCell>
+      ))}
+    </TableRow>
+  ))
+}
+
+function SkeletonCardGrid({ count }: { count: number }) {
+  return (
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {Array.from({ length: count }).map((_, index) => (
+        <Card key={index} className="bg-card">
+          <CardContent className="grid gap-4">
+            <Skeleton className="h-6 w-2/3" />
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-16 w-full" />
+          </CardContent>
+        </Card>
+      ))}
     </div>
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="field"><label>{label}</label>{children}</div>
+function TypeBadge({ type }: { type: string }) {
+  return <Badge variant="secondary">{type === 'newapi' ? 'new-api' : 'sub2api'}</Badge>
 }
 
-function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
-  return <tr><td colSpan={colSpan} className="py-10 text-center text-zinc-500">{text}</td></tr>
+function StatusBadge({ ok, okText, failText }: { ok: boolean; okText: string; failText: string }) {
+  return (
+    <Badge variant={ok ? 'success' : 'destructive'}>
+      {ok ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}
+      {ok ? okText : failText}
+    </Badge>
+  )
 }
 
-function num(v: number | undefined) {
-  if (v === undefined || Number.isNaN(v)) return '-'
-  return Number(v).toFixed(2)
+function keysOf(row: UpstreamRow | undefined) {
+  return row?.keys ?? []
 }
 
-function fmtTime(v?: string) {
-  if (!v) return '-'
-  const d = new Date(v)
-  if (Number.isNaN(d.getTime())) return '-'
-  return d.toLocaleString('zh-CN', { hour12: false })
+function confirmDelete(name: string) {
+  return window.confirm(`确认删除 ${name}？`)
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function useAutoClear(value: string, targets: string, clear: (value: string) => void) {
+  useEffect(() => {
+    if (!targets.split('|').includes(value)) return
+    const timer = window.setTimeout(() => clear(''), 1800)
+    return () => window.clearTimeout(timer)
+  }, [clear, targets, value])
+}
+
+function invalidateMonitor(qc: ReturnType<typeof useQueryClient>) {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: ['upstreams'] }),
+    qc.invalidateQueries({ queryKey: ['cards'] }),
+    qc.invalidateQueries({ queryKey: ['balances'] }),
+    qc.invalidateQueries({ queryKey: ['status'] }),
+  ])
+}
+
+function num(value: number | undefined) {
+  if (value === undefined || Number.isNaN(value)) return '-'
+  return Number(value).toFixed(2)
+}
+
+function latestRefreshTime(rows: BalanceRow[]) {
+  const latest = rows.reduce((max, row) => {
+    const value = row.last_check ? new Date(row.last_check).getTime() : Number.NaN
+    return Number.isNaN(value) || value <= max ? max : value
+  }, 0)
+  return latest ? new Date(latest).toISOString() : ''
+}
+
+function fmtTime(value?: string) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return date.toLocaleString('zh-CN', { hour12: false })
 }

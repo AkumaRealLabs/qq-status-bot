@@ -44,22 +44,23 @@ type APIKey struct {
 }
 
 type ModelCard struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	UpstreamID   string     `json:"upstream_id"`
-	UpstreamName string     `json:"upstream_name,omitempty"`
-	Type         string     `json:"type,omitempty"`
-	KeyID        string     `json:"key_id"`
-	KeyName      string     `json:"key_name,omitempty"`
-	KeyGroup     string     `json:"key_group,omitempty"`
-	KeyRatio     string     `json:"key_group_ratio,omitempty"`
-	Model        string     `json:"model"`
-	Enabled      bool       `json:"enabled"`
-	LastError    string     `json:"last_error"`
-	FailureCount int        `json:"failure_count"`
-	History      []ProbeRun `json:"history,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	UpstreamID     string     `json:"upstream_id"`
+	UpstreamName   string     `json:"upstream_name,omitempty"`
+	Type           string     `json:"type,omitempty"`
+	KeyID          string     `json:"key_id"`
+	KeyName        string     `json:"key_name,omitempty"`
+	KeyGroup       string     `json:"key_group,omitempty"`
+	KeyRatio       string     `json:"key_group_ratio,omitempty"`
+	EffectiveRatio string     `json:"effective_ratio,omitempty"`
+	Model          string     `json:"model"`
+	Enabled        bool       `json:"enabled"`
+	LastError      string     `json:"last_error"`
+	FailureCount   int        `json:"failure_count"`
+	History        []ProbeRun `json:"history,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type BalanceSnapshot struct {
@@ -102,6 +103,8 @@ type Settings struct {
 	TelegramBotToken     string `json:"telegram_bot_token,omitempty"`
 	TelegramChatID       string `json:"telegram_chat_id,omitempty"`
 	ProbeModel           string `json:"probe_model"`
+	SiteName             string `json:"site_name"`
+	SiteIcon             string `json:"site_icon"`
 }
 
 type User struct {

@@ -51,8 +51,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/cards/{id}/check", s.auth(s.checkCard))
 	mux.HandleFunc("GET /api/settings", s.auth(s.settings))
 	mux.HandleFunc("PATCH /api/settings", s.auth(s.updateSettings))
+	mux.HandleFunc("GET /api/settings/export", s.auth(s.exportData))
+	mux.HandleFunc("POST /api/settings/import", s.auth(s.importData))
 	mux.HandleFunc("GET /api/monitor/status", s.auth(s.monitorStatus))
 	mux.HandleFunc("GET /api/monitor/balances", s.auth(s.balances))
+	mux.HandleFunc("POST /api/monitor/balances/refresh", s.auth(s.refreshBalances))
 	mux.HandleFunc("/browser/", s.auth(s.proxyBrowser))
 	mux.HandleFunc("/websockify", s.auth(s.proxyBrowser))
 	mux.Handle("/", s.static())
@@ -222,6 +225,26 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSONOrError(w, cfg, err)
 }
 
+func (s *Server) exportData(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.Store.ExportData(r.Context())
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="ai-upstream-monitor-export.json"`)
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	var in store.ExportData
+	if !decode(w, r, &in) {
+		return
+	}
+	writeNoContentOrError(w, s.App.Store.ImportData(r.Context(), in))
+}
+
 func (s *Server) monitorStatus(w http.ResponseWriter, r *http.Request) {
 	out, err := s.App.MonitorStatus(r.Context(), r.URL.Query().Get("window"))
 	writeJSONOrError(w, out, err)
@@ -230,6 +253,10 @@ func (s *Server) monitorStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) balances(w http.ResponseWriter, r *http.Request) {
 	out, err := s.App.BalanceRows(r.Context())
 	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) refreshBalances(w http.ResponseWriter, r *http.Request) {
+	writeNoContentOrError(w, s.App.RefreshBalances(r.Context()))
 }
 
 func (s *Server) browserLogin(w http.ResponseWriter, r *http.Request) {
@@ -374,6 +401,10 @@ func browserProxyURL() string {
 }
 
 func (s *Server) proxyBrowser(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/browser/package.json" {
+		writeJSON(w, map[string]string{"name": "novnc"})
+		return
+	}
 	target, err := url.Parse(browserProxyURL())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "bad browser proxy url")
@@ -394,6 +425,25 @@ func (s *Server) proxyBrowser(w http.ResponseWriter, r *http.Request) {
 }
 
 func openBrowserURL(rawurl string) error {
+	tabs, err := browserTabs()
+	if err == nil {
+		base, _ := url.Parse(rawurl)
+		keepID := ""
+		for _, tab := range tabs {
+			u, _ := url.Parse(tab.URL)
+			if tab.Type != "page" || tab.ID == "" || u.Host != base.Host {
+				continue
+			}
+			if keepID == "" {
+				keepID = tab.ID
+				continue
+			}
+			_ = closeBrowserTab(tab.ID)
+		}
+		if keepID != "" {
+			return activateBrowserTab(keepID)
+		}
+	}
 	resp, err := browserDebugDo(http.MethodPut, "/json/new?"+url.QueryEscape(rawurl))
 	if err != nil {
 		return err
@@ -405,20 +455,40 @@ func openBrowserURL(rawurl string) error {
 	return nil
 }
 
+func activateBrowserTab(id string) error {
+	resp, err := browserDebugDo(http.MethodGet, "/json/activate/"+url.PathEscape(id))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.New("browser devtools status " + resp.Status)
+	}
+	return nil
+}
+
+func closeBrowserTab(id string) error {
+	resp, err := browserDebugDo(http.MethodGet, "/json/close/"+url.PathEscape(id))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.New("browser devtools status " + resp.Status)
+	}
+	return nil
+}
+
 type debugTab struct {
+	ID                   string `json:"id"`
 	Type                 string `json:"type"`
 	URL                  string `json:"url"`
 	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
 }
 
 func browserTab(baseURL string) (debugTab, error) {
-	resp, err := browserDebugDo(http.MethodGet, "/json")
+	tabs, err := browserTabs()
 	if err != nil {
-		return debugTab{}, err
-	}
-	defer resp.Body.Close()
-	var tabs []debugTab
-	if err := json.NewDecoder(resp.Body).Decode(&tabs); err != nil {
 		return debugTab{}, err
 	}
 	base, _ := url.Parse(baseURL)
@@ -430,6 +500,19 @@ func browserTab(baseURL string) (debugTab, error) {
 		}
 	}
 	return debugTab{}, errors.New("找不到已打开的登录页")
+}
+
+func browserTabs() ([]debugTab, error) {
+	resp, err := browserDebugDo(http.MethodGet, "/json")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var tabs []debugTab
+	if err := json.NewDecoder(resp.Body).Decode(&tabs); err != nil {
+		return nil, err
+	}
+	return tabs, nil
 }
 
 func browserDebugDo(method, path string) (*http.Response, error) {
