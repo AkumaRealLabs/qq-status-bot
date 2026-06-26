@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"strings"
@@ -168,6 +169,7 @@ func main() {
 				}
 				return re.NoContent(http.StatusNoContent)
 			})
+			e.Router.GET("/browser/{path...}", proxyBrowser)
 			if !e.Router.HasRoute(http.MethodGet, "/{path...}") {
 				e.Router.GET("/{path...}", apis.Static(distFS, true))
 			}
@@ -1152,7 +1154,8 @@ func lockSuperuser(col *core.Collection) {
 
 const (
 	defaultBrowserDebugURL = "http://127.0.0.1:19222"
-	defaultBrowserVNCURL   = "http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale"
+	defaultBrowserProxyURL = "http://127.0.0.1:6080"
+	defaultBrowserVNCURL   = "/browser/vnc.html?autoconnect=true&resize=scale"
 )
 
 func openLoginBrowser(app core.App, upstreamID string) (map[string]any, error) {
@@ -1240,6 +1243,29 @@ func browserVNCURL() string {
 		return v
 	}
 	return defaultBrowserVNCURL
+}
+
+func browserProxyURL() string {
+	if v := strings.TrimRight(os.Getenv("BROWSER_PROXY_URL"), "/"); v != "" {
+		return v
+	}
+	return defaultBrowserProxyURL
+}
+
+func proxyBrowser(re *core.RequestEvent) error {
+	target, err := url.Parse(browserProxyURL())
+	if err != nil {
+		return re.InternalServerError("bad browser proxy url", err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		req.URL.Path = "/" + strings.TrimPrefix(req.URL.Path, "/browser/")
+		req.Host = target.Host
+	}
+	proxy.ServeHTTP(re.Response, re.Request)
+	return nil
 }
 
 func openBrowserURL(rawurl string) error {

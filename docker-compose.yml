@@ -6,7 +6,8 @@ services:
       - "8090:8090"
     environment:
       BROWSER_DEBUG_URL: http://browser:9222
-      BROWSER_VNC_URL: http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale
+      BROWSER_PROXY_URL: http://browser:6080
+      BROWSER_VNC_URL: /browser/vnc.html?autoconnect=true&resize=scale
       TZ: Asia/Shanghai
     volumes:
       - ./pb_data:/app/pb_data
@@ -20,8 +21,6 @@ services:
       context: .
       dockerfile: browser/Dockerfile
     shm_size: 1gb
-    ports:
-      - "127.0.0.1:6080:6080"
     volumes:
       - browser_profile:/profile
     restart: unless-stopped
