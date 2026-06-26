@@ -170,6 +170,7 @@ func main() {
 				return re.NoContent(http.StatusNoContent)
 			})
 			e.Router.GET("/browser/{path...}", proxyBrowser)
+			e.Router.GET("/websockify", proxyBrowserWebsockify)
 			if !e.Router.HasRoute(http.MethodGet, "/{path...}") {
 				e.Router.GET("/{path...}", apis.Static(distFS, true))
 			}
@@ -1253,6 +1254,14 @@ func browserProxyURL() string {
 }
 
 func proxyBrowser(re *core.RequestEvent) error {
+	return proxyBrowserPath(re, "/"+strings.TrimPrefix(re.Request.URL.Path, "/browser/"))
+}
+
+func proxyBrowserWebsockify(re *core.RequestEvent) error {
+	return proxyBrowserPath(re, re.Request.URL.Path)
+}
+
+func proxyBrowserPath(re *core.RequestEvent, path string) error {
 	target, err := url.Parse(browserProxyURL())
 	if err != nil {
 		return re.InternalServerError("bad browser proxy url", err)
@@ -1261,7 +1270,7 @@ func proxyBrowser(re *core.RequestEvent) error {
 	proxy.Director = func(req *http.Request) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
-		req.URL.Path = "/" + strings.TrimPrefix(req.URL.Path, "/browser/")
+		req.URL.Path = path
 		req.Host = target.Host
 	}
 	proxy.ServeHTTP(re.Response, re.Request)
