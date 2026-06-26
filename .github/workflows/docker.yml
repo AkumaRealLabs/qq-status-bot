@@ -12,6 +12,7 @@ permissions:
 
 env:
   GHCR_OWNER: akumareallabs
+  GHCR_USER: Akuma-real
 
 jobs:
   docker:
@@ -24,8 +25,8 @@ jobs:
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ env.GHCR_USER }}
+          password: ${{ secrets.GHCR_TOKEN }}
 
       - id: images
         run: |
