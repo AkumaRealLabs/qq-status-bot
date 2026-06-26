@@ -1,17 +1,18 @@
-FROM alpine:3.22
+FROM debian:bookworm-slim
 
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     chromium \
-    font-wqy-zenhei \
+    fonts-wqy-zenhei \
     novnc \
     socat \
     websockify \
     x11vnc \
+    x11-utils \
     xvfb \
-    xrandr
+    && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /profile
 
@@ -25,6 +26,9 @@ CMD rm -f /tmp/.X99-lock /profile/SingletonLock /profile/SingletonSocket /profil
     DISPLAY=:99 chromium \
       --no-sandbox \
       --disable-dev-shm-usage \
+      --disable-gpu \
+      --disable-features=UseOzonePlatform,Vulkan \
+      --ozone-platform=x11 \
       --user-data-dir=/profile \
       --remote-debugging-address=127.0.0.1 \
       --remote-debugging-port=19222 \
