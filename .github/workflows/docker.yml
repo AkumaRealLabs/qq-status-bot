@@ -1,0 +1,56 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.4"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: go test ./...
+      - working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+      - run: docker build -t ghcr.io/akumareallabs/ai-upstream-monitor:test .
+      - run: docker build -f browser/Dockerfile -t ghcr.io/akumareallabs/ai-upstream-monitor-browser:test .
+
+  publish:
+    if: github.event_name == 'push'
+    needs: test-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/akumareallabs/ai-upstream-monitor:latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: browser/Dockerfile
+          push: true
+          tags: ghcr.io/akumareallabs/ai-upstream-monitor-browser:latest

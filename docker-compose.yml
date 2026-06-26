@@ -1,0 +1,32 @@
+services:
+  app:
+    image: ${APP_IMAGE:-ghcr.io/akumareallabs/ai-upstream-monitor:latest}
+    build: .
+    ports:
+      - "127.0.0.1:8090:8090"
+    environment:
+      DATABASE_DSN: /app/data/monitor.sqlite
+      PB_DATA_DB: /app/pb_data/data.db
+      BROWSER_DEBUG_URL: http://browser:9222
+      BROWSER_PROXY_URL: http://browser:6080
+      BROWSER_VNC_URL: /browser/vnc.html?autoconnect=true&resize=scale
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/app/data
+      - ./pb_data:/app/pb_data:ro
+    depends_on:
+      - browser
+    restart: unless-stopped
+
+  browser:
+    image: ${BROWSER_IMAGE:-ghcr.io/akumareallabs/ai-upstream-monitor-browser:latest}
+    build:
+      context: .
+      dockerfile: browser/Dockerfile
+    shm_size: 1gb
+    volumes:
+      - browser_profile:/profile
+    restart: unless-stopped
+
+volumes:
+  browser_profile:
