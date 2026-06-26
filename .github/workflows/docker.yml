@@ -26,9 +26,9 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - run: go test ./...
       - working-directory: frontend
         run: pnpm install --frozen-lockfile && pnpm build
+      - run: go test ./...
       - run: docker build -t ghcr.io/akumareallabs/ai-upstream-monitor:test .
       - run: docker build -f browser/Dockerfile -t ghcr.io/akumareallabs/ai-upstream-monitor-browser:test .
 
