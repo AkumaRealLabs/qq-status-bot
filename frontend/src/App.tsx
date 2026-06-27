@@ -470,7 +470,7 @@ function StatusMonitorCard({ card, windowValue }: { card: ModelCard; windowValue
   const history = (card.history ?? []).slice(-12)
   const latest = history.at(-1)
   const ok = latest ? probeOK(latest) : !card.last_error
-  const statusText = latest ? probeStatus(latest) : ok ? 'operational' : 'failed'
+  const statusText = latest ? probeStatusLabel(probeStatus(latest)) : ok ? probeStatusLabel('operational') : probeStatusLabel('failed')
   const successCount = history.filter(probeOK).length
   const uptime = history.length ? `${((successCount / history.length) * 100).toFixed(2)}%` : '-'
   const groupName = card.key_group || '-'
@@ -1229,7 +1229,7 @@ function HoverText({ value, className, children }: { value?: string; className?:
     <span className={cn('group relative block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30', className)} tabIndex={0}>
       {children ?? <span className="block truncate">{text}</span>}
       {text !== '-' && (
-        <span className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 hidden max-w-[min(520px,calc(100vw-32px))] whitespace-pre-wrap break-words rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-relaxed text-popover-foreground shadow-lg group-hover:block group-focus:block">
+        <span className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 hidden w-max min-w-56 max-w-[min(520px,calc(100vw-32px))] whitespace-pre-wrap break-words rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-relaxed text-popover-foreground shadow-lg group-hover:block group-focus:block">
           {text}
         </span>
       )}
@@ -1385,14 +1385,24 @@ function probeOK(probe: Probe) {
   return status === 'operational' || status === 'degraded'
 }
 
+function probeStatusLabel(status: string) {
+  return ({
+    operational: '正常',
+    degraded: '延迟偏高',
+    validation_failed: '验证失败',
+    failed: '请求失败',
+    error: '探测错误',
+  } as Record<string, string>)[status] || status || '-'
+}
+
 function probeHover(probe: Probe) {
   return [
-    `状态：${probeStatus(probe)}`,
+    `状态：${probeStatusLabel(probeStatus(probe))}`,
     `延迟：${probe.latency_ms} ms`,
     `HTTP 状态：${probe.http_status || '-'}`,
     `检查时间：${fmtTime(probe.checked_at)}`,
     probe.error ? `详情：${probe.error}` : '',
-    probe.output ? `回复：${probe.output}` : '',
+    probe.output ? `验证题答案：${probe.output}` : '',
   ].filter(Boolean).join('\n')
 }
 
