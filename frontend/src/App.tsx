@@ -517,6 +517,7 @@ function StatusMonitorCard({ card, windowValue }: { card: ModelCard; windowValue
                     key={`${probe.checked_at}-${index}`}
                     value={probeHoverTitle(probe)}
                     content={<ProbeTooltip probe={probe} />}
+                    nativeTitle={false}
                     className={cn('h-4 rounded-sm', good ? 'bg-success' : 'bg-destructive')}
                   >
                     <span className="sr-only">{probeStatus(probe)}</span>
@@ -1229,13 +1230,25 @@ function IconAction({
   )
 }
 
-function HoverText({ value, className, children, content }: { value?: string; className?: string; children?: ReactNode; content?: ReactNode }) {
+function HoverText({
+  value,
+  className,
+  children,
+  content,
+  nativeTitle = true,
+}: {
+  value?: string
+  className?: string
+  children?: ReactNode
+  content?: ReactNode
+  nativeTitle?: boolean
+}) {
   const text = value || '-'
   return (
-    <span className={cn('group relative block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30', className)} tabIndex={0} title={text}>
+    <span className={cn('group relative block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30', className)} tabIndex={0} title={nativeTitle ? text : undefined}>
       {children ?? <span className="block truncate">{text}</span>}
       {text !== '-' && (
-        <span className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 hidden w-max min-w-56 max-w-[min(520px,calc(100vw-32px))] rounded-md border border-border bg-popover text-left text-popover-foreground shadow-lg group-hover:block group-focus:block">
+        <span className="pointer-events-none fixed z-50 mt-[-156px] hidden w-max min-w-56 max-w-[min(520px,calc(100vw-32px))] rounded-md border border-border bg-popover text-left text-popover-foreground shadow-lg group-hover:block group-focus:block">
           {content ?? <span className="block whitespace-pre-wrap break-words px-3 py-2 text-sm leading-[1.55]">{text}</span>}
         </span>
       )}
@@ -1433,7 +1446,7 @@ function ProbeTooltip({ probe }: { probe: Probe }) {
 
 function probeHoverTitle(probe: Probe) {
   const ok = probeOK(probe)
-  return `状态：${probeStatusLabel(probeStatus(probe))}\n模型验证：${ok ? '通过' : '未通过'}\n检查时间：${fmtTime(probe.checked_at)}`
+  return `状态：${probeStatusLabel(probeStatus(probe))}\n延迟：${probe.latency_ms} ms\nHTTP 状态：${probe.http_status || '-'}\n模型验证：${ok ? '通过' : '未通过'}\n检查时间：${fmtTime(probe.checked_at)}`
 }
 
 function TypeBadge({ type }: { type: string }) {
