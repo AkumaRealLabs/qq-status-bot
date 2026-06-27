@@ -33,6 +33,7 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/setup/status", s.setupStatus)
 	mux.HandleFunc("GET /api/public/settings", s.publicSettings)
+	mux.HandleFunc("GET /api/public/monitor/status", s.publicMonitorStatus)
 	mux.HandleFunc("POST /api/setup", s.setup)
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("POST /api/auth/logout", s.auth(s.logout))
@@ -47,6 +48,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/upstreams/{id}/browser-capture", s.auth(s.browserCapture))
 	mux.HandleFunc("GET /api/cards", s.auth(s.listCards))
 	mux.HandleFunc("POST /api/cards", s.auth(s.createCard))
+	mux.HandleFunc("POST /api/cards/order", s.auth(s.sortCards))
 	mux.HandleFunc("PATCH /api/cards/{id}", s.auth(s.updateCard))
 	mux.HandleFunc("DELETE /api/cards/{id}", s.auth(s.deleteCard))
 	mux.HandleFunc("POST /api/cards/{id}/check", s.auth(s.checkCard))
@@ -59,6 +61,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/monitor/balances/refresh", s.auth(s.refreshBalances))
 	mux.HandleFunc("/browser/", s.auth(s.proxyBrowser))
 	mux.HandleFunc("/websockify", s.auth(s.proxyBrowser))
+	mux.HandleFunc("GET /admin", redirectTo("/admin/status"))
+	mux.HandleFunc("GET /status", redirectTo("/admin/status"))
+	mux.HandleFunc("GET /balances", redirectTo("/admin/balances"))
+	mux.HandleFunc("GET /upstreams", redirectTo("/admin/upstreams"))
+	mux.HandleFunc("GET /settings", redirectTo("/admin/settings"))
 	mux.Handle("/", s.static())
 	return mux
 }
@@ -172,9 +179,13 @@ func (s *Server) listCards(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		UpstreamID string `json:"upstream_id"`
-		KeyID      string `json:"key_id"`
-		Enabled    *bool  `json:"enabled"`
+		Name          string `json:"name"`
+		BaseURL       string `json:"base_url"`
+		APIKey        string `json:"api_key"`
+		UpstreamID    string `json:"upstream_id"`
+		KeyID         string `json:"key_id"`
+		Enabled       *bool  `json:"enabled"`
+		PublicEnabled *bool  `json:"public_enabled"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -183,29 +194,69 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled != nil {
 		enabled = *body.Enabled
 	}
-	card, err := s.App.SaveCard(r.Context(), "", body.UpstreamID, body.KeyID, enabled)
+	publicEnabled := false
+	if body.PublicEnabled != nil {
+		publicEnabled = *body.PublicEnabled
+	}
+	card, err := s.App.SaveCard(r.Context(), "", domain.ModelCard{
+		Name: body.Name, BaseURL: body.BaseURL, APIKey: body.APIKey, UpstreamID: body.UpstreamID, KeyID: body.KeyID,
+		Enabled: enabled, PublicEnabled: publicEnabled,
+	})
 	writeJSONOrError(w, card, err)
 }
 
 func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		UpstreamID string `json:"upstream_id"`
-		KeyID      string `json:"key_id"`
-		Enabled    *bool  `json:"enabled"`
+		Name          string `json:"name"`
+		BaseURL       string `json:"base_url"`
+		APIKey        string `json:"api_key"`
+		UpstreamID    string `json:"upstream_id"`
+		KeyID         string `json:"key_id"`
+		Enabled       *bool  `json:"enabled"`
+		PublicEnabled *bool  `json:"public_enabled"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	enabled := true
+	old, err := s.App.Store.Card(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	enabled := old.Enabled
 	if body.Enabled != nil {
 		enabled = *body.Enabled
 	}
-	card, err := s.App.SaveCard(r.Context(), r.PathValue("id"), body.UpstreamID, body.KeyID, enabled)
+	publicEnabled := old.PublicEnabled
+	if body.PublicEnabled != nil {
+		publicEnabled = *body.PublicEnabled
+	}
+	name, baseURL, apiKey, upstreamID, keyID := body.Name, body.BaseURL, body.APIKey, body.UpstreamID, body.KeyID
+	if name == "" {
+		name = old.Name
+	}
+	if baseURL == "" && apiKey == "" && upstreamID == "" && keyID == "" {
+		baseURL, apiKey, upstreamID, keyID = old.BaseURL, old.APIKey, old.UpstreamID, old.KeyID
+	}
+	card, err := s.App.SaveCard(r.Context(), r.PathValue("id"), domain.ModelCard{
+		Name: name, BaseURL: baseURL, APIKey: apiKey, UpstreamID: upstreamID, KeyID: keyID,
+		Enabled: enabled, PublicEnabled: publicEnabled,
+	})
 	writeJSONOrError(w, card, err)
 }
 
 func (s *Server) deleteCard(w http.ResponseWriter, r *http.Request) {
 	writeNoContentOrError(w, s.App.Store.DeleteCard(r.Context(), r.PathValue("id")))
+}
+
+func (s *Server) sortCards(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	writeNoContentOrError(w, s.App.SortCards(r.Context(), body.IDs))
 }
 
 func (s *Server) checkCard(w http.ResponseWriter, r *http.Request) {
@@ -257,6 +308,11 @@ func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) monitorStatus(w http.ResponseWriter, r *http.Request) {
 	out, err := s.App.MonitorStatus(r.Context(), r.URL.Query().Get("window"))
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) publicMonitorStatus(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.PublicMonitorStatus(r.Context(), r.URL.Query().Get("window"))
 	writeJSONOrError(w, out, err)
 }
 
@@ -356,6 +412,12 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func redirectTo(path string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, path, http.StatusTemporaryRedirect)
+	}
 }
 
 func (s *Server) static() http.Handler {

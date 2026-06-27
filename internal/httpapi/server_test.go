@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"ai-upstream-monitor/internal/app"
+	"ai-upstream-monitor/internal/domain"
+	"ai-upstream-monitor/internal/monitor"
 	"ai-upstream-monitor/internal/store"
 )
 
@@ -104,5 +106,68 @@ func TestPublicSettingsDoesNotRequireAuth(t *testing.T) {
 	}
 	if out["site_name"] != "GG API" || out["site_icon"] != "/logo.png" || len(out) != 2 {
 		t.Fatalf("public settings = %#v", out)
+	}
+}
+
+func TestPublicMonitorStatusDoesNotRequireAuth(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "公开", BaseURL: "https://api.example.test", APIKey: "sk-public", Enabled: true, PublicEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational, Input: "hidden", Output: "hidden"}); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/api/public/monitor/status?window=1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(out)
+	if strings.Contains(string(body), "sk-public") || strings.Contains(string(body), "hidden") {
+		t.Fatalf("public body = %s", body)
+	}
+}
+
+func TestLegacyAdminPathsRedirect(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
+	defer ts.Close()
+	client := ts.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	for path, want := range map[string]string{"/status": "/admin/status", "/balances": "/admin/balances", "/upstreams": "/admin/upstreams", "/settings": "/admin/settings"} {
+		resp, err := client.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != want {
+			t.Fatalf("%s status=%d location=%q", path, resp.StatusCode, resp.Header.Get("Location"))
+		}
 	}
 }

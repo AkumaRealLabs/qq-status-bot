@@ -46,21 +46,31 @@ type APIKey struct {
 type ModelCard struct {
 	ID             string     `json:"id"`
 	Name           string     `json:"name"`
-	UpstreamID     string     `json:"upstream_id"`
+	BaseURL        string     `json:"base_url,omitempty"`
+	APIKey         string     `json:"api_key,omitempty"`
+	UpstreamID     string     `json:"upstream_id,omitempty"`
 	UpstreamName   string     `json:"upstream_name,omitempty"`
 	Type           string     `json:"type,omitempty"`
-	KeyID          string     `json:"key_id"`
+	KeyID          string     `json:"key_id,omitempty"`
 	KeyName        string     `json:"key_name,omitempty"`
 	KeyGroup       string     `json:"key_group,omitempty"`
 	KeyRatio       string     `json:"key_group_ratio,omitempty"`
 	EffectiveRatio string     `json:"effective_ratio,omitempty"`
 	Model          string     `json:"model"`
 	Enabled        bool       `json:"enabled"`
+	PublicEnabled  bool       `json:"public_enabled"`
+	SortOrder      int        `json:"sort_order"`
 	LastError      string     `json:"last_error"`
 	FailureCount   int        `json:"failure_count"`
 	History        []ProbeRun `json:"history,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type PublicModelCard struct {
+	Name      string           `json:"name"`
+	LastError string           `json:"last_error,omitempty"`
+	History   []PublicProbeRun `json:"history,omitempty"`
 }
 
 type BalanceSnapshot struct {
@@ -88,6 +98,15 @@ type ProbeRun struct {
 	LatencyMS  int       `json:"latency_ms"`
 	Success    bool      `json:"success"`
 	Error      string    `json:"error"`
+}
+
+type PublicProbeRun struct {
+	CheckedAt  time.Time `json:"checked_at"`
+	Status     string    `json:"status"`
+	HTTPStatus int       `json:"http_status"`
+	LatencyMS  int       `json:"latency_ms"`
+	Success    bool      `json:"-"`
+	Error      string    `json:"error,omitempty"`
 }
 
 type AlertEvent struct {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/monitor"
 
 	_ "modernc.org/sqlite"
@@ -133,6 +134,110 @@ func TestMigrateAddsProbeStatusColumns(t *testing.T) {
 	}
 	if !cols["status"] || !cols["output"] {
 		t.Fatalf("columns = %#v", cols)
+	}
+}
+
+func TestMigrateAddsCardPublicAndCustomColumns(t *testing.T) {
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "old.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.exec(t.Context(), `CREATE TABLE model_cards (
+		id TEXT PRIMARY KEY, name TEXT NOT NULL, upstream_id TEXT NOT NULL, key_id TEXT NOT NULL DEFAULT '',
+		model TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_error TEXT NOT NULL DEFAULT '',
+		failure_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.exec(t.Context(), `INSERT INTO model_cards (id, name, upstream_id, model, created_at, updated_at) VALUES ('c1', '旧卡片', 'u1', 'gpt-5.5', ?, ?)`, nowText(), nowText()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cols, err := s.columns(t.Context(), "model_cards")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cols["base_url"] || !cols["api_key"] || !cols["public_enabled"] || !cols["sort_order"] {
+		t.Fatalf("columns = %#v", cols)
+	}
+	card, err := s.Card(t.Context(), "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.PublicEnabled || card.BaseURL != "" || card.APIKey != "" {
+		t.Fatalf("card = %+v", card)
+	}
+}
+
+func TestCardStoresCustomFields(t *testing.T) {
+	s := testStore(t)
+	card, err := s.CreateCard(t.Context(), domain.ModelCard{
+		Name: "自定义", BaseURL: "https://api.example.test", APIKey: "sk-test", Enabled: true, PublicEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Card(t.Context(), card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "自定义" || got.BaseURL != "https://api.example.test" || got.APIKey != "sk-test" || !got.PublicEnabled {
+		t.Fatalf("card = %+v", got)
+	}
+}
+
+func TestDeleteCardKeepsProbeRuns(t *testing.T) {
+	s := testStore(t)
+	card, err := s.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", BaseURL: "https://api.example.test", APIKey: "sk-test", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ProbesForCardSince(t.Context(), card.ID, time.Now().Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("probe rows = %d, want 1", len(rows))
+	}
+}
+
+func TestCardSortOrder(t *testing.T) {
+	s := testStore(t)
+	a, err := s.CreateCard(t.Context(), domain.ModelCard{Name: "A", BaseURL: "https://a.example.test", APIKey: "sk-a", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateCard(t.Context(), domain.ModelCard{Name: "B", BaseURL: "https://b.example.test", APIKey: "sk-b", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SortOrder != 1 || b.SortOrder != 2 {
+		t.Fatalf("orders: a=%d b=%d", a.SortOrder, b.SortOrder)
+	}
+	if err := s.UpdateCardOrder(t.Context(), []string{b.ID, a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ListCards(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].ID != b.ID || rows[1].ID != a.ID {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if err := s.UpdateCardOrder(t.Context(), []string{"missing"}); err == nil {
+		t.Fatal("missing card id should fail")
 	}
 }
 

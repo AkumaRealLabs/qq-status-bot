@@ -248,23 +248,11 @@ func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
 	return s.alert(ctx, u, "balance", domain.LowBalance(u, snap), fmt.Sprintf("%s 余额低于阈值", u.Name))
 }
 
-func (s *Service) SaveCard(ctx context.Context, id string, upstreamID, keyID string, enabled bool) (domain.ModelCard, error) {
-	u, err := s.Store.Upstream(ctx, upstreamID)
+func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) (domain.ModelCard, error) {
+	card, err := s.normalizeCard(ctx, in)
 	if err != nil {
 		return domain.ModelCard{}, err
 	}
-	var key *domain.APIKey
-	if keyID != "" {
-		k, err := s.Store.Key(ctx, keyID)
-		if err != nil {
-			return domain.ModelCard{}, err
-		}
-		if k.UpstreamID != upstreamID {
-			return domain.ModelCard{}, errors.New("key does not belong to upstream")
-		}
-		key = &k
-	}
-	card := domain.ModelCard{Name: domain.CardName(u, key), UpstreamID: upstreamID, KeyID: keyID, Model: domain.ProbeModel, Enabled: enabled}
 	if id == "" {
 		return s.Store.CreateCard(ctx, card)
 	}
@@ -275,14 +263,76 @@ func (s *Service) SaveCard(ctx context.Context, id string, upstreamID, keyID str
 	card.ID = old.ID
 	card.LastError = old.LastError
 	card.FailureCount = old.FailureCount
+	card.SortOrder = old.SortOrder
 	card.CreatedAt = old.CreatedAt
 	return s.Store.UpdateCard(ctx, card)
+}
+
+func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domain.ModelCard, error) {
+	card := domain.ModelCard{
+		Name:          strings.TrimSpace(in.Name),
+		BaseURL:       strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"),
+		APIKey:        strings.TrimSpace(in.APIKey),
+		UpstreamID:    strings.TrimSpace(in.UpstreamID),
+		KeyID:         strings.TrimSpace(in.KeyID),
+		Model:         domain.ProbeModel,
+		Enabled:       in.Enabled,
+		PublicEnabled: in.PublicEnabled,
+		SortOrder:     in.SortOrder,
+	}
+	custom := card.BaseURL != "" || card.APIKey != ""
+	if custom {
+		if card.Name == "" || card.BaseURL == "" || card.APIKey == "" {
+			return card, errors.New("name, base_url and api_key are required")
+		}
+		card.UpstreamID, card.KeyID = "", ""
+		return card, nil
+	}
+	if card.UpstreamID == "" || card.KeyID == "" {
+		return card, errors.New("upstream_id and key_id are required")
+	}
+	u, err := s.Store.Upstream(ctx, card.UpstreamID)
+	if err != nil {
+		return card, err
+	}
+	k, err := s.Store.Key(ctx, card.KeyID)
+	if err != nil {
+		return card, err
+	}
+	if k.UpstreamID != card.UpstreamID {
+		return card, errors.New("key does not belong to upstream")
+	}
+	if card.Name == "" {
+		card.Name = domain.CardName(u, &k)
+	}
+	return card, nil
+}
+
+func (s *Service) SortCards(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return errors.New("ids are required")
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return errors.New("card id is required")
+		}
+		if _, ok := seen[id]; ok {
+			return errors.New("duplicate card id")
+		}
+		seen[id] = struct{}{}
+	}
+	return s.Store.UpdateCardOrder(ctx, ids)
 }
 
 func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 	card, err := s.Store.Card(ctx, cardID)
 	if err != nil {
 		return err
+	}
+	if card.BaseURL != "" {
+		return s.checkCustomCard(ctx, card)
 	}
 	u, err := s.Store.Upstream(ctx, card.UpstreamID)
 	if err != nil {
@@ -315,11 +365,48 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 	return s.alert(ctx, u, "ping:"+card.ID, !probe.Success && failures >= 2, card.Name+" 探测失败: "+probe.Error)
 }
 
+func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) error {
+	if card.APIKey == "" {
+		msg := "未填写 Key"
+		if _, err := s.Store.SaveProbe(ctx, "", card.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
+			return err
+		}
+		return s.Store.UpdateCardProbeState(ctx, card.ID, msg, card.FailureCount+1)
+	}
+	probe := s.Client.Probe(ctx, card.BaseURL, card.APIKey, domain.ProbeModel)
+	if _, err := s.Store.SaveProbe(ctx, "", card.ID, probe); err != nil {
+		return err
+	}
+	failures := 0
+	lastErr := ""
+	if !probe.Success {
+		failures = card.FailureCount + 1
+		lastErr = probe.Error
+	}
+	return s.Store.UpdateCardProbeState(ctx, card.ID, lastErr, failures)
+}
+
 func (s *Service) MonitorStatus(ctx context.Context, window string) (map[string]any, error) {
+	return s.monitorStatus(ctx, window, false)
+}
+
+func (s *Service) PublicMonitorStatus(ctx context.Context, window string) (map[string]any, error) {
+	return s.monitorStatus(ctx, window, true)
+}
+
+func (s *Service) monitorStatus(ctx context.Context, window string, publicOnly bool) (map[string]any, error) {
 	since, label, _ := windowSince(window)
 	cards, err := s.enrichedCards(ctx, since, 0)
 	if err != nil {
 		return nil, err
+	}
+	if publicOnly {
+		public := publicCards(cards)
+		total, ok, failed, latency, samples := statusSummary(public)
+		return map[string]any{
+			"window": label, "rows": public, "requests": total, "success": ok, "failed": failed,
+			"success_rate": percent(ok, total), "avg_latency": avg(latency, samples),
+		}, nil
 	}
 	total, ok, failed, latency, samples := 0, 0, 0, 0, 0
 	for _, c := range cards {
@@ -342,6 +429,86 @@ func (s *Service) MonitorStatus(ctx context.Context, window string) (map[string]
 	}, nil
 }
 
+func statusSummary(cards []domain.PublicModelCard) (total, ok, failed, latency, samples int) {
+	for _, c := range cards {
+		for _, p := range c.History {
+			total++
+			if p.Success {
+				ok++
+			} else {
+				failed++
+			}
+			if p.LatencyMS > 0 {
+				latency += p.LatencyMS
+				samples++
+			}
+		}
+	}
+	return total, ok, failed, latency, samples
+}
+
+func publicCards(cards []domain.ModelCard) []domain.PublicModelCard {
+	out := []domain.PublicModelCard{}
+	for _, c := range cards {
+		if !c.PublicEnabled {
+			continue
+		}
+		card := domain.PublicModelCard{Name: c.Name}
+		for i := range c.History {
+			p := c.History[i]
+			p.Status = probeStatusLabel(p.Status)
+			p.Error = publicProbeError(p)
+			card.History = append(card.History, domain.PublicProbeRun{
+				CheckedAt: p.CheckedAt, Status: p.Status, HTTPStatus: p.HTTPStatus,
+				LatencyMS: p.LatencyMS, Success: p.Success, Error: p.Error,
+			})
+		}
+		card.LastError = publicLastError(card)
+		out = append(out, card)
+	}
+	return out
+}
+
+func publicLastError(c domain.PublicModelCard) string {
+	if len(c.History) == 0 || c.History[len(c.History)-1].Success {
+		return ""
+	}
+	return c.History[len(c.History)-1].Error
+}
+
+func publicProbeError(p domain.ProbeRun) string {
+	switch p.Status {
+	case monitor.StatusValidationFailed, "验证失败":
+		return "验证失败"
+	case monitor.StatusError, "探测异常":
+		return "探测异常"
+	case monitor.StatusFailed, "请求失败":
+		if p.HTTPStatus > 0 {
+			return fmt.Sprintf("HTTP %d", p.HTTPStatus)
+		}
+		return "请求失败"
+	default:
+		return ""
+	}
+}
+
+func probeStatusLabel(status string) string {
+	switch status {
+	case monitor.StatusOperational:
+		return "正常"
+	case monitor.StatusDegraded:
+		return "延迟偏高"
+	case monitor.StatusValidationFailed:
+		return "验证失败"
+	case monitor.StatusFailed:
+		return "请求失败"
+	case monitor.StatusError:
+		return "探测异常"
+	default:
+		return status
+	}
+}
+
 func (s *Service) ListCards(ctx context.Context) ([]domain.ModelCard, error) {
 	return s.enrichedCards(ctx, time.Now().Add(-time.Hour), 60)
 }
@@ -352,10 +519,14 @@ func (s *Service) enrichedCards(ctx context.Context, since time.Time, probeLimit
 		return nil, err
 	}
 	for i := range cards {
-		u, err := s.Store.Upstream(ctx, cards[i].UpstreamID)
-		if err == nil {
-			cards[i].UpstreamName = u.Name
-			cards[i].Type = u.Type
+		var u domain.Upstream
+		if cards[i].UpstreamID != "" {
+			var err error
+			u, err = s.Store.Upstream(ctx, cards[i].UpstreamID)
+			if err == nil {
+				cards[i].UpstreamName = u.Name
+				cards[i].Type = u.Type
+			}
 		}
 		if cards[i].KeyID != "" {
 			if k, err := s.Store.Key(ctx, cards[i].KeyID); err == nil {
