@@ -515,7 +515,8 @@ function StatusMonitorCard({ card, windowValue }: { card: ModelCard; windowValue
                 return (
                   <HoverText
                     key={`${probe.checked_at}-${index}`}
-                    value={probeHover(probe)}
+                    value={probeHoverTitle(probe)}
+                    content={<ProbeTooltip probe={probe} />}
                     className={cn('h-4 rounded-sm', good ? 'bg-success' : 'bg-destructive')}
                   >
                     <span className="sr-only">{probeStatus(probe)}</span>
@@ -1228,14 +1229,14 @@ function IconAction({
   )
 }
 
-function HoverText({ value, className, children }: { value?: string; className?: string; children?: ReactNode }) {
+function HoverText({ value, className, children, content }: { value?: string; className?: string; children?: ReactNode; content?: ReactNode }) {
   const text = value || '-'
   return (
     <span className={cn('group relative block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30', className)} tabIndex={0} title={text}>
       {children ?? <span className="block truncate">{text}</span>}
       {text !== '-' && (
-        <span className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 hidden w-max min-w-56 max-w-[min(520px,calc(100vw-32px))] whitespace-pre-wrap break-words rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-relaxed text-popover-foreground shadow-lg group-hover:block group-focus:block">
-          {text}
+        <span className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 hidden w-max min-w-56 max-w-[min(520px,calc(100vw-32px))] rounded-md border border-border bg-popover text-left text-popover-foreground shadow-lg group-hover:block group-focus:block">
+          {content ?? <span className="block whitespace-pre-wrap break-words px-3 py-2 text-sm leading-[1.55]">{text}</span>}
         </span>
       )}
     </span>
@@ -1404,17 +1405,35 @@ function probeStatusLabel(status: string) {
   } as Record<string, string>)[status] || status || '-'
 }
 
-function probeHover(probe: Probe) {
+function ProbeTooltip({ probe }: { probe: Probe }) {
   const ok = probeOK(probe)
-  return [
-    `状态：${probeStatusLabel(probeStatus(probe))}`,
-    `延迟：${probe.latency_ms} ms`,
-    `HTTP 状态：${probe.http_status || '-'}`,
-    `模型验证：${ok ? '通过' : '未通过'}`,
-    `检查时间：${fmtTime(probe.checked_at)}`,
-    probe.error ? `详情：${probe.error}` : '',
-    !ok && probe.output ? `模型回答：${probe.output}` : '',
-  ].filter(Boolean).join('\n')
+  const rows = [
+    ['状态', probeStatusLabel(probeStatus(probe)), ok ? 'text-success' : 'text-destructive'],
+    ['延迟', `${probe.latency_ms} ms`],
+    ['HTTP 状态', probe.http_status || '-'],
+    ['模型验证', ok ? '通过' : '未通过', ok ? 'text-success' : 'text-destructive'],
+    ['检查时间', fmtTime(probe.checked_at)],
+    probe.error ? ['详情', probe.error, 'text-destructive'] : undefined,
+    !ok && probe.output ? ['模型回答', probe.output] : undefined,
+  ].filter(Boolean) as string[][]
+  return (
+    <span className="block min-w-64 max-w-[min(520px,calc(100vw-32px))] rounded-md bg-popover px-3 py-3 text-sm leading-[1.55] text-popover-foreground">
+      <span className="mb-2 block border-b border-hairline-soft pb-2 text-[13px] font-medium leading-[1.4] text-muted-foreground">探测详情</span>
+      <span className="grid gap-1.5">
+        {rows.map(([label, value, tone]) => (
+          <span key={label} className="grid grid-cols-[72px_minmax(0,1fr)] gap-3">
+            <span className="whitespace-nowrap text-[13px] font-medium leading-[1.4] text-muted-foreground">{label}</span>
+            <span className={cn('break-words text-sm leading-[1.55] text-foreground', tone)}>{value}</span>
+          </span>
+        ))}
+      </span>
+    </span>
+  )
+}
+
+function probeHoverTitle(probe: Probe) {
+  const ok = probeOK(probe)
+  return `状态：${probeStatusLabel(probeStatus(probe))}\n模型验证：${ok ? '通过' : '未通过'}\n检查时间：${fmtTime(probe.checked_at)}`
 }
 
 function TypeBadge({ type }: { type: string }) {
