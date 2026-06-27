@@ -1405,13 +1405,15 @@ function probeStatusLabel(status: string) {
 }
 
 function probeHover(probe: Probe) {
+  const ok = probeOK(probe)
   return [
     `状态：${probeStatusLabel(probeStatus(probe))}`,
     `延迟：${probe.latency_ms} ms`,
     `HTTP 状态：${probe.http_status || '-'}`,
+    `模型验证：${ok ? '通过' : '未通过'}`,
     `检查时间：${fmtTime(probe.checked_at)}`,
     probe.error ? `详情：${probe.error}` : '',
-    probe.output ? `验证题答案：${probe.output}` : '',
+    !ok && probe.output ? `模型回答：${probe.output}` : '',
   ].filter(Boolean).join('\n')
 }
 
