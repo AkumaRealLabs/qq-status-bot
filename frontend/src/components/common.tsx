@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { errorMessage } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 const windows = ['1h', '3h', '5h', '1d', '7d', '15d']
@@ -11,8 +12,8 @@ const windows = ['1h', '3h', '5h', '1d', '7d', '15d']
 export function FormError({ error }: { error: unknown }) {
   if (!error) return null
   return (
-    <div className="animate-in rounded-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive fade-in slide-in-from-top-1">
-      {(error as Error).message}
+    <div className="min-w-0 animate-in break-words rounded-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive fade-in slide-in-from-top-1">
+      {errorMessage(error)}
     </div>
   )
 }

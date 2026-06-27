@@ -1,7 +1,9 @@
 import type { BalanceRow } from '@/types'
 
 export function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
+  const msg = error instanceof Error ? error.message : String(error)
+  if (/order not found/i.test(msg)) return '订单不存在或上游暂未查到订单'
+  return msg
 }
 
 export function num(value: number | undefined) {

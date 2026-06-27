@@ -120,6 +120,7 @@ export function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
   const [paymentType, setPaymentType] = useState('')
   const [code, setCode] = useState('')
   const [result, setResult] = useState<RechargeResult | null>(null)
+  const [pollOrderID, setPollOrderID] = useState('')
   const caps = useQuery({
     queryKey: ['balance-recharge-capabilities', upstream.id],
     queryFn: () => api<RechargeCapabilities>(`/api/upstreams/${upstream.id}/balance-recharge/capabilities`),
@@ -146,8 +147,22 @@ export function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
         : ''
     : ''
   useEffect(() => {
-    if (open && !paymentType && methods[0]) setPaymentType(methods[0].type)
+    if (open && methods[0] && !methods.some((method) => method.type === paymentType)) setPaymentType(methods[0].type)
   }, [methods, open, paymentType])
+  useEffect(() => {
+    if (!open || !pollOrderID) return
+    const log = (logs.data ?? []).find((item) => item.remote_order_id === pollOrderID)
+    if (!log || rechargePollDone(log)) return
+    const timer = window.setTimeout(() => {
+      void api<RechargeLog>(`/api/upstreams/${upstream.id}/balance-recharge/logs/${log.id}/refresh`, { method: 'POST' })
+        .catch(() => undefined)
+        .then(() => Promise.all([
+          invalidateMonitor(qc),
+          qc.invalidateQueries({ queryKey: ['balance-recharge-logs', upstream.id] }),
+        ]))
+    }, 3000)
+    return () => window.clearTimeout(timer)
+  }, [logs.data, open, pollOrderID, qc, upstream.id])
   const refreshAfterSubmit = async () => {
     await Promise.all([
       invalidateMonitor(qc),
@@ -161,6 +176,7 @@ export function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
     }),
     onSuccess: async (out) => {
       setResult(out)
+      setPollOrderID(out.remote_order_id ?? '')
       await refreshAfterSubmit()
     },
   })
@@ -183,6 +199,7 @@ export function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
       onOpenChange={(next) => {
         setOpen(next)
         if (next) setResult(null)
+        if (!next) setPollOrderID('')
       }}
     >
       <DialogTrigger asChild>
@@ -207,26 +224,27 @@ export function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
           </div>
         )}
         {caps.data?.online_enabled && methods.length > 0 && (
-          <div className="grid min-w-0 gap-4 rounded-sm border border-border bg-card p-3 md:grid-cols-2">
+          <div className="grid min-w-0 items-start gap-4 rounded-sm border border-border bg-card p-3 md:grid-cols-2">
             <Field label="金额">
               <div className="grid gap-1.5">
                 <Input type="number" min={minAmount || 0} max={maxAmount || undefined} value={amount} onChange={(e) => setAmount(e.target.value)} />
-                {(minAmount > 0 || maxAmount > 0 || amountError) && (
-                  <div className={cn('text-xs', amountError ? 'text-destructive' : 'text-muted-foreground')}>
-                    {amountError || [minAmount > 0 ? `最低 ${num(minAmount)}` : '', maxAmount > 0 ? `最高 ${num(maxAmount)}` : ''].filter(Boolean).join(' · ')}
-                  </div>
-                )}
+                <div className={cn('min-h-4 text-xs', amountError ? 'text-destructive' : 'text-muted-foreground')}>
+                  {amountError || amountHint(minAmount, maxAmount) || '\u00a0'}
+                </div>
               </div>
             </Field>
             <Field label="支付方式">
-              <Select value={paymentType} onValueChange={setPaymentType}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {methods.map((method) => (
-                    <SelectItem key={method.type} value={method.type}>{method.name || method.type}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="grid gap-1.5">
+                <Select value={paymentType} onValueChange={setPaymentType}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {methods.map((method) => (
+                      <SelectItem key={method.type} value={method.type}>{method.name || method.type}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="min-h-4 text-xs text-muted-foreground">&nbsp;</div>
+              </div>
             </Field>
             <div className="md:col-span-2">
               <Button onClick={() => createOrder.mutate()} disabled={busy || Boolean(amountError) || !paymentType}>
@@ -329,7 +347,7 @@ function RechargeLogs({ upstreamID, logs, loading }: { upstreamID: string; logs:
   return (
     <div className="grid min-w-0 gap-2">
       <div className="text-sm font-medium text-foreground">操作记录</div>
-      <div className="grid max-h-52 gap-2 overflow-auto">
+      <div className="grid max-h-52 min-w-0 gap-2 overflow-auto">
         {logs.map((log) => (
           <RechargeLogItem
             key={log.id}
@@ -363,10 +381,10 @@ function RechargeLogItem({
 }) {
   return (
     <div className="grid min-w-0 gap-1 rounded-sm border border-border bg-background p-2 text-xs">
-      <div className="flex min-w-0 items-start justify-between gap-2">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
         <span className="min-w-0 truncate">{log.method === 'redeem' ? '兑换码' : paymentLabel(log.payment_type)}</span>
-        <div className="flex shrink-0 items-center gap-1">
-          <span className={rechargeStatusClass(log.status)}>{rechargeStatusLabel(log.status, log.raw_status)}</span>
+        <div className="flex min-w-0 items-center justify-end gap-1">
+          <span className={rechargeStatusClass(log.status, log.raw_status)}>{rechargeStatusLabel(log.status, log.raw_status)}</span>
           {log.method === 'order' && log.remote_order_id && (
             <Button variant="ghost" size="icon" className="size-6" onClick={onRefresh} disabled={busy}>
               {refreshing ? <Loader2 className="size-3 animate-spin" /> : <RefreshCcw className="size-3" />}
@@ -380,9 +398,11 @@ function RechargeLogItem({
         </div>
       </div>
       <div className="text-muted-foreground">{fmtTime(log.created_at)} · {num(log.amount)}</div>
-      {log.remote_order_id && <div className="truncate text-muted-foreground">订单：{log.remote_order_id}</div>}
-      {(log.message || log.raw_status) && (
-        <HoverText value={[log.raw_status ? `状态：${log.raw_status}` : '', log.message].filter(Boolean).join('\n')} className="text-muted-foreground" alwaysTooltip />
+      {log.remote_order_id && <div className="break-all text-muted-foreground">订单：{log.remote_order_id}</div>}
+      {rechargeDisplayMessage(log.message) && (
+        <HoverText value={rechargeRawDetail(log)} className="text-muted-foreground" alwaysTooltip>
+          <span className="block break-words">{rechargeDisplayMessage(log.message)}</span>
+        </HoverText>
       )}
     </div>
   )
@@ -539,7 +559,7 @@ function Action({ path, label }: { path: string; label: string }) {
         {mutation.isPending && <Loader2 className="size-3 animate-spin" />}
         {mutation.isPending ? `${verb}中` : label}
       </Button>
-      {message && !mutation.isPending && <div className="absolute right-0 top-10 z-10 max-w-[calc(100vw-32px)] whitespace-nowrap rounded-sm border border-border bg-background px-2 py-1 text-xs text-muted-foreground">{message}</div>}
+      {message && !mutation.isPending && <div className="absolute right-0 top-10 z-10 max-w-[calc(100vw-32px)] whitespace-normal break-words rounded-sm border border-border bg-background px-2 py-1 text-xs text-muted-foreground">{message}</div>}
     </div>
   )
 }
@@ -592,8 +612,12 @@ function paymentLabel(value: string) {
   } as Record<string, string>)[value] || value || '-'
 }
 
+function amountHint(minAmount: number, maxAmount: number) {
+  return [minAmount > 0 ? `最低 ${num(minAmount)}` : '', maxAmount > 0 ? `最高 ${num(maxAmount)}` : ''].filter(Boolean).join(' · ')
+}
+
 function rechargeStatusLabel(status: string, rawStatus?: string) {
-  const value = (rawStatus || status || '').toLowerCase()
+  const value = rechargeStatusKey(rawStatus || status)
   return ({
     success: '成功',
     completed: '成功',
@@ -605,13 +629,37 @@ function rechargeStatusLabel(status: string, rawStatus?: string) {
     expired: '已过期',
     cancelled: '已取消',
     canceled: '已取消',
+    refund_failed: '退款失败',
   } as Record<string, string>)[value] || rawStatus || status || '-'
 }
 
-function rechargeStatusClass(status: string) {
+function rechargeStatusClass(status: string, rawStatus?: string) {
+  const value = rechargeStatusKey(rawStatus || status)
   return cn(
-    status === 'success' && 'text-success',
-    status === 'failed' && 'text-destructive',
-    status !== 'success' && status !== 'failed' && 'text-muted-foreground',
+    ['success', 'paid', 'completed'].includes(value) && 'text-success',
+    ['failed', 'expired', 'cancelled', 'canceled', 'refund_failed'].includes(value) && 'text-destructive',
+    !rechargeStatusDone(status, rawStatus) && 'text-muted-foreground',
   )
+}
+
+function rechargeStatusKey(status?: string) {
+  return (status || '').trim().toLowerCase()
+}
+
+function rechargeStatusDone(status: string, rawStatus?: string) {
+  return ['success', 'paid', 'completed', 'failed', 'expired', 'cancelled', 'canceled', 'refund_failed'].includes(rechargeStatusKey(rawStatus || status))
+}
+
+function rechargePollDone(log: RechargeLog) {
+  return rechargeStatusDone(log.status, log.raw_status) || /order not found/i.test(log.message)
+}
+
+function rechargeDisplayMessage(message: string) {
+  const text = message.trim()
+  if (!text || rechargeStatusLabel(text) !== text) return ''
+  return errorMessage(text)
+}
+
+function rechargeRawDetail(log: RechargeLog) {
+  return [log.raw_status ? `原始状态：${log.raw_status}` : '', log.message ? `原始信息：${log.message}` : ''].filter(Boolean).join('\n')
 }
