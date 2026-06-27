@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Database, ExternalLink, Loader2, LogOut, Settings, WalletCards } from 'lucide-react'
+import { Activity, BarChart3, Database, ExternalLink, Loader2, LogOut, Settings, WalletCards } from 'lucide-react'
 import { BrandIcon, MobileTabs, NavItem, ShellLoading } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { LoginPage, SetupPage } from '@/features/auth/AuthPages'
 import { BalancesPage } from '@/features/balances/BalancesPage'
+import { MerchantBalancePage } from '@/features/merchant-balance/MerchantBalancePage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { AdminStatusPage, PublicStatusPage } from '@/features/status/StatusPage'
 import { UpstreamsPage } from '@/features/upstreams/UpstreamsPage'
@@ -15,6 +16,7 @@ import type { NavTab, SettingsData, SiteSettings, TabID } from '@/types'
 const tabs: NavTab[] = [
   { id: 'status', label: '状态监控', short: '状态', icon: Activity },
   { id: 'balances', label: '余额监控', short: '余额', icon: WalletCards },
+  { id: 'merchant_balance', label: '商户余额', short: '商户', icon: BarChart3 },
   { id: 'upstreams', label: '上游管理', short: '上游', icon: Database },
   { id: 'settings', label: '设置', short: '设置', icon: Settings },
 ]
@@ -22,6 +24,7 @@ const tabs: NavTab[] = [
 const tabPaths: Record<TabID, string> = {
   status: '/admin/status',
   balances: '/admin/balances',
+  merchant_balance: '/admin/merchant-balance',
   upstreams: '/admin/upstreams',
   settings: '/admin/settings',
 }
@@ -149,6 +152,7 @@ export default function App() {
           <MobileTabs tab={tab} setTab={navigate} tabs={tabs} />
           {tab === 'status' && <AdminStatusPage />}
           {tab === 'balances' && <BalancesPage />}
+          {tab === 'merchant_balance' && <MerchantBalancePage onOpenSettings={() => navigate('settings')} />}
           {tab === 'upstreams' && <UpstreamsPage />}
           {tab === 'settings' && <SettingsPage />}
         </main>

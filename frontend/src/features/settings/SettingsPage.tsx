@@ -71,7 +71,7 @@ export function SettingsPage() {
   }
   if (!data) return <ShellLoading />
   return (
-    <Page title="设置" description="监控周期和 Telegram 告警">
+    <Page title="设置" description="监控周期、Telegram 告警和易支付配置">
       <Card className="w-full max-w-2xl bg-card">
         <CardHeader>
           <CardTitle>基础设置</CardTitle>
@@ -99,15 +99,34 @@ export function SettingsPage() {
           <Field label="构建版本">
             <Input value={buildVersion} disabled />
           </Field>
-          {message && <div className={cn('rounded-sm px-3 py-2 text-sm', save.isError ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}>{message}</div>}
-          <div>
-            <Button onClick={() => save.mutate()} disabled={save.isPending}>
-              {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-              保存
-            </Button>
-          </div>
         </CardContent>
       </Card>
+      <Card className="w-full max-w-2xl bg-card">
+        <CardHeader>
+          <CardTitle>易支付 v1</CardTitle>
+          <CardDescription>商户余额页只读取易支付商户余额</CardDescription>
+        </CardHeader>
+        <CardContent className="grid min-w-0 gap-4">
+          <Field label="Base URL">
+            <Input value={data.epay_base_url ?? ''} placeholder="https://pay.example.com" onChange={(e) => setForm({ ...data, epay_base_url: e.target.value })} />
+          </Field>
+          <Field label="PID">
+            <Input value={data.epay_pid ?? ''} onChange={(e) => setForm({ ...data, epay_pid: e.target.value })} />
+          </Field>
+          <Field label="Key">
+            <Input type="password" value={data.epay_key ?? ''} onChange={(e) => setForm({ ...data, epay_key: e.target.value })} />
+          </Field>
+        </CardContent>
+      </Card>
+      <div className="grid w-full max-w-2xl gap-3">
+        {message && <div className={cn('rounded-sm px-3 py-2 text-sm', save.isError ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}>{message}</div>}
+        <div>
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+            {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            保存设置
+          </Button>
+        </div>
+      </div>
       <Card className="w-full max-w-2xl bg-card">
         <CardHeader>
           <CardTitle>数据备份</CardTitle>

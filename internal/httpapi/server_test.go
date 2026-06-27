@@ -86,6 +86,9 @@ func TestPublicSettingsDoesNotRequireAuth(t *testing.T) {
 	}
 	cfg.SiteName = "GG API"
 	cfg.SiteIcon = "/logo.png"
+	cfg.EpayBaseURL = "https://pay.example.test"
+	cfg.EpayPID = "1000"
+	cfg.EpayKey = "secret"
 	if _, err := st.UpdateSettings(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +163,7 @@ func TestLegacyAdminPathsRedirect(t *testing.T) {
 	client := ts.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	for path, want := range map[string]string{"/status": "/admin/status", "/balances": "/admin/balances", "/upstreams": "/admin/upstreams", "/settings": "/admin/settings"} {
+	for path, want := range map[string]string{"/status": "/admin/status", "/balances": "/admin/balances", "/merchant-balance": "/admin/merchant-balance", "/upstreams": "/admin/upstreams", "/settings": "/admin/settings"} {
 		resp, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -169,5 +172,27 @@ func TestLegacyAdminPathsRedirect(t *testing.T) {
 		if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != want {
 			t.Fatalf("%s status=%d location=%q", path, resp.StatusCode, resp.Header.Get("Location"))
 		}
+	}
+}
+
+func TestMerchantBalanceRequiresAuth(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/api/merchant-balance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d", resp.StatusCode)
 	}
 }

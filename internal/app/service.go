@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"ai-upstream-monitor/internal/domain"
+	"ai-upstream-monitor/internal/epay"
 	"ai-upstream-monitor/internal/monitor"
 	"ai-upstream-monitor/internal/store"
 
@@ -708,6 +709,14 @@ func (s *Service) BalanceRows(ctx context.Context) ([]map[string]any, error) {
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+func (s *Service) MerchantBalance(ctx context.Context) (domain.MerchantBalanceSummary, error) {
+	cfg, err := s.Store.Settings(ctx)
+	if err != nil {
+		return domain.MerchantBalanceSummary{}, err
+	}
+	return (epay.Client{HTTP: s.Client.HTTP}).MerchantBalance(ctx, epay.Config{BaseURL: cfg.EpayBaseURL, PID: cfg.EpayPID, Key: cfg.EpayKey}), nil
 }
 
 func (s *Service) UpstreamRows(ctx context.Context) ([]map[string]any, error) {

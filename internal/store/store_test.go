@@ -176,6 +176,50 @@ func TestMigrateAddsCardPublicAndCustomColumns(t *testing.T) {
 	}
 }
 
+func TestMigrateAddsEpaySettingsColumns(t *testing.T) {
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "old.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.exec(t.Context(), `CREATE TABLE settings (
+		id TEXT PRIMARY KEY, check_interval_minutes INTEGER NOT NULL, telegram_bot_token TEXT NOT NULL DEFAULT '',
+		telegram_chat_id TEXT NOT NULL DEFAULT '', probe_model TEXT NOT NULL DEFAULT 'gpt-5.5'
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.exec(t.Context(), `INSERT INTO settings (id, check_interval_minutes, probe_model) VALUES ('default', 5, ?)`, domain.ProbeModel); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cols, err := s.columns(t.Context(), "settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cols["epay_base_url"] || !cols["epay_pid"] || !cols["epay_key"] {
+		t.Fatalf("columns = %#v", cols)
+	}
+	cfg, err := s.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.EpayBaseURL = " https://pay.example.test/ "
+	cfg.EpayPID = " 1000 "
+	cfg.EpayKey = " secret "
+	if _, err := s.UpdateSettings(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EpayBaseURL != "https://pay.example.test" || got.EpayPID != "1000" || got.EpayKey != "secret" {
+		t.Fatalf("settings = %+v", got)
+	}
+}
+
 func TestBalanceRechargeLogs(t *testing.T) {
 	s := testStore(t)
 	if err := s.Migrate(t.Context()); err != nil {

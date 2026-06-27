@@ -142,13 +142,22 @@ export type SettingsData = {
   probe_model: string
   site_name: string
   site_icon: string
+  epay_base_url: string
+  epay_pid: string
+  epay_key: string
 }
 
 export type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>
 
-export type TabID = 'status' | 'balances' | 'upstreams' | 'settings'
+export type TabID = 'status' | 'balances' | 'merchant_balance' | 'upstreams' | 'settings'
 
 export type NavTab = { id: TabID; label: string; short: string; icon: ElementType }
+
+export type MerchantBalanceSummary = {
+  merchant_balance: number
+  checked_at: string
+  error?: string
+}
 
 export type CardForm = {
   name: string

@@ -143,6 +143,15 @@ type Settings struct {
 	ProbeModel           string `json:"probe_model"`
 	SiteName             string `json:"site_name"`
 	SiteIcon             string `json:"site_icon"`
+	EpayBaseURL          string `json:"epay_base_url"`
+	EpayPID              string `json:"epay_pid"`
+	EpayKey              string `json:"epay_key"`
+}
+
+type MerchantBalanceSummary struct {
+	MerchantBalance float64   `json:"merchant_balance"`
+	CheckedAt       time.Time `json:"checked_at"`
+	Error           string    `json:"error,omitempty"`
 }
 
 type User struct {

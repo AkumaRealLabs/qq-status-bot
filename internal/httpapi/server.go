@@ -66,11 +66,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/monitor/status", s.auth(s.monitorStatus))
 	mux.HandleFunc("GET /api/monitor/balances", s.auth(s.balances))
 	mux.HandleFunc("POST /api/monitor/balances/refresh", s.auth(s.refreshBalances))
+	mux.HandleFunc("GET /api/merchant-balance", s.auth(s.merchantBalance))
 	mux.HandleFunc("/browser/", s.auth(s.proxyBrowser))
 	mux.HandleFunc("/websockify", s.auth(s.proxyBrowser))
 	mux.HandleFunc("GET /admin", redirectTo("/admin/status"))
 	mux.HandleFunc("GET /status", redirectTo("/admin/status"))
 	mux.HandleFunc("GET /balances", redirectTo("/admin/balances"))
+	mux.HandleFunc("GET /merchant-balance", redirectTo("/admin/merchant-balance"))
 	mux.HandleFunc("GET /upstreams", redirectTo("/admin/upstreams"))
 	mux.HandleFunc("GET /settings", redirectTo("/admin/settings"))
 	mux.Handle("/", s.static())
@@ -370,6 +372,11 @@ func (s *Server) balances(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) refreshBalances(w http.ResponseWriter, r *http.Request) {
 	writeNoContentOrError(w, s.App.RefreshBalances(r.Context()))
+}
+
+func (s *Server) merchantBalance(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.MerchantBalance(r.Context())
+	writeJSONOrError(w, out, err)
 }
 
 func (s *Server) browserLogin(w http.ResponseWriter, r *http.Request) {
