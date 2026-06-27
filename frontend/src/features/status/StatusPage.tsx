@@ -42,7 +42,7 @@ export function PublicStatusPage({ site }: { site?: SiteSettings }) {
     <div className="min-h-svh bg-background text-body">
       <header className="border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="mx-auto flex h-16 w-full max-w-[1200px] items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3" onDoubleClick={() => { location.href = '/admin' }}>
             <BrandIcon src={site?.site_icon} />
             <div className="truncate font-display text-xl font-normal leading-none text-foreground">{siteName}</div>
           </div>
