@@ -49,6 +49,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/upstreams/{id}/balance-recharge/redeem", s.auth(s.redeemBalance))
 	mux.HandleFunc("POST /api/upstreams/{id}/balance-recharge/order", s.auth(s.createBalanceRechargeOrder))
 	mux.HandleFunc("GET /api/upstreams/{id}/balance-recharge/logs", s.auth(s.balanceRechargeLogs))
+	mux.HandleFunc("POST /api/upstreams/{id}/balance-recharge/logs/{log_id}/refresh", s.auth(s.refreshBalanceRechargeLog))
+	mux.HandleFunc("DELETE /api/upstreams/{id}/balance-recharge/logs/{log_id}", s.auth(s.deleteBalanceRechargeLog))
 	mux.HandleFunc("POST /api/upstreams/{id}/browser-login", s.auth(s.browserLogin))
 	mux.HandleFunc("POST /api/upstreams/{id}/browser-capture", s.auth(s.browserCapture))
 	mux.HandleFunc("GET /api/cards", s.auth(s.listCards))
@@ -205,6 +207,16 @@ func (s *Server) createBalanceRechargeOrder(w http.ResponseWriter, r *http.Reque
 func (s *Server) balanceRechargeLogs(w http.ResponseWriter, r *http.Request) {
 	out, err := s.App.BalanceRechargeLogs(r.Context(), r.PathValue("id"))
 	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) refreshBalanceRechargeLog(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.RefreshBalanceRechargeLog(r.Context(), r.PathValue("id"), r.PathValue("log_id"))
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) deleteBalanceRechargeLog(w http.ResponseWriter, r *http.Request) {
+	err := s.App.DeleteBalanceRechargeLog(r.Context(), r.PathValue("id"), r.PathValue("log_id"))
+	writeNoContentOrError(w, err)
 }
 
 func (s *Server) listCards(w http.ResponseWriter, r *http.Request) {

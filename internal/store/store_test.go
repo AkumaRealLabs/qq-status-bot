@@ -193,11 +193,33 @@ func TestBalanceRechargeLogs(t *testing.T) {
 	if len(rows) != 1 || rows[0].ID != log.ID || rows[0].Amount != 12.5 || rows[0].RemoteOrderID != "remote-1" {
 		t.Fatalf("rows = %+v", rows)
 	}
+	rows[0].Status = "completed"
+	rows[0].RawStatus = "COMPLETED"
+	if err := s.UpdateBalanceRechargeLog(t.Context(), rows[0]); err != nil {
+		t.Fatal(err)
+	}
+	one, err := s.BalanceRechargeLog(t.Context(), "u1", log.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Status != "completed" || one.RawStatus != "COMPLETED" {
+		t.Fatalf("log = %+v", one)
+	}
+	if err := s.DeleteBalanceRechargeLog(t.Context(), "u1", log.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = s.BalanceRechargeLogs(t.Context(), "u1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("rows = %+v", rows)
+	}
 	cols, err := s.columns(t.Context(), "balance_recharge_logs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cols["payment_type"] || !cols["remote_order_id"] {
+	if !cols["payment_type"] || !cols["remote_order_id"] || !cols["raw_status"] {
 		t.Fatalf("columns = %#v", cols)
 	}
 }

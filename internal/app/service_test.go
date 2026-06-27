@@ -238,6 +238,58 @@ func TestRedeemBalanceAuditsWithoutPlainCode(t *testing.T) {
 	}
 }
 
+func TestRefreshAndDeleteBalanceRechargeLog(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/refresh":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"access_token": "token", "refresh_token": "refresh"}})
+		case "/api/v1/payment/orders/verify":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"out_trade_no": "ORD-1", "payment_type": "alipay", "status": "COMPLETED"}})
+		case "/api/v1/user/profile", "/api/v1/keys", "/api/v1/groups/available":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "S", Type: "sub2api", BaseURL: ts.URL, Enabled: true, Sub2APIRefreshToken: "refresh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := st.SaveBalanceRechargeLog(t.Context(), domain.BalanceRechargeLog{UpstreamID: u.ID, Method: "order", PaymentType: "alipay", RemoteOrderID: "ORD-1", Status: "pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	updated, err := svc.RefreshBalanceRechargeLog(t.Context(), u.ID, log.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "success" || updated.RawStatus != "COMPLETED" {
+		t.Fatalf("updated = %+v", updated)
+	}
+	if err := svc.DeleteBalanceRechargeLog(t.Context(), u.ID, log.ID); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := st.BalanceRechargeLogs(t.Context(), u.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 0 {
+		t.Fatalf("logs = %+v", logs)
+	}
+}
+
 func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
 	if err != nil {

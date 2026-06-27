@@ -88,6 +88,34 @@ func TestNewapiRechargeCapabilitiesAndOrders(t *testing.T) {
 	}
 }
 
+func TestRechargeOrderChecksMinimumBeforeCreate(t *testing.T) {
+	var created bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/user/topup/info":
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "success", "data": map[string]any{
+				"enable_online_topup": true,
+				"pay_methods":         []map[string]any{{"type": "alipay", "name": "支付宝", "min_topup": "1"}},
+			}})
+		case "/api/user/pay":
+			created = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "success", "data": map[string]any{"order_id": "ord_1"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	c := Client{HTTP: ts.Client()}
+	_, err := c.CreateRechargeOrder(t.Context(), &Upstream{Type: "newapi", BaseURL: ts.URL}, RechargeOrderRequest{Amount: 0.1, PaymentType: "alipay"})
+	if err == nil || !strings.Contains(err.Error(), "不能低于 1.00") {
+		t.Fatalf("err = %v", err)
+	}
+	if created {
+		t.Fatal("order should not be created below minimum")
+	}
+}
+
 func TestRechargeCapabilitiesHideUnavailableMethods(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -151,7 +179,7 @@ func TestSub2apiRechargeRefreshRetry(t *testing.T) {
 				http.Error(w, "expired", http.StatusUnauthorized)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"order_id": 7, "qr_code": "qr-content"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"order_id": 7, "out_trade_no": "SUB2-7", "qr_code": "qr-content"}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -171,7 +199,44 @@ func TestSub2apiRechargeRefreshRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if order.ResultType != "qr" || order.RemoteOrderID != "7" {
+	if order.ResultType != "qr" || order.RemoteOrderID != "SUB2-7" {
 		t.Fatalf("order = %+v", order)
+	}
+}
+
+func TestRefreshRechargeOrderStatus(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/newapi/api/user/topup/self":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{
+				"trade_no": "USR1NO1", "payment_method": "alipay", "status": "success",
+			}}}})
+		case "/sub2api/api/v1/payment/orders/verify":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["out_trade_no"] != "SUB2-1" {
+				t.Fatalf("body = %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"out_trade_no": "SUB2-1", "payment_type": "alipay", "status": "COMPLETED"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	c := Client{HTTP: ts.Client()}
+	newapi, err := c.RefreshRechargeOrder(t.Context(), &Upstream{Type: "newapi", BaseURL: ts.URL + "/newapi"}, "USR1NO1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newapi.Status != "success" || newapi.RemoteOrderID != "USR1NO1" {
+		t.Fatalf("newapi = %+v", newapi)
+	}
+	sub2, err := c.RefreshRechargeOrder(t.Context(), &Upstream{Type: "sub2api", BaseURL: ts.URL + "/sub2api", Sub2APIAccessToken: "token"}, "SUB2-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub2.Status != "COMPLETED" || sub2.RemoteOrderID != "SUB2-1" {
+		t.Fatalf("sub2 = %+v", sub2)
 	}
 }

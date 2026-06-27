@@ -260,10 +260,10 @@ func (s *Service) CreateBalanceRechargeOrder(ctx context.Context, upstreamID str
 	mu := toMonitorUpstream(u)
 	out, err := s.Client.CreateRechargeOrder(ctx, &mu, req)
 	_ = s.Store.SaveUpstreamTokens(ctx, u.ID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken)
-	status, msg := rechargeStatus(err, out)
+	status, msg := rechargeOrderStatus(err, out)
 	_, logErr := s.Store.SaveBalanceRechargeLog(ctx, domain.BalanceRechargeLog{
 		UpstreamID: u.ID, Method: "order", Amount: req.Amount, PaymentType: req.PaymentType,
-		RemoteOrderID: out.RemoteOrderID, Status: status, Message: msg,
+		RemoteOrderID: out.RemoteOrderID, Status: status, Message: msg, RawStatus: out.Status,
 	})
 	if err == nil && logErr != nil {
 		err = logErr
@@ -276,6 +276,46 @@ func (s *Service) BalanceRechargeLogs(ctx context.Context, upstreamID string) ([
 		return nil, err
 	}
 	return s.Store.BalanceRechargeLogs(ctx, upstreamID, 50)
+}
+
+func (s *Service) RefreshBalanceRechargeLog(ctx context.Context, upstreamID, logID string) (domain.BalanceRechargeLog, error) {
+	u, err := s.Store.Upstream(ctx, upstreamID)
+	if err != nil {
+		return domain.BalanceRechargeLog{}, err
+	}
+	log, err := s.Store.BalanceRechargeLog(ctx, upstreamID, logID)
+	if err != nil {
+		return domain.BalanceRechargeLog{}, err
+	}
+	if log.Method != "order" || strings.TrimSpace(log.RemoteOrderID) == "" {
+		return log, errors.New("该记录没有可刷新的订单号")
+	}
+	mu := toMonitorUpstream(u)
+	out, err := s.Client.RefreshRechargeOrder(ctx, &mu, log.RemoteOrderID)
+	_ = s.Store.SaveUpstreamTokens(ctx, u.ID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken)
+	if err != nil {
+		log.Message = err.Error()
+		if saveErr := s.Store.UpdateBalanceRechargeLog(ctx, log); saveErr != nil {
+			return log, saveErr
+		}
+		return log, err
+	}
+	log.Status, log.Message = rechargeOrderStatus(nil, out)
+	log.RawStatus = out.Status
+	if err := s.Store.UpdateBalanceRechargeLog(ctx, log); err != nil {
+		return log, err
+	}
+	if log.Status == "success" {
+		_ = s.CheckUpstream(ctx, u.ID)
+	}
+	return log, nil
+}
+
+func (s *Service) DeleteBalanceRechargeLog(ctx context.Context, upstreamID, logID string) error {
+	if _, err := s.Store.Upstream(ctx, upstreamID); err != nil {
+		return err
+	}
+	return s.Store.DeleteBalanceRechargeLog(ctx, upstreamID, logID)
 }
 
 func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
@@ -451,6 +491,23 @@ func rechargeStatus(err error, out monitor.RechargeOrderResult) (string, string)
 		return "failed", err.Error()
 	}
 	return "success", nonEmptyText(out.Message, out.ResultType)
+}
+
+func rechargeOrderStatus(err error, out monitor.RechargeOrderResult) (string, string) {
+	if err != nil {
+		return "failed", err.Error()
+	}
+	status := strings.ToLower(strings.TrimSpace(out.Status))
+	switch status {
+	case "success", "paid", "completed":
+		return "success", nonEmptyText(out.Status, out.Message)
+	case "failed", "expired", "cancelled", "canceled", "refund_failed":
+		return "failed", nonEmptyText(out.Status, out.Message)
+	case "pending", "recharging", "processing", "paying", "":
+		return "pending", nonEmptyText(out.Status, "pending")
+	default:
+		return "pending", nonEmptyText(out.Status, out.Message)
+	}
 }
 
 func nonEmptyText(v, fallback string) string {

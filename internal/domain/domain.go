@@ -128,6 +128,7 @@ type BalanceRechargeLog struct {
 	RemoteOrderID string    `json:"remote_order_id"`
 	Status        string    `json:"status"`
 	Message       string    `json:"message"`
+	RawStatus     string    `json:"raw_status,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 

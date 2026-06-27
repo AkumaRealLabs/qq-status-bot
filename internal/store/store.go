@@ -132,7 +132,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS balance_recharge_logs (
 			id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, method TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0,
 			payment_type TEXT NOT NULL DEFAULT '', remote_order_id TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+			status TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', raw_status TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_upstream ON api_keys(upstream_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_cards_upstream ON model_cards(upstream_id)`,
@@ -168,6 +168,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.addColumnIfMissing(ctx, "model_cards", "sort_order", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "balance_recharge_logs", "raw_status", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	_, err := s.exec(ctx, `INSERT INTO settings (id, check_interval_minutes, probe_model) VALUES ('default', 5, ?) ON CONFLICT(id) DO NOTHING`, domain.ProbeModel)
@@ -764,9 +767,9 @@ func (s *Store) SaveBalanceRechargeLog(ctx context.Context, log domain.BalanceRe
 		log.CreatedAt = time.Now().UTC()
 	}
 	_, err := s.exec(ctx, `INSERT INTO balance_recharge_logs
-		(id, upstream_id, method, amount, payment_type, remote_order_id, status, message, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		log.ID, log.UpstreamID, log.Method, log.Amount, log.PaymentType, log.RemoteOrderID, log.Status, log.Message, log.CreatedAt.Format(time.RFC3339Nano))
+		(id, upstream_id, method, amount, payment_type, remote_order_id, status, message, raw_status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		log.ID, log.UpstreamID, log.Method, log.Amount, log.PaymentType, log.RemoteOrderID, log.Status, log.Message, log.RawStatus, log.CreatedAt.Format(time.RFC3339Nano))
 	return log, err
 }
 
@@ -774,7 +777,7 @@ func (s *Store) BalanceRechargeLogs(ctx context.Context, upstreamID string, limi
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.query(ctx, `SELECT id, upstream_id, method, amount, payment_type, remote_order_id, status, message, created_at
+	rows, err := s.query(ctx, `SELECT id, upstream_id, method, amount, payment_type, remote_order_id, status, message, raw_status, created_at
 		FROM balance_recharge_logs WHERE upstream_id=? ORDER BY created_at DESC LIMIT ?`, upstreamID, limit)
 	if err != nil {
 		return nil, err
@@ -784,13 +787,37 @@ func (s *Store) BalanceRechargeLogs(ctx context.Context, upstreamID string, limi
 	for rows.Next() {
 		var log domain.BalanceRechargeLog
 		var created string
-		if err := rows.Scan(&log.ID, &log.UpstreamID, &log.Method, &log.Amount, &log.PaymentType, &log.RemoteOrderID, &log.Status, &log.Message, &created); err != nil {
+		if err := rows.Scan(&log.ID, &log.UpstreamID, &log.Method, &log.Amount, &log.PaymentType, &log.RemoteOrderID, &log.Status, &log.Message, &log.RawStatus, &created); err != nil {
 			return nil, err
 		}
 		log.CreatedAt = parseTime(created)
 		out = append(out, log)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) BalanceRechargeLog(ctx context.Context, upstreamID, id string) (domain.BalanceRechargeLog, error) {
+	var log domain.BalanceRechargeLog
+	var created string
+	err := s.row(ctx, `SELECT id, upstream_id, method, amount, payment_type, remote_order_id, status, message, raw_status, created_at
+		FROM balance_recharge_logs WHERE upstream_id=? AND id=?`, upstreamID, id).
+		Scan(&log.ID, &log.UpstreamID, &log.Method, &log.Amount, &log.PaymentType, &log.RemoteOrderID, &log.Status, &log.Message, &log.RawStatus, &created)
+	if err != nil {
+		return domain.BalanceRechargeLog{}, err
+	}
+	log.CreatedAt = parseTime(created)
+	return log, nil
+}
+
+func (s *Store) UpdateBalanceRechargeLog(ctx context.Context, log domain.BalanceRechargeLog) error {
+	_, err := s.exec(ctx, `UPDATE balance_recharge_logs SET status=?, message=?, raw_status=? WHERE id=? AND upstream_id=?`,
+		log.Status, log.Message, log.RawStatus, log.ID, log.UpstreamID)
+	return err
+}
+
+func (s *Store) DeleteBalanceRechargeLog(ctx context.Context, upstreamID, id string) error {
+	_, err := s.exec(ctx, `DELETE FROM balance_recharge_logs WHERE upstream_id=? AND id=?`, upstreamID, id)
+	return err
 }
 
 func (s *Store) MigrationDone(ctx context.Context, source string) (bool, error) {

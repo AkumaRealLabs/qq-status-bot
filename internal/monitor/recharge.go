@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -61,6 +62,9 @@ func (c Client) CreateRechargeOrder(ctx context.Context, u *Upstream, req Rechar
 	if req.PaymentType == "" {
 		return RechargeOrderResult{}, errors.New("payment_type is required")
 	}
+	if err := c.validateRechargeAmount(ctx, u, req); err != nil {
+		return RechargeOrderResult{}, err
+	}
 	switch u.Type {
 	case "newapi":
 		return c.newapiRechargeOrder(ctx, u, req)
@@ -79,6 +83,57 @@ func (c Client) CreateRechargeOrder(ctx context.Context, u *Upstream, req Rechar
 	default:
 		return RechargeOrderResult{}, fmt.Errorf("unsupported upstream type %q", u.Type)
 	}
+}
+
+func (c Client) RefreshRechargeOrder(ctx context.Context, u *Upstream, orderID string) (RechargeOrderResult, error) {
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" {
+		return RechargeOrderResult{}, errors.New("order id is required")
+	}
+	switch u.Type {
+	case "newapi":
+		return c.newapiRechargeOrderStatus(ctx, u, orderID)
+	case "sub2api":
+		if err := c.sub2apiAuth(ctx, u); err != nil {
+			return RechargeOrderResult{}, err
+		}
+		out, err := c.sub2apiRechargeOrderStatus(ctx, u, orderID)
+		if IsAuthError(err) {
+			if err = c.sub2apiForceAuth(ctx, u); err != nil {
+				return out, err
+			}
+			out, err = c.sub2apiRechargeOrderStatus(ctx, u, orderID)
+		}
+		return out, err
+	default:
+		return RechargeOrderResult{}, fmt.Errorf("unsupported upstream type %q", u.Type)
+	}
+}
+
+func (c Client) validateRechargeAmount(ctx context.Context, u *Upstream, req RechargeOrderRequest) error {
+	if strings.HasPrefix(req.PaymentType, "creem:") {
+		return nil
+	}
+	if req.Amount <= 0 {
+		return errors.New("amount is required")
+	}
+	caps, err := c.RechargeCapabilities(ctx, u)
+	if err != nil {
+		return err
+	}
+	for _, method := range caps.Methods {
+		if method.Type != req.PaymentType {
+			continue
+		}
+		if method.MinAmount > 0 && req.Amount < method.MinAmount {
+			return fmt.Errorf("充值金额不能低于 %.2f", method.MinAmount)
+		}
+		if method.MaxAmount > 0 && req.Amount > method.MaxAmount {
+			return fmt.Errorf("充值金额不能高于 %.2f", method.MaxAmount)
+		}
+		return nil
+	}
+	return nil
 }
 
 func (c Client) newapiRechargeCapabilities(ctx context.Context, u *Upstream) (RechargeCapabilities, error) {
@@ -183,7 +238,31 @@ func (c Client) newapiRechargeOrder(ctx context.Context, u *Upstream, req Rechar
 	}
 	out := orderResult(paymentType, paymentPayload(raw))
 	out.PaymentType = paymentType
+	out.RemoteOrderID = nonEmpty(str(first(out.Raw, "out_trade_no")), out.RemoteOrderID)
 	return out, nil
+}
+
+func (c Client) newapiRechargeOrderStatus(ctx context.Context, u *Upstream, orderID string) (RechargeOrderResult, error) {
+	var raw map[string]any
+	path := "/api/user/topup/self?p=1&page_size=20&keyword=" + url.QueryEscape(orderID)
+	if err := c.doJSON(ctx, http.MethodGet, joinURL(u.BaseURL, path), nil, newapiHeaders(u), &raw); err != nil {
+		return RechargeOrderResult{}, markAuth(err)
+	}
+	if err := apiPayloadError(raw); err != nil {
+		return RechargeOrderResult{ResultType: "order", RemoteOrderID: orderID, Raw: raw}, err
+	}
+	item := findNewapiTopup(payload(raw), orderID)
+	if len(item) == 0 {
+		return RechargeOrderResult{}, errors.New("order not found")
+	}
+	return RechargeOrderResult{
+		ResultType:    "order",
+		PaymentType:   str(first(item, "payment_method", "payment_provider")),
+		RemoteOrderID: str(first(item, "trade_no", "order_id", "id")),
+		Status:        str(first(item, "status")),
+		Message:       str(first(item, "status")),
+		Raw:           item,
+	}, nil
 }
 
 func (c Client) sub2apiRechargeCapabilities(ctx context.Context, u *Upstream) (RechargeCapabilities, error) {
@@ -244,6 +323,24 @@ func (c Client) sub2apiRechargeOrder(ctx context.Context, u *Upstream, req Recha
 	}
 	out := orderResult(paymentType, paymentPayload(raw))
 	out.PaymentType = paymentType
+	out.RemoteOrderID = nonEmpty(str(first(out.Raw, "out_trade_no")), out.RemoteOrderID)
+	return out, nil
+}
+
+func (c Client) sub2apiRechargeOrderStatus(ctx context.Context, u *Upstream, orderID string) (RechargeOrderResult, error) {
+	var raw map[string]any
+	err := c.doJSON(ctx, http.MethodPost, joinURL(u.BaseURL, "/api/v1/payment/orders/verify"), map[string]string{"out_trade_no": orderID}, bearer(u.Sub2APIAccessToken), &raw)
+	if err != nil {
+		return RechargeOrderResult{}, markAuth(err)
+	}
+	if err := apiPayloadError(raw); err != nil {
+		return RechargeOrderResult{ResultType: "order", RemoteOrderID: orderID, Raw: raw}, err
+	}
+	data := paymentPayload(raw)
+	out := orderResult(str(first(data, "payment_type")), data)
+	out.RemoteOrderID = nonEmpty(str(first(data, "out_trade_no", "order_id", "id")), orderID)
+	out.Status = str(first(data, "status"))
+	out.Message = out.Status
 	return out, nil
 }
 
@@ -252,6 +349,7 @@ func orderResult(paymentType string, data map[string]any) RechargeOrderResult {
 		ResultType:    nonEmpty(str(first(data, "result_type")), "order"),
 		PaymentType:   paymentType,
 		RemoteOrderID: str(first(data, "order_id", "id", "out_trade_no", "trade_no", "session_id")),
+		Status:        str(first(data, "status")),
 		Raw:           data,
 	}
 	out.URL = str(first(data, "pay_url", "checkout_url", "payment_url", "paymentUrl", "pay_link", "qr_code_url", "qrCodeUrl"))
@@ -310,6 +408,37 @@ func paymentPayload(raw map[string]any) map[string]any {
 		}
 	}
 	return data
+}
+
+func findNewapiTopup(data map[string]any, orderID string) map[string]any {
+	for _, parent := range []string{"items", "records", "list", "topups"} {
+		for _, key := range []string{"data", "rows", "result"} {
+			for _, item := range array(obj(data[key])[parent]) {
+				row := obj(item)
+				if str(first(row, "trade_no", "order_id", "id")) == orderID {
+					return row
+				}
+			}
+		}
+	}
+	for _, key := range []string{"items", "records", "list", "topups"} {
+		for _, item := range array(data[key]) {
+			row := obj(item)
+			if str(first(row, "trade_no", "order_id", "id")) == orderID {
+				return row
+			}
+		}
+	}
+	for _, item := range array(data["data"]) {
+		row := obj(item)
+		if str(first(row, "trade_no", "order_id", "id")) == orderID {
+			return row
+		}
+	}
+	if str(first(data, "trade_no", "order_id", "id")) == orderID {
+		return data
+	}
+	return nil
 }
 
 func cloneMap(in map[string]any) map[string]any {

@@ -66,6 +66,7 @@ type RechargeOrderResult struct {
 	ResultType    string         `json:"result_type"`
 	PaymentType   string         `json:"payment_type"`
 	RemoteOrderID string         `json:"remote_order_id,omitempty"`
+	Status        string         `json:"status,omitempty"`
 	URL           string         `json:"url,omitempty"`
 	QRCode        string         `json:"qr_code,omitempty"`
 	Message       string         `json:"message,omitempty"`
