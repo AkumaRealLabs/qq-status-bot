@@ -32,6 +32,7 @@ type Server struct {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/setup/status", s.setupStatus)
+	mux.HandleFunc("GET /api/public/settings", s.publicSettings)
 	mux.HandleFunc("POST /api/setup", s.setup)
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("POST /api/auth/logout", s.auth(s.logout))
@@ -214,6 +215,15 @@ func (s *Server) checkCard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.App.Store.Settings(r.Context())
 	writeJSONOrError(w, cfg, err)
+}
+
+func (s *Server) publicSettings(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.App.Store.Settings(r.Context())
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	writeJSON(w, map[string]string{"site_name": cfg.SiteName, "site_icon": cfg.SiteIcon})
 }
 
 func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {

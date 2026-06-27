@@ -290,7 +290,7 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 	}
 	if card.KeyID == "" {
 		msg := "未选择 Key"
-		if _, err := s.Store.SaveProbe(ctx, u.ID, card.ID, monitor.ProbeResult{Success: false, Error: msg}); err != nil {
+		if _, err := s.Store.SaveProbe(ctx, u.ID, card.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
 			return err
 		}
 		return s.Store.UpdateCardProbeState(ctx, card.ID, msg, card.FailureCount+1)
@@ -312,7 +312,7 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 	if err := s.Store.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
 		return err
 	}
-	return s.alert(ctx, u, "ping:"+card.ID, !probe.Success && failures >= 2, card.Name+" ping 失败: "+probe.Error)
+	return s.alert(ctx, u, "ping:"+card.ID, !probe.Success && failures >= 2, card.Name+" 探测失败: "+probe.Error)
 }
 
 func (s *Service) MonitorStatus(ctx context.Context, window string) (map[string]any, error) {

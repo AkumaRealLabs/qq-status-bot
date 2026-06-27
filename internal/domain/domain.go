@@ -82,6 +82,8 @@ type ProbeRun struct {
 	CheckedAt  time.Time `json:"checked_at"`
 	Model      string    `json:"model"`
 	Input      string    `json:"input,omitempty"`
+	Status     string    `json:"status"`
+	Output     string    `json:"output,omitempty"`
 	HTTPStatus int       `json:"http_status"`
 	LatencyMS  int       `json:"latency_ms"`
 	Success    bool      `json:"success"`

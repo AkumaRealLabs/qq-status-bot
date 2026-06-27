@@ -18,6 +18,16 @@ type Client struct {
 	HTTP *http.Client
 }
 
+const (
+	StatusOperational      = "operational"
+	StatusDegraded         = "degraded"
+	StatusValidationFailed = "validation_failed"
+	StatusFailed           = "failed"
+	StatusError            = "error"
+)
+
+var degradedAfter = 6 * time.Second
+
 type upstreamGroup struct {
 	ID          string
 	Name        string
@@ -260,22 +270,62 @@ func (c Client) sub2apiGroups(ctx context.Context, u *Upstream) map[string]upstr
 }
 
 func (c Client) Probe(ctx context.Context, baseURL, key, model string) ProbeResult {
+	challenge := newChallenge()
 	start := time.Now()
+	var raw map[string]any
 	err := c.doJSON(ctx, http.MethodPost, joinURL(baseURL, "/v1/responses"), map[string]any{
 		"model":             model,
-		"input":             "ping",
+		"input":             challenge.Prompt,
 		"max_output_tokens": 16,
 		"stream":            false,
-	}, bearer(key), nil)
+	}, bearer(key), &raw)
 	latency := time.Since(start)
 	if err != nil {
 		var httpErr httpStatusError
 		if errors.As(err, &httpErr) {
-			return ProbeResult{HTTPStatus: httpErr.Status, Latency: latency, Error: httpErr.Message}
+			return ProbeResult{HTTPStatus: httpErr.Status, Latency: latency, Status: StatusFailed, Input: challenge.Prompt, Error: httpErr.Error()}
 		}
-		return ProbeResult{Latency: latency, Error: err.Error()}
+		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, Error: err.Error()}
 	}
-	return ProbeResult{HTTPStatus: http.StatusOK, Latency: latency, Success: true}
+	output := responseText(raw)
+	if output == "" {
+		return ProbeResult{HTTPStatus: http.StatusOK, Latency: latency, Status: StatusFailed, Input: challenge.Prompt, Error: "回复为空"}
+	}
+	validation := validateResponse(output, challenge.ExpectedAnswer)
+	if !validation.Valid {
+		return ProbeResult{
+			HTTPStatus: http.StatusOK,
+			Latency:    latency,
+			Status:     StatusValidationFailed,
+			Input:      challenge.Prompt,
+			Output:     output,
+			Error:      fmt.Sprintf("回复验证失败: 期望 %q, 实际: %q", challenge.ExpectedAnswer, validation.Normalized),
+		}
+	}
+	status := StatusOperational
+	if latency > degradedAfter {
+		status = StatusDegraded
+	}
+	return ProbeResult{HTTPStatus: http.StatusOK, Latency: latency, Status: status, Input: challenge.Prompt, Output: output, Success: true}
+}
+
+func responseText(raw map[string]any) string {
+	if text := strings.TrimSpace(str(raw["output_text"])); text != "" {
+		return text
+	}
+	var parts []string
+	for _, item := range array(raw["output"]) {
+		m := obj(item)
+		if text := strings.TrimSpace(str(m["text"])); text != "" {
+			parts = append(parts, text)
+		}
+		for _, content := range array(m["content"]) {
+			if text := strings.TrimSpace(str(obj(content)["text"])); text != "" {
+				parts = append(parts, text)
+			}
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func (c Client) doJSON(ctx context.Context, method, rawURL string, body any, headers map[string]string, out any) error {
@@ -323,7 +373,7 @@ type httpStatusError struct {
 
 func (e httpStatusError) Error() string {
 	if e.Message == "" {
-		return http.StatusText(e.Status)
+		return fmt.Sprintf("http %d: %s", e.Status, http.StatusText(e.Status))
 	}
 	return fmt.Sprintf("http %d: %s", e.Status, e.Message)
 }

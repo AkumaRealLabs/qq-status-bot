@@ -6,18 +6,26 @@ on:
     tags: ["v*"]
   pull_request:
 
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write
 
+env:
+  APP_IMAGE: ghcr.io/akumareallabs/ai-upstream-monitor
+  BROWSER_IMAGE: ghcr.io/akumareallabs/ai-upstream-monitor-browser
+
 jobs:
-  test-build:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.4"
+          go-version-file: go.mod
       - uses: pnpm/action-setup@v4
         with:
           version: 10.33.4
@@ -29,28 +37,42 @@ jobs:
       - working-directory: frontend
         run: pnpm install --frozen-lockfile && pnpm build
       - run: go test ./...
-      - run: docker build -t ghcr.io/akumareallabs/ai-upstream-monitor:test .
-      - run: docker build -f browser/Dockerfile -t ghcr.io/akumareallabs/ai-upstream-monitor-browser:test .
-
-  publish:
-    if: github.event_name == 'push'
-    needs: test-build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v4
+        if: github.event_name == 'push'
         with:
           registry: ghcr.io
           username: Akuma-real
           password: ${{ secrets.GHCR_TOKEN }}
+      - name: Prepare image tags
+        shell: bash
+        run: |
+          {
+            echo "APP_TAGS<<EOF"
+            echo "${APP_IMAGE}:latest"
+            if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+              echo "${APP_IMAGE}:${GITHUB_REF_NAME#v}"
+            fi
+            echo "EOF"
+            echo "BROWSER_TAGS<<EOF"
+            echo "${BROWSER_IMAGE}:latest"
+            if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+              echo "${BROWSER_IMAGE}:${GITHUB_REF_NAME#v}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_ENV"
       - uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
-          tags: ghcr.io/akumareallabs/ai-upstream-monitor:latest
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ env.APP_TAGS }}
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: browser/Dockerfile
-          push: true
-          tags: ghcr.io/akumareallabs/ai-upstream-monitor-browser:latest
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ env.BROWSER_TAGS }}
+          cache-from: type=gha,scope=browser
+          cache-to: type=gha,mode=max,scope=browser

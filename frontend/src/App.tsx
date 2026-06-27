@@ -84,6 +84,9 @@ type ModelCard = {
 
 type Probe = {
   checked_at: string
+  status: string
+  input?: string
+  output?: string
   success: boolean
   latency_ms: number
   http_status: number
@@ -120,6 +123,8 @@ type SettingsData = {
   site_name: string
   site_icon: string
 }
+
+type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>
 
 type TabID = 'status' | 'balances' | 'upstreams' | 'settings'
 
@@ -183,7 +188,9 @@ export default function App() {
   const [loggingOut, setLoggingOut] = useState(false)
   const setup = useQuery({ queryKey: ['setup'], queryFn: () => api<{ initialized: boolean }>('/api/setup/status') })
   const me = useQuery({ queryKey: ['me'], queryFn: () => api('/api/auth/me'), retry: false, enabled: setup.data?.initialized })
+  const publicSettings = useQuery({ queryKey: ['public-settings'], queryFn: () => api<SiteSettings>('/api/public/settings') })
   const settings = useQuery({ queryKey: ['settings'], queryFn: () => api<SettingsData>('/api/settings'), enabled: me.isSuccess })
+  const site = settings.data ?? publicSettings.data
 
   useEffect(() => {
     const onPopState = () => setTab(tabFromPath(location.pathname))
@@ -192,22 +199,22 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const cfg = settings.data
+    const cfg = site
     if (!cfg) return
     document.title = cfg.site_name || 'AI 上游监控'
     const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]') ?? document.createElement('link')
     icon.rel = 'icon'
     icon.href = cfg.site_icon || '/favicon.ico'
     document.head.appendChild(icon)
-  }, [settings.data])
+  }, [site])
 
   if (setup.isLoading) return <ShellLoading />
-  if (!setup.data?.initialized) return <SetupPage onDone={() => void setup.refetch()} />
-  if (me.isError) return <LoginPage onDone={() => void me.refetch()} />
+  if (!setup.data?.initialized) return <SetupPage site={site} onDone={() => void setup.refetch()} />
+  if (me.isError) return <LoginPage site={site} onDone={() => void me.refetch()} />
 
   const active = tabs.find((item) => item.id === tab) ?? tabs[0]
-  const siteName = settings.data?.site_name || 'AI 上游监控'
-  const siteIcon = settings.data?.site_icon || ''
+  const siteName = site?.site_name || 'AI 上游监控'
+  const siteIcon = site?.site_icon || ''
   const navigate = (next: TabID) => {
     setTab(next)
     if (location.pathname !== tabPaths[next]) window.history.pushState(null, '', tabPaths[next])
@@ -285,13 +292,13 @@ function NavItem({ item, active, onClick }: { item: (typeof tabs)[number]; activ
   )
 }
 
-function BrandIcon({ src }: { src: string }) {
+function BrandIcon({ src, className }: { src?: string; className?: string }) {
   const [failed, setFailed] = useState(false)
   if (src && !failed) {
-    return <img src={src} alt="" className="size-9 rounded-lg object-cover" onError={() => setFailed(true)} />
+    return <img src={src} alt="" className={cn('size-9 rounded-lg object-cover', className)} onError={() => setFailed(true)} />
   }
   return (
-    <div className="flex size-9 items-center justify-center rounded-lg bg-surface-dark text-on-dark">
+    <div className={cn('flex size-9 items-center justify-center rounded-lg bg-surface-dark text-on-dark', className)}>
       <MonitorCheck className="size-5" />
     </div>
   )
@@ -321,62 +328,72 @@ function ShellLoading() {
   )
 }
 
-function SetupPage({ onDone }: { onDone: () => void }) {
+function SetupPage({ site, onDone }: { site?: SiteSettings; onDone: () => void }) {
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
   const mutation = useMutation({
     mutationFn: () => api('/api/setup', { method: 'POST', body: JSON.stringify({ username, password }) }),
     onSuccess: onDone,
   })
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!mutation.isPending) mutation.mutate()
+  }
   return (
-    <AuthFrame title="初始化管理员" subtitle="创建第一个管理员账号">
-      <FormError error={mutation.error} />
-      <Field label="用户名">
-        <Input value={username} onChange={(e) => setUsername(e.target.value)} />
-      </Field>
-      <Field label="密码">
-        <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      </Field>
-      <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-        {mutation.isPending && <Loader2 className="size-4 animate-spin" />}
-        创建管理员
-      </Button>
+    <AuthFrame site={site} title="初始化管理员" subtitle="创建第一个管理员账号">
+      <form className="grid gap-4" onSubmit={submit}>
+        <FormError error={mutation.error} />
+        <Field label="用户名">
+          <Input value={username} onChange={(e) => setUsername(e.target.value)} />
+        </Field>
+        <Field label="密码">
+          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
+        <Button type="submit" disabled={mutation.isPending}>
+          {mutation.isPending && <Loader2 className="size-4 animate-spin" />}
+          创建管理员
+        </Button>
+      </form>
     </AuthFrame>
   )
 }
 
-function LoginPage({ onDone }: { onDone: () => void }) {
+function LoginPage({ site, onDone }: { site?: SiteSettings; onDone: () => void }) {
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
   const mutation = useMutation({
     mutationFn: () => api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
     onSuccess: onDone,
   })
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!mutation.isPending) mutation.mutate()
+  }
   return (
-    <AuthFrame title="登录" subtitle="进入 AI 上游监控后台">
-      <FormError error={mutation.error} />
-      <Field label="用户名">
-        <Input value={username} onChange={(e) => setUsername(e.target.value)} />
-      </Field>
-      <Field label="密码">
-        <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      </Field>
-      <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-        {mutation.isPending && <Loader2 className="size-4 animate-spin" />}
-        登录
-      </Button>
+    <AuthFrame site={site} title="登录" subtitle={`进入 ${site?.site_name || 'AI 上游监控'} 后台`}>
+      <form className="grid gap-4" onSubmit={submit}>
+        <FormError error={mutation.error} />
+        <Field label="用户名">
+          <Input value={username} onChange={(e) => setUsername(e.target.value)} />
+        </Field>
+        <Field label="密码">
+          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
+        <Button type="submit" disabled={mutation.isPending}>
+          {mutation.isPending && <Loader2 className="size-4 animate-spin" />}
+          登录
+        </Button>
+      </form>
     </AuthFrame>
   )
 }
 
-function AuthFrame({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
+function AuthFrame({ site, title, subtitle, children }: { site?: SiteSettings; title: string; subtitle: string; children: ReactNode }) {
   return (
     <div className="grid min-h-svh place-items-center bg-background p-4">
       <Card className="animate-in w-full max-w-sm bg-card fade-in-50 zoom-in-95 duration-300">
         <CardHeader className="gap-2 text-center">
-          <div className="mx-auto flex size-10 items-center justify-center rounded-lg bg-surface-dark text-on-dark">
-            <MonitorCheck className="size-5" />
-          </div>
+          <BrandIcon src={site?.site_icon} className="mx-auto" />
           <CardTitle className="font-display text-3xl font-normal">{title}</CardTitle>
           <CardDescription>{subtitle}</CardDescription>
         </CardHeader>
@@ -415,7 +432,7 @@ function StatusPage() {
         </div>
       }
     >
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <Metric label="请求数" value={q.data?.requests ?? 0} />
         <Metric label="成功" value={q.data?.success ?? 0} accent="success" />
         <Metric label="失败" value={q.data?.failed ?? 0} accent="danger" />
@@ -424,7 +441,7 @@ function StatusPage() {
       </div>
       {q.isLoading && <SkeletonCardGrid count={6} />}
       {!q.isLoading && cards.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {cards.map((card) => <StatusMonitorCard key={card.id} card={card} windowValue={windowValue} />)}
         </div>
       )}
@@ -452,24 +469,25 @@ function StatusMonitorCard({ card, windowValue }: { card: ModelCard; windowValue
   })
   const history = (card.history ?? []).slice(-12)
   const latest = history.at(-1)
-  const ok = latest?.success ?? !card.last_error
-  const successCount = history.filter((probe) => probe.success).length
+  const ok = latest ? probeOK(latest) : !card.last_error
+  const statusText = latest ? probeStatus(latest) : ok ? 'operational' : 'failed'
+  const successCount = history.filter(probeOK).length
   const uptime = history.length ? `${((successCount / history.length) * 100).toFixed(2)}%` : '-'
   const groupName = card.key_group || '-'
   const ratio = card.effective_ratio || card.key_group_ratio || '-'
   return (
     <Card className={cn('bg-card', !ok && 'border-destructive/40')}>
-      <CardHeader className="min-h-20 gap-3 border-b border-border">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+      <CardHeader className="min-h-16 gap-2 border-b border-border">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
           <div className="min-w-0 pt-1">
-            <CardTitle className="break-words text-xl leading-tight">{card.upstream_name} · {ratio}</CardTitle>
-            <CardDescription className="mt-2 grid gap-1 text-sm leading-relaxed">
+            <CardTitle className="break-words text-lg leading-tight">{card.upstream_name} · {ratio}</CardTitle>
+            <CardDescription className="mt-1.5 grid gap-0.5 text-xs leading-relaxed">
               <span>分组：{groupName}</span>
               <span>模型：gpt-5.5</span>
             </CardDescription>
           </div>
-          <div className="flex min-w-20 shrink-0 flex-col items-end gap-2">
-            <StatusBadge ok={ok} okText="正常" failText="异常" />
+          <div className="flex min-w-16 shrink-0 flex-col items-end gap-1.5">
+            <StatusBadge ok={ok} okText={statusText} failText={statusText} />
             <Button variant="outline" size="sm" onClick={() => check.mutate()} disabled={check.isPending}>
               {check.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCcw className="size-3" />}
               检查
@@ -477,26 +495,31 @@ function StatusMonitorCard({ card, windowValue }: { card: ModelCard; windowValue
           </div>
         </div>
       </CardHeader>
-      <CardContent className="grid gap-3 pt-3">
-        <div className="grid grid-cols-2 gap-3">
+      <CardContent className="grid gap-2.5 pt-2.5">
+        <div className="grid grid-cols-2 gap-2">
           <MiniStat label="对话延迟" value={latest ? `${latest.latency_ms} ms` : '-'} />
           <MiniStat label="端点 PING" value={latest?.http_status ? String(latest.http_status) : '-'} />
         </div>
-        <div className="border-t border-border pt-3">
-          <div className="mb-3 flex items-end justify-between gap-3">
-            <div className="text-sm text-muted-foreground">可用性 · {windowValue}</div>
-            <div className={cn('font-display text-3xl font-normal', ok ? 'text-success' : 'text-destructive')}>{uptime}</div>
+        <div className="border-t border-border pt-2.5">
+          <div className="mb-2 flex items-end justify-between gap-2">
+            <div className="text-xs text-muted-foreground">可用性 · {windowValue}</div>
+            <div className={cn('font-display text-2xl font-normal', ok ? 'text-success' : 'text-destructive')}>{uptime}</div>
           </div>
           <div className="grid grid-cols-12 gap-1">
-            {history.map((probe, index) => (
-              <span
-                key={`${probe.checked_at}-${index}`}
-                className={cn('h-[18px] rounded-sm', probe.success ? 'bg-success' : 'bg-destructive')}
-                title={`${probe.success ? '成功' : '失败'} / ${probe.latency_ms}ms / ${fmtTime(probe.checked_at)}${probe.error ? ` / ${probe.error}` : ''}`}
-              />
-            ))}
+            {history.map((probe, index) => {
+              const good = probeOK(probe)
+              return (
+                <HoverText
+                  key={`${probe.checked_at}-${index}`}
+                  value={probeHover(probe)}
+                  className={cn('h-4 rounded-sm', good ? 'bg-success' : 'bg-destructive')}
+                >
+                  <span className="sr-only">{probeStatus(probe)}</span>
+                </HoverText>
+              )
+            })}
             {history.length === 0 &&
-              Array.from({ length: 12 }).map((_, index) => <span key={index} className="h-[18px] rounded-sm bg-surface-cream-strong" />)}
+              Array.from({ length: 12 }).map((_, index) => <span key={index} className="h-4 rounded-sm bg-surface-cream-strong" />)}
           </div>
           <div className="mt-2 flex justify-between text-xs text-muted-foreground">
             <span>PAST</span>
@@ -505,9 +528,10 @@ function StatusMonitorCard({ card, windowValue }: { card: ModelCard; windowValue
           </div>
         </div>
         {(message || card.last_error) && (
-          <div className={cn('truncate rounded-sm px-3 py-2 text-sm', check.isError || card.last_error ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}>
-            {message || card.last_error}
-          </div>
+          <HoverText
+            value={message || card.last_error}
+            className={cn('rounded-sm px-2.5 py-1.5 text-xs', check.isError || card.last_error ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}
+          />
         )}
       </CardContent>
     </Card>
@@ -547,14 +571,14 @@ function BalancesPage() {
         </div>
       }
     >
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-3">
         <Metric label="上游数量" value={rows.length} />
         <Metric label="折算余额" value={`${num(total)} 元`} />
         <Metric label="低余额" value={low} accent={low > 0 ? 'danger' : 'success'} />
       </div>
       {q.isLoading && <SkeletonCardGrid count={6} />}
       {!q.isLoading && rows.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {rows.map((row) => <BalanceMonitorCard key={row.id} row={row} />)}
         </div>
       )}
@@ -566,7 +590,7 @@ function BalancesPage() {
 function BalanceMonitorCard({ row }: { row: BalanceRow }) {
   return (
     <Card className={cn('bg-card', row.low_balance && 'border-destructive/40')}>
-      <CardHeader className="gap-3">
+      <CardHeader className="gap-2">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <CardTitle className="truncate">{row.name}</CardTitle>
@@ -575,11 +599,11 @@ function BalanceMonitorCard({ row }: { row: BalanceRow }) {
           <StatusBadge ok={!row.low_balance} okText="正常" failText="低余额" />
         </div>
       </CardHeader>
-      <CardContent className="grid gap-4">
+      <CardContent className="grid gap-3">
         <div>
           <div className="text-sm text-muted-foreground">余额折算</div>
-          <div className="font-display text-4xl font-normal">{num(row.remain)} 元</div>
-          <div className="mt-2 text-sm text-muted-foreground">最后刷新：{fmtTime(row.last_check)}</div>
+          <div className="font-display text-3xl font-normal">{num(row.remain)} 元</div>
+          <div className="mt-1.5 text-xs text-muted-foreground">最后刷新：{fmtTime(row.last_check)}</div>
         </div>
       </CardContent>
     </Card>
@@ -616,7 +640,13 @@ function UpstreamsPage() {
           <CardDescription>new-api 与 sub2api 普通用户接入</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
+          <div className="grid gap-3 md:hidden">
+            {upstreams.isLoading && <div className="rounded-sm border border-border bg-background p-3 text-sm text-muted-foreground">加载中...</div>}
+            {!upstreams.isLoading && upstreamRows.map((row) => <UpstreamMobileItem key={row.upstream.id} row={row} />)}
+            {!upstreams.isLoading && upstreamRows.length === 0 && <div className="rounded-sm border border-border bg-background p-3 text-sm text-muted-foreground">暂无上游</div>}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>名称</TableHead>
@@ -637,7 +667,8 @@ function UpstreamsPage() {
                 ))}
               {!upstreams.isLoading && upstreamRows.length === 0 && <EmptyRow colSpan={8} text="暂无上游" />}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 
@@ -651,7 +682,13 @@ function UpstreamsPage() {
         </CardHeader>
         <CardContent>
           {cardError && <FormError error={cardError} />}
-          <Table>
+          <div className="grid gap-3 md:hidden">
+            {cards.isLoading && <div className="rounded-sm border border-border bg-background p-3 text-sm text-muted-foreground">加载中...</div>}
+            {!cards.isLoading && cardRows.map((card) => <ManagedCardMobileItem key={card.id} card={card} />)}
+            {!cards.isLoading && cardRows.length === 0 && <div className="rounded-sm border border-border bg-background p-3 text-sm text-muted-foreground">暂无卡片</div>}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>名称</TableHead>
@@ -667,7 +704,8 @@ function UpstreamsPage() {
               {!cards.isLoading && cardRows.map((card) => <ManagedCardRow key={card.id} card={card} />)}
               {!cards.isLoading && cardRows.length === 0 && <EmptyRow colSpan={6} text="暂无卡片" />}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </CardContent>
       </Card>
     </Page>
@@ -675,13 +713,8 @@ function UpstreamsPage() {
 }
 
 function UpstreamTableRow({ row }: { row: UpstreamRow }) {
-  const qc = useQueryClient()
   const upstream = row.upstream
-  const remove = useMutation({
-    mutationFn: () => api(`/api/upstreams/${upstream.id}`, { method: 'DELETE' }),
-    onSuccess: () => void invalidateMonitor(qc),
-    onError: (error) => window.alert(errorMessage(error)),
-  })
+  const error = upstream.last_error || row.balance?.error || '-'
   return (
     <TableRow>
       <TableCell className="font-medium">{upstream.name}</TableCell>
@@ -694,16 +727,54 @@ function UpstreamTableRow({ row }: { row: UpstreamRow }) {
       <TableCell>
         <StatusBadge ok={upstream.enabled} okText="启用" failText="停用" />
       </TableCell>
-      <TableCell className="max-w-64 truncate text-destructive">{upstream.last_error || row.balance?.error || '-'}</TableCell>
+      <TableCell className="max-w-64 text-destructive">
+        <HoverText value={error} />
+      </TableCell>
       <TableCell>
-        <div className="flex justify-end gap-2">
-          <UpstreamDialog upstream={upstream} />
-          <Action path={`/api/upstreams/${upstream.id}/sync-keys`} label="同步 Key" />
-          <Action path={`/api/upstreams/${upstream.id}/check`} label="检查" />
-          <IconAction title="删除" onClick={() => confirmDelete(upstream.name) && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />
-        </div>
+        <UpstreamActions row={row} />
       </TableCell>
     </TableRow>
+  )
+}
+
+function UpstreamMobileItem({ row }: { row: UpstreamRow }) {
+  const upstream = row.upstream
+  const error = upstream.last_error || row.balance?.error || ''
+  return (
+    <div className="grid gap-3 rounded-sm border border-border bg-background p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate font-medium">{upstream.name}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <TypeBadge type={upstream.type} />
+            <span>Key：{keysOf(row).length}</span>
+            <span>余额：{num(row.balance?.remain)}</span>
+          </div>
+        </div>
+        <StatusBadge ok={upstream.enabled} okText="启用" failText="停用" />
+      </div>
+      <HoverText value={upstream.base_url} className="text-xs text-muted-foreground" />
+      {error && <HoverText value={error} className="rounded-sm bg-destructive/10 px-2 py-1 text-xs text-destructive" />}
+      <UpstreamActions row={row} mobile />
+    </div>
+  )
+}
+
+function UpstreamActions({ row, mobile }: { row: UpstreamRow; mobile?: boolean }) {
+  const qc = useQueryClient()
+  const upstream = row.upstream
+  const remove = useMutation({
+    mutationFn: () => api(`/api/upstreams/${upstream.id}`, { method: 'DELETE' }),
+    onSuccess: () => void invalidateMonitor(qc),
+    onError: (error) => window.alert(errorMessage(error)),
+  })
+  return (
+    <div className={cn('flex gap-2', mobile ? 'flex-wrap' : 'justify-end')}>
+      <UpstreamDialog upstream={upstream} />
+      <Action path={`/api/upstreams/${upstream.id}/sync-keys`} label="同步 Key" />
+      <Action path={`/api/upstreams/${upstream.id}/check`} label="检查" />
+      <IconAction title="删除" onClick={() => confirmDelete(upstream.name) && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />
+    </div>
   )
 }
 
@@ -723,6 +794,7 @@ function ManagedCardRow({ card }: { card: ModelCard }) {
     onSuccess: () => void invalidateMonitor(qc),
     onError: (error) => window.alert(errorMessage(error)),
   })
+  const error = card.last_error || '-'
   return (
     <TableRow>
       <TableCell className="font-medium">{card.name}</TableCell>
@@ -731,7 +803,9 @@ function ManagedCardRow({ card }: { card: ModelCard }) {
       <TableCell>
         <StatusBadge ok={card.enabled} okText="启用" failText="停用" />
       </TableCell>
-      <TableCell className="max-w-72 truncate text-destructive">{card.last_error || '-'}</TableCell>
+      <TableCell className="max-w-72 text-destructive">
+        <HoverText value={error} />
+      </TableCell>
       <TableCell>
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={() => toggle.mutate()} disabled={toggle.isPending}>
@@ -742,6 +816,43 @@ function ManagedCardRow({ card }: { card: ModelCard }) {
         </div>
       </TableCell>
     </TableRow>
+  )
+}
+
+function ManagedCardMobileItem({ card }: { card: ModelCard }) {
+  const qc = useQueryClient()
+  const toggle = useMutation({
+    mutationFn: () =>
+      api(`/api/cards/${card.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ upstream_id: card.upstream_id, key_id: card.key_id, enabled: !card.enabled }),
+      }),
+    onSuccess: () => void invalidateMonitor(qc),
+    onError: (error) => window.alert(errorMessage(error)),
+  })
+  const remove = useMutation({
+    mutationFn: () => api(`/api/cards/${card.id}`, { method: 'DELETE' }),
+    onSuccess: () => void invalidateMonitor(qc),
+    onError: (error) => window.alert(errorMessage(error)),
+  })
+  return (
+    <div className="grid gap-3 rounded-sm border border-border bg-background p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate font-medium">{card.name}</div>
+          <div className="mt-1 truncate text-xs text-muted-foreground">{card.upstream_name} · {card.key_name || card.key_group || '-'}</div>
+        </div>
+        <StatusBadge ok={card.enabled} okText="启用" failText="停用" />
+      </div>
+      {card.last_error && <HoverText value={card.last_error} className="rounded-sm bg-destructive/10 px-2 py-1 text-xs text-destructive" />}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={() => toggle.mutate()} disabled={toggle.isPending}>
+          {toggle.isPending && <Loader2 className="size-3 animate-spin" />}
+          {card.enabled ? '停用' : '启用'}
+        </Button>
+        <IconAction title="删除" onClick={() => confirmDelete(card.name) && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />
+      </div>
+    </div>
   )
 }
 
@@ -1112,6 +1223,20 @@ function IconAction({
   )
 }
 
+function HoverText({ value, className, children }: { value?: string; className?: string; children?: ReactNode }) {
+  const text = value || '-'
+  return (
+    <span className={cn('group relative block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30', className)} tabIndex={0}>
+      {children ?? <span className="block truncate">{text}</span>}
+      {text !== '-' && (
+        <span className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 hidden max-w-[min(520px,calc(100vw-32px))] whitespace-pre-wrap break-words rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-relaxed text-popover-foreground shadow-lg group-hover:block group-focus:block">
+          {text}
+        </span>
+      )}
+    </span>
+  )
+}
+
 function openBrowserLogin(
   mutation: { mutate: (variables: void, options: { onSuccess: (out: { vnc_url: string }) => void; onError: (error: unknown) => void }) => void },
   onSuccess?: () => void,
@@ -1175,10 +1300,10 @@ function Page({
 
 function Metric({ label, value, accent }: { label: string; value: ReactNode; accent?: 'success' | 'danger' }) {
   return (
-    <Card className="gap-2 bg-card py-4">
-      <CardContent className="px-4">
-        <div className="text-sm text-muted-foreground">{label}</div>
-        <div className={cn('font-display mt-1 text-3xl font-normal', accent === 'success' && 'text-success', accent === 'danger' && 'text-destructive')}>
+    <Card className="gap-1.5 bg-card py-3">
+      <CardContent className="px-3.5">
+        <div className="text-xs text-muted-foreground">{label}</div>
+        <div className={cn('font-display mt-0.5 text-2xl font-normal', accent === 'success' && 'text-success', accent === 'danger' && 'text-destructive')}>
           {value}
         </div>
       </CardContent>
@@ -1188,9 +1313,9 @@ function Metric({ label, value, accent }: { label: string; value: ReactNode; acc
 
 function MiniStat({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="rounded-sm border border-border bg-background px-3 py-2">
+    <div className="rounded-sm border border-border bg-background px-2.5 py-1.5">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate font-medium">{value}</div>
+      <div className="mt-0.5 truncate text-sm font-medium">{value}</div>
     </div>
   )
 }
@@ -1249,6 +1374,26 @@ function SkeletonCardGrid({ count }: { count: number }) {
       ))}
     </div>
   )
+}
+
+function probeStatus(probe: Probe) {
+  return probe.status || (probe.success ? 'operational' : 'failed')
+}
+
+function probeOK(probe: Probe) {
+  const status = probeStatus(probe)
+  return status === 'operational' || status === 'degraded'
+}
+
+function probeHover(probe: Probe) {
+  return [
+    `状态：${probeStatus(probe)}`,
+    `延迟：${probe.latency_ms} ms`,
+    `HTTP 状态：${probe.http_status || '-'}`,
+    `检查时间：${fmtTime(probe.checked_at)}`,
+    probe.error ? `详情：${probe.error}` : '',
+    probe.output ? `回复：${probe.output}` : '',
+  ].filter(Boolean).join('\n')
 }
 
 function TypeBadge({ type }: { type: string }) {

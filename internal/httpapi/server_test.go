@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -66,4 +67,42 @@ func TestAuthSessionFlow(t *testing.T) {
 		t.Fatalf("logout status = %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+func TestPublicSettingsDoesNotRequireAuth(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := st.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.SiteName = "GG API"
+	cfg.SiteIcon = "/logo.png"
+	if _, err := st.UpdateSettings(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/api/public/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var out map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out["site_name"] != "GG API" || out["site_icon"] != "/logo.png" || len(out) != 2 {
+		t.Fatalf("public settings = %#v", out)
+	}
 }

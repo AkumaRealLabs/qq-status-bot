@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"ai-upstream-monitor/internal/domain"
+	"ai-upstream-monitor/internal/monitor"
 	"ai-upstream-monitor/internal/store"
 )
 
@@ -63,5 +65,36 @@ func TestEffectiveRatioUsesBalanceRate(t *testing.T) {
 	}
 	if got := effectiveRatio("custom", 2); got != "custom" {
 		t.Fatalf("non-numeric ratio = %q, want custom", got)
+	}
+}
+
+func TestMonitorStatusCountsProbeStatuses(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "A", Type: "newapi", BaseURL: "https://example.test", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "A", UpstreamID: u.ID, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{monitor.StatusOperational, monitor.StatusDegraded, monitor.StatusValidationFailed} {
+		if _, err := st.SaveProbe(t.Context(), u.ID, card.ID, monitor.ProbeResult{Status: status, Latency: time.Millisecond}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := New(st).MonitorStatus(t.Context(), "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["success"] != 2 || out["failed"] != 1 {
+		t.Fatalf("status = %#v", out)
 	}
 }
