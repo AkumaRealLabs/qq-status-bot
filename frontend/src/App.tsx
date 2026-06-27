@@ -7,6 +7,7 @@ import {
   Activity,
   CheckCircle2,
   ChevronRight,
+  Copy,
   Database,
   Download,
   ExternalLink,
@@ -114,6 +115,43 @@ type BalanceRow = {
   source_remain?: number
   low_balance?: boolean
   last_check?: string
+}
+
+type RechargeMethod = {
+  type: string
+  name: string
+  min_amount?: number
+  max_amount?: number
+  external_url?: string
+  direct: boolean
+  sdk_only?: boolean
+}
+
+type RechargeCapabilities = {
+  online_enabled: boolean
+  redeem_enabled: boolean
+  external_url?: string
+  methods: RechargeMethod[]
+}
+
+type RechargeResult = {
+  result_type: 'link' | 'qr' | 'sdk' | 'redeem' | 'order' | string
+  payment_type: string
+  remote_order_id?: string
+  url?: string
+  qr_code?: string
+  message?: string
+}
+
+type RechargeLog = {
+  id: string
+  method: string
+  amount: number
+  payment_type: string
+  remote_order_id: string
+  status: string
+  message: string
+  created_at: string
 }
 
 type MonitorStatus = {
@@ -822,6 +860,7 @@ function BalanceMonitorCard({ row }: { row: BalanceRow }) {
           <div className="break-words font-display text-3xl font-normal">{num(row.remain)} 元</div>
           <div className="mt-1.5 text-xs text-muted-foreground">最后刷新：{fmtTime(row.last_check)}</div>
         </div>
+        <BalanceRechargeDialog upstream={{ id: row.id, name: row.name, type: row.type as Upstream['type'], base_url: '', enabled: row.enabled, balance_rate: row.balance_rate, low_balance_threshold: 0 }} />
       </CardContent>
     </Card>
   )
@@ -945,9 +984,199 @@ function UpstreamActions({ row, mobile }: { row: UpstreamRow; mobile?: boolean }
   return (
     <div className={cn('flex max-w-full flex-wrap gap-2', mobile ? '' : 'justify-end')}>
       <UpstreamDialog upstream={upstream} />
+      <BalanceRechargeDialog upstream={upstream} />
       <Action path={`/api/upstreams/${upstream.id}/sync-keys`} label="同步 Key" />
       <Action path={`/api/upstreams/${upstream.id}/check`} label="检查" />
       <IconAction title="删除" onClick={() => confirmDelete(upstream.name) && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />
+    </div>
+  )
+}
+
+function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [amount, setAmount] = useState('')
+  const [paymentType, setPaymentType] = useState('')
+  const [code, setCode] = useState('')
+  const [result, setResult] = useState<RechargeResult | null>(null)
+  const caps = useQuery({
+    queryKey: ['balance-recharge-capabilities', upstream.id],
+    queryFn: () => api<RechargeCapabilities>(`/api/upstreams/${upstream.id}/balance-recharge/capabilities`),
+    enabled: open,
+  })
+  const logs = useQuery({
+    queryKey: ['balance-recharge-logs', upstream.id],
+    queryFn: () => api<RechargeLog[]>(`/api/upstreams/${upstream.id}/balance-recharge/logs`),
+    enabled: open,
+  })
+  const methods = caps.data?.methods ?? []
+  const selectedMethod = methods.find((item) => item.type === paymentType) ?? methods[0]
+  useEffect(() => {
+    if (open && !paymentType && methods[0]) setPaymentType(methods[0].type)
+  }, [methods, open, paymentType])
+  const refreshAfterSubmit = async () => {
+    await Promise.all([
+      invalidateMonitor(qc),
+      qc.invalidateQueries({ queryKey: ['balance-recharge-logs', upstream.id] }),
+    ])
+  }
+  const createOrder = useMutation({
+    mutationFn: () => api<RechargeResult>(`/api/upstreams/${upstream.id}/balance-recharge/order`, {
+      method: 'POST',
+      body: JSON.stringify({ amount: Number(amount), payment_type: paymentType }),
+    }),
+    onSuccess: async (out) => {
+      setResult(out)
+      await refreshAfterSubmit()
+    },
+  })
+  const redeem = useMutation({
+    mutationFn: () => api<RechargeResult>(`/api/upstreams/${upstream.id}/balance-recharge/redeem`, {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+    onSuccess: async (out) => {
+      setResult(out)
+      setCode('')
+      await refreshAfterSubmit()
+    },
+  })
+  const busy = caps.isFetching || createOrder.isPending || redeem.isPending
+  const unavailable = caps.data && !caps.data.online_enabled && !caps.data.redeem_enabled && !caps.data.external_url
+  const amountRequired = !paymentType.startsWith('creem:')
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (next) setResult(null)
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <WalletCards className="size-4" />
+          余额充值
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogTitle>余额充值 · {upstream.name}</DialogTitle>
+        {caps.isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />探测充值能力...</div>}
+        <FormError error={caps.error || createOrder.error || redeem.error} />
+        {unavailable && <EmptyPanel text="该站点未开放余额充值或兑换码" />}
+        {caps.data?.external_url && (
+          <div className="rounded-sm border border-border bg-secondary/50 p-3">
+            <Button asChild variant="outline" size="sm">
+              <a href={caps.data.external_url} target="_blank" rel="noreferrer">
+                <ExternalLink className="size-4" />
+                打开上游充值页
+              </a>
+            </Button>
+          </div>
+        )}
+        {caps.data?.online_enabled && methods.length > 0 && (
+          <div className="grid min-w-0 gap-4 rounded-sm border border-border bg-card p-3 md:grid-cols-2">
+            <Field label="金额">
+              <Input type="number" min={selectedMethod?.min_amount || 0} max={selectedMethod?.max_amount || undefined} value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </Field>
+            <Field label="支付方式">
+              <Select value={paymentType} onValueChange={setPaymentType}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {methods.map((method) => (
+                    <SelectItem key={method.type} value={method.type}>{method.name || method.type}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <div className="md:col-span-2">
+              <Button onClick={() => createOrder.mutate()} disabled={busy || (amountRequired && !Number(amount)) || !paymentType}>
+                {createOrder.isPending ? <Loader2 className="size-4 animate-spin" /> : <WalletCards className="size-4" />}
+                创建订单
+              </Button>
+            </div>
+          </div>
+        )}
+        {caps.data?.redeem_enabled && (
+          <div className="grid min-w-0 gap-4 rounded-sm border border-border bg-card p-3">
+            <Field label="兑换码">
+              <Input value={code} onChange={(e) => setCode(e.target.value)} />
+            </Field>
+            <div>
+              <Button variant="outline" onClick={() => redeem.mutate()} disabled={busy || !code.trim()}>
+                {redeem.isPending ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
+                提交兑换码
+              </Button>
+            </div>
+          </div>
+        )}
+        {result && <RechargeResultPanel result={result} />}
+        <RechargeLogs logs={logs.data ?? []} loading={logs.isLoading} />
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function RechargeResultPanel({ result }: { result: RechargeResult }) {
+  const link = result.url
+  const qr = result.qr_code
+  return (
+    <div className="grid min-w-0 gap-3 rounded-sm border border-border bg-secondary/50 p-3">
+      <div className="text-sm font-medium text-foreground">提交成功</div>
+      {link && (
+        <div className="flex min-w-0 flex-wrap gap-2">
+          <Button asChild size="sm">
+            <a href={link} target="_blank" rel="noreferrer">
+              <ExternalLink className="size-4" />
+              打开支付页
+            </a>
+          </Button>
+          <CopyButton text={link} />
+        </div>
+      )}
+      {qr && (
+        <div className="grid min-w-0 gap-2">
+          <div className="break-all rounded-sm border border-border bg-background p-2 font-mono text-xs">{qr}</div>
+          <CopyButton text={qr} label="复制二维码内容" />
+        </div>
+      )}
+      {!link && !qr && <div className="text-sm text-muted-foreground">{result.message || '该支付方式需要去上游站点完成'}</div>}
+    </div>
+  )
+}
+
+function CopyButton({ text, label = '复制链接' }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false)
+  useAutoClear(copied ? '已复制' : '', '已复制', () => setCopied(false))
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => void navigator.clipboard.writeText(text).then(() => setCopied(true))}
+    >
+      <Copy className="size-4" />
+      {copied ? '已复制' : label}
+    </Button>
+  )
+}
+
+function RechargeLogs({ logs, loading }: { logs: RechargeLog[]; loading: boolean }) {
+  if (loading) return <div className="text-sm text-muted-foreground">加载记录...</div>
+  if (logs.length === 0) return null
+  return (
+    <div className="grid min-w-0 gap-2">
+      <div className="text-sm font-medium text-foreground">操作记录</div>
+      <div className="grid max-h-52 gap-2 overflow-auto">
+        {logs.map((log) => (
+          <div key={log.id} className="grid min-w-0 gap-1 rounded-sm border border-border bg-background p-2 text-xs">
+            <div className="flex min-w-0 justify-between gap-2">
+              <span>{log.method === 'redeem' ? '兑换码' : log.payment_type}</span>
+              <span className={log.status === 'success' ? 'text-success' : 'text-destructive'}>{log.status === 'success' ? '成功' : '失败'}</span>
+            </div>
+            <div className="text-muted-foreground">{fmtTime(log.created_at)} · {num(log.amount)}</div>
+            {log.message && <HoverText value={log.message} className="text-muted-foreground" />}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

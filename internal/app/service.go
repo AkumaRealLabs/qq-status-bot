@@ -218,6 +218,66 @@ func (s *Service) RefreshBalances(ctx context.Context) error {
 	return firstErr
 }
 
+func (s *Service) BalanceRechargeCapabilities(ctx context.Context, upstreamID string) (monitor.RechargeCapabilities, error) {
+	u, err := s.Store.Upstream(ctx, upstreamID)
+	if err != nil {
+		return monitor.RechargeCapabilities{}, err
+	}
+	mu := toMonitorUpstream(u)
+	out, err := s.Client.RechargeCapabilities(ctx, &mu)
+	if saveErr := s.Store.SaveUpstreamTokens(ctx, u.ID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken); saveErr != nil && err == nil {
+		err = saveErr
+	}
+	return out, err
+}
+
+func (s *Service) RedeemBalance(ctx context.Context, upstreamID, code string) (monitor.RechargeOrderResult, error) {
+	u, err := s.Store.Upstream(ctx, upstreamID)
+	if err != nil {
+		return monitor.RechargeOrderResult{}, err
+	}
+	mu := toMonitorUpstream(u)
+	out, err := s.Client.Redeem(ctx, &mu, code)
+	_ = s.Store.SaveUpstreamTokens(ctx, u.ID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken)
+	status, msg := rechargeStatus(err, out)
+	_, logErr := s.Store.SaveBalanceRechargeLog(ctx, domain.BalanceRechargeLog{
+		UpstreamID: u.ID, Method: "redeem", PaymentType: "code:" + store.HashToken(code)[:12], Status: status, Message: msg,
+	})
+	if err == nil && logErr != nil {
+		err = logErr
+	}
+	if err == nil {
+		_ = s.CheckUpstream(ctx, u.ID)
+	}
+	return out, err
+}
+
+func (s *Service) CreateBalanceRechargeOrder(ctx context.Context, upstreamID string, req monitor.RechargeOrderRequest) (monitor.RechargeOrderResult, error) {
+	u, err := s.Store.Upstream(ctx, upstreamID)
+	if err != nil {
+		return monitor.RechargeOrderResult{}, err
+	}
+	mu := toMonitorUpstream(u)
+	out, err := s.Client.CreateRechargeOrder(ctx, &mu, req)
+	_ = s.Store.SaveUpstreamTokens(ctx, u.ID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken)
+	status, msg := rechargeStatus(err, out)
+	_, logErr := s.Store.SaveBalanceRechargeLog(ctx, domain.BalanceRechargeLog{
+		UpstreamID: u.ID, Method: "order", Amount: req.Amount, PaymentType: req.PaymentType,
+		RemoteOrderID: out.RemoteOrderID, Status: status, Message: msg,
+	})
+	if err == nil && logErr != nil {
+		err = logErr
+	}
+	return out, err
+}
+
+func (s *Service) BalanceRechargeLogs(ctx context.Context, upstreamID string) ([]domain.BalanceRechargeLog, error) {
+	if _, err := s.Store.Upstream(ctx, upstreamID); err != nil {
+		return nil, err
+	}
+	return s.Store.BalanceRechargeLogs(ctx, upstreamID, 50)
+}
+
 func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
 	u, err := s.Store.Upstream(ctx, upstreamID)
 	if err != nil {
@@ -384,6 +444,20 @@ func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) er
 		lastErr = probe.Error
 	}
 	return s.Store.UpdateCardProbeState(ctx, card.ID, lastErr, failures)
+}
+
+func rechargeStatus(err error, out monitor.RechargeOrderResult) (string, string) {
+	if err != nil {
+		return "failed", err.Error()
+	}
+	return "success", nonEmptyText(out.Message, out.ResultType)
+}
+
+func nonEmptyText(v, fallback string) string {
+	if strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	return fallback
 }
 
 func (s *Service) MonitorStatus(ctx context.Context, window string) (map[string]any, error) {

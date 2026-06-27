@@ -119,6 +119,18 @@ type AlertEvent struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+type BalanceRechargeLog struct {
+	ID            string    `json:"id"`
+	UpstreamID    string    `json:"upstream_id"`
+	Method        string    `json:"method"`
+	Amount        float64   `json:"amount"`
+	PaymentType   string    `json:"payment_type"`
+	RemoteOrderID string    `json:"remote_order_id"`
+	Status        string    `json:"status"`
+	Message       string    `json:"message"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type Settings struct {
 	CheckIntervalMinutes int    `json:"check_interval_minutes"`
 	TelegramBotToken     string `json:"telegram_bot_token,omitempty"`

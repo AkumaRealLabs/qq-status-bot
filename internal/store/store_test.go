@@ -175,6 +175,33 @@ func TestMigrateAddsCardPublicAndCustomColumns(t *testing.T) {
 	}
 }
 
+func TestBalanceRechargeLogs(t *testing.T) {
+	s := testStore(t)
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	log, err := s.SaveBalanceRechargeLog(t.Context(), domain.BalanceRechargeLog{
+		UpstreamID: "u1", Method: "order", Amount: 12.5, PaymentType: "stripe", RemoteOrderID: "remote-1", Status: "success", Message: "ok",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.BalanceRechargeLogs(t.Context(), "u1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != log.ID || rows[0].Amount != 12.5 || rows[0].RemoteOrderID != "remote-1" {
+		t.Fatalf("rows = %+v", rows)
+	}
+	cols, err := s.columns(t.Context(), "balance_recharge_logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cols["payment_type"] || !cols["remote_order_id"] {
+		t.Fatalf("columns = %#v", cols)
+	}
+}
+
 func TestCardStoresCustomFields(t *testing.T) {
 	s := testStore(t)
 	card, err := s.CreateCard(t.Context(), domain.ModelCard{

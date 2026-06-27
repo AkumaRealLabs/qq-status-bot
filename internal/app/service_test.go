@@ -193,6 +193,51 @@ func TestSortCardsRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
+func TestRedeemBalanceAuditsWithoutPlainCode(t *testing.T) {
+	var sawCode bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/user/topup" {
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		sawCode = body["key"] == "secret-code"
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": 10})
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "A", Type: "newapi", BaseURL: ts.URL, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.RedeemBalance(t.Context(), u.ID, "secret-code"); err != nil {
+		t.Fatal(err)
+	}
+	if !sawCode {
+		t.Fatal("redeem code was not sent upstream")
+	}
+	logs, err := st.BalanceRechargeLogs(t.Context(), u.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].Status != "success" || strings.Contains(logs[0].PaymentType+logs[0].Message, "secret-code") {
+		t.Fatalf("logs = %+v", logs)
+	}
+}
+
 func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
 	if err != nil {

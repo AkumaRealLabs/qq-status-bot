@@ -17,6 +17,7 @@ import (
 
 	"ai-upstream-monitor/internal/app"
 	"ai-upstream-monitor/internal/domain"
+	"ai-upstream-monitor/internal/monitor"
 	"ai-upstream-monitor/internal/store"
 
 	"golang.org/x/net/websocket"
@@ -44,6 +45,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/upstreams/{id}", s.auth(s.deleteUpstream))
 	mux.HandleFunc("POST /api/upstreams/{id}/check", s.auth(s.checkUpstream))
 	mux.HandleFunc("POST /api/upstreams/{id}/sync-keys", s.auth(s.syncKeys))
+	mux.HandleFunc("GET /api/upstreams/{id}/balance-recharge/capabilities", s.auth(s.balanceRechargeCapabilities))
+	mux.HandleFunc("POST /api/upstreams/{id}/balance-recharge/redeem", s.auth(s.redeemBalance))
+	mux.HandleFunc("POST /api/upstreams/{id}/balance-recharge/order", s.auth(s.createBalanceRechargeOrder))
+	mux.HandleFunc("GET /api/upstreams/{id}/balance-recharge/logs", s.auth(s.balanceRechargeLogs))
 	mux.HandleFunc("POST /api/upstreams/{id}/browser-login", s.auth(s.browserLogin))
 	mux.HandleFunc("POST /api/upstreams/{id}/browser-capture", s.auth(s.browserCapture))
 	mux.HandleFunc("GET /api/cards", s.auth(s.listCards))
@@ -170,6 +175,36 @@ func (s *Server) checkUpstream(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) syncKeys(w http.ResponseWriter, r *http.Request) {
 	writeNoContentOrError(w, s.App.SyncKeys(r.Context(), r.PathValue("id")))
+}
+
+func (s *Server) balanceRechargeCapabilities(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.BalanceRechargeCapabilities(r.Context(), r.PathValue("id"))
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) redeemBalance(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Code string `json:"code"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	out, err := s.App.RedeemBalance(r.Context(), r.PathValue("id"), body.Code)
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) createBalanceRechargeOrder(w http.ResponseWriter, r *http.Request) {
+	var body monitor.RechargeOrderRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	out, err := s.App.CreateBalanceRechargeOrder(r.Context(), r.PathValue("id"), body)
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) balanceRechargeLogs(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.BalanceRechargeLogs(r.Context(), r.PathValue("id"))
+	writeJSONOrError(w, out, err)
 }
 
 func (s *Server) listCards(w http.ResponseWriter, r *http.Request) {
