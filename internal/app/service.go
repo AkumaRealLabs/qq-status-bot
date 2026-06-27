@@ -316,8 +316,8 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 }
 
 func (s *Service) MonitorStatus(ctx context.Context, window string) (map[string]any, error) {
-	since, label := windowSince(window)
-	cards, err := s.enrichedCards(ctx, since)
+	since, label, _ := windowSince(window)
+	cards, err := s.enrichedCards(ctx, since, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -343,10 +343,10 @@ func (s *Service) MonitorStatus(ctx context.Context, window string) (map[string]
 }
 
 func (s *Service) ListCards(ctx context.Context) ([]domain.ModelCard, error) {
-	return s.enrichedCards(ctx, time.Now().Add(-time.Hour))
+	return s.enrichedCards(ctx, time.Now().Add(-time.Hour), 60)
 }
 
-func (s *Service) enrichedCards(ctx context.Context, since time.Time) ([]domain.ModelCard, error) {
+func (s *Service) enrichedCards(ctx context.Context, since time.Time, probeLimit int) ([]domain.ModelCard, error) {
 	cards, err := s.Store.ListCards(ctx)
 	if err != nil {
 		return nil, err
@@ -365,7 +365,7 @@ func (s *Service) enrichedCards(ctx context.Context, since time.Time) ([]domain.
 				cards[i].EffectiveRatio = effectiveRatio(k.GroupRatio, domain.BalanceRate(u))
 			}
 		}
-		history, err := s.Store.ProbesForCardSince(ctx, cards[i].ID, since, 60)
+		history, err := s.Store.ProbesForCardSince(ctx, cards[i].ID, since, probeLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -477,14 +477,15 @@ func toMonitorUpstream(u domain.Upstream) monitor.Upstream {
 	}
 }
 
-func windowSince(window string) (time.Time, string) {
+func windowSince(window string) (time.Time, string, time.Duration) {
 	windows := map[string]time.Duration{
 		"1h": time.Hour, "3h": 3 * time.Hour, "5h": 5 * time.Hour, "1d": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "15d": 15 * 24 * time.Hour,
 	}
 	if _, ok := windows[window]; !ok {
 		window = "1h"
 	}
-	return time.Now().UTC().Add(-windows[window]), window
+	duration := windows[window]
+	return time.Now().UTC().Add(-duration), window, duration
 }
 
 func percent(part, total int) float64 {

@@ -467,7 +467,7 @@ function StatusMonitorCard({ card, windowValue }: { card: ModelCard; windowValue
     },
     onError: (error) => setMessage(errorMessage(error)),
   })
-  const history = (card.history ?? []).slice(-12)
+  const history = card.history ?? []
   const latest = history.at(-1)
   const ok = latest ? probeOK(latest) : !card.last_error
   const statusText = latest ? probeStatusLabel(probeStatus(latest)) : ok ? probeStatusLabel('operational') : probeStatusLabel('failed')
@@ -505,21 +505,26 @@ function StatusMonitorCard({ card, windowValue }: { card: ModelCard; windowValue
             <div className="text-xs text-muted-foreground">可用性 · {windowValue}</div>
             <div className={cn('font-display text-2xl font-normal', ok ? 'text-success' : 'text-destructive')}>{uptime}</div>
           </div>
-          <div className="grid grid-cols-12 gap-1">
-            {history.map((probe, index) => {
-              const good = probeOK(probe)
-              return (
-                <HoverText
-                  key={`${probe.checked_at}-${index}`}
-                  value={probeHover(probe)}
-                  className={cn('h-4 rounded-sm', good ? 'bg-success' : 'bg-destructive')}
-                >
-                  <span className="sr-only">{probeStatus(probe)}</span>
-                </HoverText>
-              )
-            })}
-            {history.length === 0 &&
-              Array.from({ length: 12 }).map((_, index) => <span key={index} className="h-4 rounded-sm bg-surface-cream-strong" />)}
+          <div className="-mx-1 overflow-x-auto px-1 pb-1">
+            <div
+              className="grid min-w-full gap-1"
+              style={{ gridTemplateColumns: `repeat(${history.length || emptyHistorySlots(windowValue)}, minmax(6px, 1fr))` }}
+            >
+              {history.map((probe, index) => {
+                const good = probeOK(probe)
+                return (
+                  <HoverText
+                    key={`${probe.checked_at}-${index}`}
+                    value={probeHover(probe)}
+                    className={cn('h-4 rounded-sm', good ? 'bg-success' : 'bg-destructive')}
+                  >
+                    <span className="sr-only">{probeStatus(probe)}</span>
+                  </HoverText>
+                )
+              })}
+              {history.length === 0 &&
+                Array.from({ length: emptyHistorySlots(windowValue) }).map((_, index) => <span key={index} className="h-4 rounded-sm bg-surface-cream-strong" />)}
+            </div>
           </div>
           <div className="mt-2 flex justify-between text-xs text-muted-foreground">
             <span>PAST</span>
@@ -1226,7 +1231,7 @@ function IconAction({
 function HoverText({ value, className, children }: { value?: string; className?: string; children?: ReactNode }) {
   const text = value || '-'
   return (
-    <span className={cn('group relative block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30', className)} tabIndex={0}>
+    <span className={cn('group relative block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30', className)} tabIndex={0} title={text}>
       {children ?? <span className="block truncate">{text}</span>}
       {text !== '-' && (
         <span className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 hidden w-max min-w-56 max-w-[min(520px,calc(100vw-32px))] whitespace-pre-wrap break-words rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-relaxed text-popover-foreground shadow-lg group-hover:block group-focus:block">
@@ -1383,6 +1388,10 @@ function probeStatus(probe: Probe) {
 function probeOK(probe: Probe) {
   const status = probeStatus(probe)
   return status === 'operational' || status === 'degraded'
+}
+
+function emptyHistorySlots(windowValue: string) {
+  return ({ '1h': 12, '3h': 36 } as Record<string, number>)[windowValue] || 60
 }
 
 function probeStatusLabel(status: string) {

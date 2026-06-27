@@ -47,6 +47,27 @@ func TestProbesForCardSinceNormalizesTimeZone(t *testing.T) {
 	}
 }
 
+func TestProbesForCardSinceCanDisableLimit(t *testing.T) {
+	s := testStore(t)
+	for range 3 {
+		if _, err := s.SaveProbe(t.Context(), "u1", "c1", monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	since := time.Now().Add(-time.Hour)
+	limited, err := s.ProbesForCardSince(t.Context(), "c1", since, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.ProbesForCardSince(t.Context(), "c1", since, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited) != 2 || len(all) != 3 {
+		t.Fatalf("limited=%d all=%d", len(limited), len(all))
+	}
+}
+
 func TestProbesForCardSinceReadsLegacyTimestampFormat(t *testing.T) {
 	s := testStore(t)
 	if _, err := s.exec(t.Context(), `INSERT INTO probe_runs (id, upstream_id, card_id, checked_at, model, input, http_status, latency_ms, success, error)

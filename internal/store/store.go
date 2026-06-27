@@ -627,8 +627,14 @@ func (s *Store) ProbesForCardSince(ctx context.Context, cardID string, since tim
 	if s.Driver == "sqlite" {
 		timeFilter = "unixepoch(checked_at)>=unixepoch(?)"
 	}
-	rows, err := s.query(ctx, `SELECT id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error
-		FROM probe_runs WHERE card_id=? AND `+timeFilter+` ORDER BY checked_at DESC LIMIT ?`, cardID, since.UTC().Format(time.RFC3339Nano), limit)
+	query := `SELECT id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error
+		FROM probe_runs WHERE card_id=? AND ` + timeFilter + ` ORDER BY checked_at DESC`
+	args := []any{cardID, since.UTC().Format(time.RFC3339Nano)}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
