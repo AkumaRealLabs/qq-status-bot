@@ -1,5 +1,7 @@
 FROM node:24-alpine AS frontend-builder
 
+ARG VITE_BUILD_VERSION=dev
+ENV VITE_BUILD_VERSION=$VITE_BUILD_VERSION
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile

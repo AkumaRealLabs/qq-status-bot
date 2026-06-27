@@ -34,7 +34,7 @@ export function UpstreamsPage() {
   return (
     <Page
       title="上游管理"
-      description="上游凭据、Key 同步和余额相关能力"
+      description="上游凭据、Key 和连接状态"
       actions={
         <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
           {upstreams.isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
@@ -72,9 +72,8 @@ function UpstreamCard({ row }: { row: UpstreamRow }) {
         </div>
       </CardHeader>
       <CardContent className="grid min-w-0 gap-3 pt-1">
-        <div className="grid min-w-0 grid-cols-2 gap-2">
+        <div className="grid min-w-0 gap-2">
           <MiniStat label="Key 数量" value={keysOf(row).length} />
-          <MiniStat label="余额" value={num(row.balance?.remain)} />
         </div>
         <div className="grid min-w-0 gap-1">
           <div className="text-xs text-muted-foreground">Base URL</div>
@@ -106,9 +105,7 @@ function UpstreamActions({ row }: { row: UpstreamRow }) {
     <div className="grid max-w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
       <div className="flex min-w-0 flex-wrap gap-2">
         <UpstreamDialog upstream={upstream} />
-        <BalanceRechargeDialog upstream={upstream} />
-        <Action path={`/api/upstreams/${upstream.id}/sync-keys`} label="同步 Key" />
-        <Action path={`/api/upstreams/${upstream.id}/check`} label="检查" />
+        <Action path={`/api/upstreams/${upstream.id}/check`} label="刷新数据" />
       </div>
       <IconAction title="删除" onClick={() => confirmDelete(upstream.name) && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />
     </div>
@@ -544,13 +541,12 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
 function Action({ path, label }: { path: string; label: string }) {
   const qc = useQueryClient()
   const [message, setMessage] = useState('')
-  const verb = label.replace(' Key', '')
-  useAutoClear(message, `${verb}完成`, setMessage)
+  useAutoClear(message, `${label}完成`, setMessage)
   const mutation = useMutation({
     mutationFn: () => api(path, { method: 'POST' }),
-    onMutate: () => setMessage(`${verb}中...`),
+    onMutate: () => setMessage(`${label}中...`),
     onSuccess: async () => {
-      setMessage(`${verb}完成`)
+      setMessage(`${label}完成`)
       await invalidateMonitor(qc)
     },
     onError: (error) => setMessage(errorMessage(error)),
@@ -559,7 +555,7 @@ function Action({ path, label }: { path: string; label: string }) {
     <div className="relative min-w-0">
       <Button variant="outline" size="sm" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
         {mutation.isPending && <Loader2 className="size-3 animate-spin" />}
-        {mutation.isPending ? `${verb}中` : label}
+        {mutation.isPending ? `${label}中` : label}
       </Button>
       {message && !mutation.isPending && <div className="absolute right-0 top-10 z-10 max-w-[calc(100vw-32px)] whitespace-normal break-words rounded-sm border border-border bg-background px-2 py-1 text-xs text-muted-foreground">{message}</div>}
     </div>

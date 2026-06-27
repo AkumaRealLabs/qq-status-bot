@@ -34,8 +34,13 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Prepare build version
+        shell: bash
+        run: echo "BUILD_VERSION=$(TZ=Asia/Shanghai date +%Y%m%d%H%M)-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
       - working-directory: frontend
         run: pnpm install --frozen-lockfile && pnpm build
+        env:
+          VITE_BUILD_VERSION: ${{ env.BUILD_VERSION }}
       - run: go test ./...
       - id: changes
         shell: bash
@@ -85,6 +90,8 @@ jobs:
           context: .
           push: ${{ github.event_name == 'push' }}
           tags: ${{ env.APP_TAGS }}
+          build-args: |
+            VITE_BUILD_VERSION=${{ env.BUILD_VERSION }}
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
       - uses: docker/build-push-action@v6

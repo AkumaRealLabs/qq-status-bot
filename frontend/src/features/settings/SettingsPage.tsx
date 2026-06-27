@@ -13,6 +13,8 @@ import { invalidateMonitor } from '@/lib/query'
 import { cn } from '@/lib/utils'
 import type { SettingsData } from '@/types'
 
+const buildVersion = import.meta.env.VITE_BUILD_VERSION || 'dev'
+
 export function SettingsPage() {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ['settings'], queryFn: () => api<SettingsData>('/api/settings') })
@@ -93,6 +95,9 @@ export function SettingsPage() {
           </Field>
           <Field label="探测模型">
             <Input value={data.probe_model} disabled />
+          </Field>
+          <Field label="构建版本">
+            <Input value={buildVersion} disabled />
           </Field>
           {message && <div className={cn('rounded-sm px-3 py-2 text-sm', save.isError ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}>{message}</div>}
           <div>
