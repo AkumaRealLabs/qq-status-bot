@@ -1244,11 +1244,27 @@ function HoverText({
   nativeTitle?: boolean
 }) {
   const text = value || '-'
+  const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>()
+  const placeTooltip = (target: HTMLElement) => {
+    const rect = target.getBoundingClientRect()
+    const width = Math.min(520, window.innerWidth - 32)
+    const left = Math.min(Math.max(16, rect.left), window.innerWidth - width - 16)
+    setTooltipStyle({ left, top: Math.max(12, rect.top - 12), transform: 'translateY(-100%)' })
+  }
   return (
-    <span className={cn('group relative block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30', className)} tabIndex={0} title={nativeTitle ? text : undefined}>
+    <span
+      className={cn('group relative block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30', className)}
+      tabIndex={0}
+      title={nativeTitle ? text : undefined}
+      onMouseEnter={(event) => placeTooltip(event.currentTarget)}
+      onFocus={(event) => placeTooltip(event.currentTarget)}
+    >
       {children ?? <span className="block truncate">{text}</span>}
       {text !== '-' && (
-        <span className="pointer-events-none fixed z-50 mt-[-156px] hidden w-max min-w-56 max-w-[min(520px,calc(100vw-32px))] rounded-md border border-border bg-popover text-left text-popover-foreground shadow-lg group-hover:block group-focus:block">
+        <span
+          className="pointer-events-none fixed z-50 hidden w-max min-w-56 max-w-[min(520px,calc(100vw-32px))] rounded-md border border-border bg-popover text-left text-popover-foreground shadow-lg group-hover:block group-focus:block"
+          style={tooltipStyle}
+        >
           {content ?? <span className="block whitespace-pre-wrap break-words px-3 py-2 text-sm leading-[1.55]">{text}</span>}
         </span>
       )}
