@@ -590,8 +590,8 @@ func publicCards(cards []domain.ModelCard) []domain.PublicModelCard {
 			p.Status = probeStatusLabel(p.Status)
 			p.Error = publicProbeError(p)
 			card.History = append(card.History, domain.PublicProbeRun{
-				CheckedAt: p.CheckedAt, Status: p.Status, HTTPStatus: p.HTTPStatus,
-				LatencyMS: p.LatencyMS, Success: p.Success, Error: p.Error,
+				CheckedAt: p.CheckedAt, Status: p.Status, Input: p.Input, ExpectedAnswer: p.ExpectedAnswer,
+				Output: p.Output, HTTPStatus: p.HTTPStatus, LatencyMS: p.LatencyMS, Success: p.Success, Error: p.Error,
 			})
 		}
 		card.LastError = publicLastError(card)

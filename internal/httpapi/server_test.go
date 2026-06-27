@@ -122,7 +122,7 @@ func TestPublicMonitorStatusDoesNotRequireAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational, Input: "hidden", Output: "hidden"}); err != nil {
+	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational, Input: "公开测试题目", ExpectedAnswer: "banana", Output: "banana"}); err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
@@ -141,7 +141,7 @@ func TestPublicMonitorStatusDoesNotRequireAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(out)
-	if strings.Contains(string(body), "sk-public") || strings.Contains(string(body), "hidden") {
+	if strings.Contains(string(body), "sk-public") || !strings.Contains(string(body), "公开测试题目") || !strings.Contains(string(body), "banana") {
 		t.Fatalf("public body = %s", body)
 	}
 }

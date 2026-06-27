@@ -283,30 +283,31 @@ func (c Client) Probe(ctx context.Context, baseURL, key, model string) ProbeResu
 	if err != nil {
 		var httpErr httpStatusError
 		if errors.As(err, &httpErr) {
-			return ProbeResult{HTTPStatus: httpErr.Status, Latency: latency, Status: StatusFailed, Input: challenge.Prompt, Error: httpErr.Error()}
+			return ProbeResult{HTTPStatus: httpErr.Status, Latency: latency, Status: StatusFailed, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: httpErr.Error()}
 		}
-		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, Error: err.Error()}
+		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
 	}
 	output := responseText(raw)
 	if output == "" {
-		return ProbeResult{HTTPStatus: http.StatusOK, Latency: latency, Status: StatusFailed, Input: challenge.Prompt, Error: "回复为空"}
+		return ProbeResult{HTTPStatus: http.StatusOK, Latency: latency, Status: StatusFailed, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: "回复为空"}
 	}
 	validation := validateResponse(output, challenge.ExpectedAnswer)
 	if !validation.Valid {
 		return ProbeResult{
-			HTTPStatus: http.StatusOK,
-			Latency:    latency,
-			Status:     StatusValidationFailed,
-			Input:      challenge.Prompt,
-			Output:     output,
-			Error:      fmt.Sprintf("回复验证失败: 期望 %q, 实际: %q", challenge.ExpectedAnswer, validation.Normalized),
+			HTTPStatus:     http.StatusOK,
+			Latency:        latency,
+			Status:         StatusValidationFailed,
+			Input:          challenge.Prompt,
+			ExpectedAnswer: challenge.ExpectedAnswer,
+			Output:         output,
+			Error:          fmt.Sprintf("回复验证失败: 期望 %q, 实际: %q", challenge.ExpectedAnswer, validation.Normalized),
 		}
 	}
 	status := StatusOperational
 	if latency > degradedAfter {
 		status = StatusDegraded
 	}
-	return ProbeResult{HTTPStatus: http.StatusOK, Latency: latency, Status: status, Input: challenge.Prompt, Output: output, Success: true}
+	return ProbeResult{HTTPStatus: http.StatusOK, Latency: latency, Status: status, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Output: output, Success: true}
 }
 
 func responseText(raw map[string]any) string {

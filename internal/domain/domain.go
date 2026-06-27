@@ -86,27 +86,31 @@ type BalanceSnapshot struct {
 }
 
 type ProbeRun struct {
-	ID         string    `json:"id,omitempty"`
-	UpstreamID string    `json:"upstream_id,omitempty"`
-	CardID     string    `json:"card_id,omitempty"`
-	CheckedAt  time.Time `json:"checked_at"`
-	Model      string    `json:"model"`
-	Input      string    `json:"input,omitempty"`
-	Status     string    `json:"status"`
-	Output     string    `json:"output,omitempty"`
-	HTTPStatus int       `json:"http_status"`
-	LatencyMS  int       `json:"latency_ms"`
-	Success    bool      `json:"success"`
-	Error      string    `json:"error"`
+	ID             string    `json:"id,omitempty"`
+	UpstreamID     string    `json:"upstream_id,omitempty"`
+	CardID         string    `json:"card_id,omitempty"`
+	CheckedAt      time.Time `json:"checked_at"`
+	Model          string    `json:"model"`
+	Input          string    `json:"input,omitempty"`
+	ExpectedAnswer string    `json:"expected_answer,omitempty"`
+	Status         string    `json:"status"`
+	Output         string    `json:"output,omitempty"`
+	HTTPStatus     int       `json:"http_status"`
+	LatencyMS      int       `json:"latency_ms"`
+	Success        bool      `json:"success"`
+	Error          string    `json:"error"`
 }
 
 type PublicProbeRun struct {
-	CheckedAt  time.Time `json:"checked_at"`
-	Status     string    `json:"status"`
-	HTTPStatus int       `json:"http_status"`
-	LatencyMS  int       `json:"latency_ms"`
-	Success    bool      `json:"-"`
-	Error      string    `json:"error,omitempty"`
+	CheckedAt      time.Time `json:"checked_at"`
+	Status         string    `json:"status"`
+	Input          string    `json:"input,omitempty"`
+	ExpectedAnswer string    `json:"expected_answer,omitempty"`
+	Output         string    `json:"output,omitempty"`
+	HTTPStatus     int       `json:"http_status"`
+	LatencyMS      int       `json:"latency_ms"`
+	Success        bool      `json:"-"`
+	Error          string    `json:"error,omitempty"`
 }
 
 type AlertEvent struct {

@@ -103,11 +103,13 @@ function UpstreamActions({ row }: { row: UpstreamRow }) {
     onError: (error) => window.alert(errorMessage(error)),
   })
   return (
-    <div className="flex max-w-full flex-wrap gap-2">
-      <UpstreamDialog upstream={upstream} />
-      <BalanceRechargeDialog upstream={upstream} />
-      <Action path={`/api/upstreams/${upstream.id}/sync-keys`} label="同步 Key" />
-      <Action path={`/api/upstreams/${upstream.id}/check`} label="检查" />
+    <div className="grid max-w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+      <div className="flex min-w-0 flex-wrap gap-2">
+        <UpstreamDialog upstream={upstream} />
+        <BalanceRechargeDialog upstream={upstream} />
+        <Action path={`/api/upstreams/${upstream.id}/sync-keys`} label="同步 Key" />
+        <Action path={`/api/upstreams/${upstream.id}/check`} label="检查" />
+      </div>
       <IconAction title="删除" onClick={() => confirmDelete(upstream.name) && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />
     </div>
   )

@@ -453,8 +453,8 @@ function CardDialog({ rows, card }: { rows: UpstreamRow[]; card?: ModelCard }) {
             <Input value="gpt-5.5" disabled />
           </Field>
         </div>
-        <div className="flex flex-wrap justify-between gap-2">
-          {card ? <IconAction title="删除" onClick={() => confirmDelete(card.name, '只删除卡片，历史探测记录会保留。') && remove.mutate()} pending={remove.isPending} icon={Trash2} danger /> : <span />}
+        <div className="flex flex-wrap justify-end gap-2">
+          {card && <IconAction title="删除" onClick={() => confirmDelete(card.name, '只删除卡片，历史探测记录会保留。') && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />}
           <Button onClick={() => save.mutate()} disabled={save.isPending || !cardFormReady(form)}>
             {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             保存
@@ -499,6 +499,10 @@ function ProbeTooltip({ probe }: { probe: Probe }) {
     ['状态', probeStatusLabel(probeStatus(probe)), ok ? 'text-success' : 'text-destructive'],
     ['延迟', `${probe.latency_ms} ms`],
     ['HTTP 状态', probe.http_status || '-'],
+    ['测什么', probePurpose(probe)],
+    ['测试题目', probe.input || '-'],
+    ['期望答案', probe.expected_answer || '-'],
+    ['模型回答', probe.output || '-'],
     ['模型验证', ok ? '通过' : '未通过', ok ? 'text-success' : 'text-destructive'],
     ['检查时间', fmtTime(probe.checked_at)],
     probe.error ? ['详情', probe.error, 'text-destructive'] : undefined,
@@ -510,7 +514,7 @@ function ProbeTooltip({ probe }: { probe: Probe }) {
         {rows.map(([label, value, tone]) => (
           <span key={label} className="grid grid-cols-[72px_minmax(0,1fr)] gap-3">
             <span className="whitespace-nowrap text-[13px] font-medium leading-[1.4] text-muted-foreground">{label}</span>
-            <span className={cn('break-words text-sm leading-[1.55] text-foreground', tone)}>{value}</span>
+            <span className={cn('whitespace-pre-wrap break-words text-sm leading-[1.55] text-foreground', tone)}>{value}</span>
           </span>
         ))}
       </span>
@@ -520,7 +524,11 @@ function ProbeTooltip({ probe }: { probe: Probe }) {
 
 function probeHoverTitle(probe: Probe) {
   const ok = probeOK(probe)
-  return `状态：${probeStatusLabel(probeStatus(probe))}\n延迟：${probe.latency_ms} ms\nHTTP 状态：${probe.http_status || '-'}\n模型验证：${ok ? '通过' : '未通过'}\n检查时间：${fmtTime(probe.checked_at)}`
+  return `状态：${probeStatusLabel(probeStatus(probe))}\n延迟：${probe.latency_ms} ms\nHTTP 状态：${probe.http_status || '-'}\n测什么：${probePurpose(probe)}\n测试题目：${probe.input || '-'}\n期望答案：${probe.expected_answer || '-'}\n模型回答：${probe.output || '-'}\n模型验证：${ok ? '通过' : '未通过'}\n检查时间：${fmtTime(probe.checked_at)}`
+}
+
+function probePurpose(probe: Probe) {
+  return probe.expected_answer ? '检查 gpt-5.5 是否能按题目返回指定的一词答案' : '检查 gpt-5.5 响应与连通性'
 }
 
 function keysOf(row: UpstreamRow | undefined) {

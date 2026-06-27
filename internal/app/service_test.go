@@ -312,7 +312,7 @@ func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := st.SaveProbe(t.Context(), "", public.ID, monitor.ProbeResult{
-		Status: monitor.StatusValidationFailed, Input: "secret challenge", Output: "secret answer", Error: `回复验证失败: 期望 "banana", 实际: "secret"`,
+		Status: monitor.StatusValidationFailed, Input: "公开测试题目", ExpectedAnswer: "banana", Output: "wrong", Error: `回复验证失败: 期望 "banana", 实际: "wrong"`,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -331,10 +331,15 @@ func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(body)
-	if !strings.Contains(text, `"name":"公开"`) || !strings.Contains(text, `"name":"暂停"`) || strings.Contains(text, "私有") || strings.Contains(text, "sk-public") || strings.Contains(text, "secret") {
+	if !strings.Contains(text, `"name":"公开"`) || !strings.Contains(text, `"name":"暂停"`) || strings.Contains(text, "私有") || strings.Contains(text, "sk-public") {
 		t.Fatalf("public body = %s", body)
 	}
-	for _, hidden := range []string{`"id"`, "api_key", "input", "output", "model", "enabled", "public_enabled", "sort_order", "failure_count", "created_at", "updated_at"} {
+	for _, visible := range []string{"公开测试题目", "banana", "wrong"} {
+		if !strings.Contains(text, visible) {
+			t.Fatalf("public body missing %s: %s", visible, body)
+		}
+	}
+	for _, hidden := range []string{`"id"`, "api_key", "model", "enabled", "public_enabled", "sort_order", "failure_count", "created_at", "updated_at"} {
 		if strings.Contains(text, hidden) {
 			t.Fatalf("public body leaked %s: %s", hidden, body)
 		}

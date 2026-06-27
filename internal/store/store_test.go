@@ -90,12 +90,13 @@ func TestProbesForCardSinceReadsLegacyTimestampFormat(t *testing.T) {
 func TestSaveProbeStoresChallengeFields(t *testing.T) {
 	s := testStore(t)
 	run, err := s.SaveProbe(t.Context(), "u1", "c1", monitor.ProbeResult{
-		Status:     monitor.StatusValidationFailed,
-		Input:      "Which fruit? banana or car",
-		Output:     "blue",
-		HTTPStatus: 200,
-		Latency:    123 * time.Millisecond,
-		Error:      "回复验证失败",
+		Status:         monitor.StatusValidationFailed,
+		Input:          "Which fruit? banana or car",
+		ExpectedAnswer: "banana",
+		Output:         "blue",
+		HTTPStatus:     200,
+		Latency:        123 * time.Millisecond,
+		Error:          "回复验证失败",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +105,7 @@ func TestSaveProbeStoresChallengeFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Success || len(rows) != 1 || rows[0].Status != monitor.StatusValidationFailed || rows[0].Input == "ping" || rows[0].Output != "blue" {
+	if run.Success || len(rows) != 1 || rows[0].Status != monitor.StatusValidationFailed || rows[0].Input == "ping" || rows[0].ExpectedAnswer != "banana" || rows[0].Output != "blue" {
 		t.Fatalf("run=%+v rows=%+v", run, rows)
 	}
 }
@@ -132,7 +133,7 @@ func TestMigrateAddsProbeStatusColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cols["status"] || !cols["output"] {
+	if !cols["status"] || !cols["output"] || !cols["expected_answer"] {
 		t.Fatalf("columns = %#v", cols)
 	}
 }

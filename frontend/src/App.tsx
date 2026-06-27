@@ -8,7 +8,7 @@ import { BalancesPage } from '@/features/balances/BalancesPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { AdminStatusPage, PublicStatusPage } from '@/features/status/StatusPage'
 import { UpstreamsPage } from '@/features/upstreams/UpstreamsPage'
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
 import { errorMessage } from '@/lib/format'
 import type { NavTab, SettingsData, SiteSettings, TabID } from '@/types'
 
@@ -38,9 +38,14 @@ export default function App() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<TabID>(() => tabFromPath(location.pathname))
   const [loggingOut, setLoggingOut] = useState(false)
-  const setup = useQuery({ queryKey: ['setup'], queryFn: () => api<{ initialized: boolean }>('/api/setup/status') })
+  const setup = useQuery({ queryKey: ['setup'], queryFn: () => api<{ initialized: boolean }>('/api/setup/status'), retry: 2 })
   const isAdmin = adminPath(location.pathname)
-  const me = useQuery({ queryKey: ['me'], queryFn: () => api('/api/auth/me'), retry: false, enabled: Boolean(setup.data?.initialized && isAdmin) })
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api('/api/auth/me'),
+    retry: (count, error) => !(error instanceof ApiError && error.status === 401) && count < 2,
+    enabled: Boolean(setup.data?.initialized && isAdmin),
+  })
   const publicSettings = useQuery({ queryKey: ['public-settings'], queryFn: () => api<SiteSettings>('/api/public/settings') })
   const settings = useQuery({ queryKey: ['settings'], queryFn: () => api<SettingsData>('/api/settings'), enabled: me.isSuccess && isAdmin })
   const site = settings.data ?? publicSettings.data
@@ -61,13 +66,18 @@ export default function App() {
     document.head.appendChild(icon)
   }, [site])
 
-  if (setup.isLoading) return <ShellLoading />
+  if (setup.isPending) return <ShellLoading />
+  if (setup.isError) return <GateError message="无法加载系统状态" error={setup.error} onRetry={() => void setup.refetch()} />
   if (!setup.data?.initialized) {
     if (!isAdmin) return <PublicStatusPage site={site} />
     return <SetupPage site={site} onDone={() => void setup.refetch()} />
   }
   if (!isAdmin) return <PublicStatusPage site={site} />
-  if (me.isError) return <LoginPage site={site} onDone={() => void me.refetch()} />
+  if (me.isPending) return <ShellLoading />
+  if (me.isError) {
+    if (me.error instanceof ApiError && me.error.status === 401) return <LoginPage site={site} onDone={() => void me.refetch()} />
+    return <GateError message="无法确认登录状态" error={me.error} onRetry={() => void me.refetch()} />
+  }
 
   const active = tabs.find((item) => item.id === tab) ?? tabs[0]
   const siteName = site?.site_name || 'AI 上游监控'
@@ -142,6 +152,20 @@ export default function App() {
           {tab === 'upstreams' && <UpstreamsPage />}
           {tab === 'settings' && <SettingsPage />}
         </main>
+      </div>
+    </div>
+  )
+}
+
+function GateError({ message, error, onRetry }: { message: string; error: unknown; onRetry: () => void }) {
+  return (
+    <div className="grid min-h-svh place-items-center bg-background p-4">
+      <div className="grid max-w-sm gap-3 rounded-sm border border-border bg-card p-4 text-sm">
+        <div className="font-medium text-foreground">{message}</div>
+        <div className="break-words text-muted-foreground">{errorMessage(error)}</div>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          重试
+        </Button>
       </div>
     </div>
   )
