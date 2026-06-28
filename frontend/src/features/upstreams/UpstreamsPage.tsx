@@ -411,24 +411,34 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<Upstream>(upstream ?? emptyUpstream)
+  const [createdUpstream, setCreatedUpstream] = useState<Upstream | null>(null)
   const [tokenMessage, setTokenMessage] = useState('')
+  const persistedUpstream = upstream ?? createdUpstream
   useAutoClear(tokenMessage, '浏览器已打开|采集完成', setTokenMessage)
   const save = useMutation({
     mutationFn: () =>
-      api(upstream ? `/api/upstreams/${upstream.id}` : '/api/upstreams', {
-        method: upstream ? 'PATCH' : 'POST',
+      api<Upstream>(persistedUpstream ? `/api/upstreams/${persistedUpstream.id}` : '/api/upstreams', {
+        method: persistedUpstream ? 'PATCH' : 'POST',
         body: JSON.stringify(form),
       }),
-    onSuccess: () => {
+    onSuccess: (out) => {
+      if (!persistedUpstream && out.type === 'sub2api') {
+        setCreatedUpstream(out)
+        setForm(out)
+        setTokenMessage('保存成功，可以浏览器登录或采集 Token')
+        void invalidateMonitor(qc)
+        return
+      }
+      setCreatedUpstream(null)
       setOpen(false)
       void invalidateMonitor(qc)
     },
   })
   const browserLogin = useMutation({
-    mutationFn: () => api<{ vnc_url: string }>(`/api/upstreams/${upstream?.id ?? ''}/browser-login`, { method: 'POST' }),
+    mutationFn: () => api<{ vnc_url: string }>(`/api/upstreams/${persistedUpstream?.id ?? ''}/browser-login`, { method: 'POST' }),
   })
   const browserCapture = useMutation({
-    mutationFn: () => api<{ access_token: boolean; refresh_token: boolean }>(`/api/upstreams/${upstream?.id ?? ''}/browser-capture`, { method: 'POST' }),
+    mutationFn: () => api<{ access_token: boolean; refresh_token: boolean }>(`/api/upstreams/${persistedUpstream?.id ?? ''}/browser-capture`, { method: 'POST' }),
     onMutate: () => setTokenMessage('采集中...'),
     onSuccess: async (out) => {
       setTokenMessage('采集完成')
@@ -445,7 +455,11 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
       open={open}
       onOpenChange={(next) => {
         setOpen(next)
-        if (next) setForm(upstream ?? emptyUpstream)
+        if (next) {
+          setForm(upstream ?? emptyUpstream)
+          setCreatedUpstream(null)
+          setTokenMessage('')
+        }
       }}
     >
       <DialogTrigger asChild>
@@ -502,7 +516,7 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
             </>
           )}
         </div>
-        {form.type === 'sub2api' && upstream && (
+        {form.type === 'sub2api' && persistedUpstream?.id && (
           <div className="rounded-sm border border-border bg-secondary/50 p-3">
             <div className="flex flex-wrap items-center gap-2">
               <Button
