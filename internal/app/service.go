@@ -731,11 +731,17 @@ func (s *Service) SaveRevenueCard(ctx context.Context, id string, in domain.Reve
 
 func (s *Service) normalizeRevenueCard(ctx context.Context, in domain.RevenueCard) (domain.RevenueCard, error) {
 	card := domain.RevenueCard{
-		Name:       strings.TrimSpace(in.Name),
-		SourceType: strings.TrimSpace(in.SourceType),
-		UpstreamID: strings.TrimSpace(in.UpstreamID),
-		Enabled:    in.Enabled,
-		SortOrder:  in.SortOrder,
+		Name:        strings.TrimSpace(in.Name),
+		SourceType:  strings.TrimSpace(in.SourceType),
+		BaseURL:     strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"),
+		UserID:      strings.TrimSpace(in.UserID),
+		AccessToken: strings.TrimSpace(in.AccessToken),
+		AdminAPIKey: strings.TrimSpace(in.AdminAPIKey),
+		EpayPID:     strings.TrimSpace(in.EpayPID),
+		EpayKey:     strings.TrimSpace(in.EpayKey),
+		UpstreamID:  strings.TrimSpace(in.UpstreamID),
+		Enabled:     in.Enabled,
+		SortOrder:   in.SortOrder,
 	}
 	switch card.SourceType {
 	case "epay_total":
@@ -743,20 +749,46 @@ func (s *Service) normalizeRevenueCard(ctx context.Context, in domain.RevenueCar
 			card.Name = "今日收入"
 		}
 		card.UpstreamID = ""
+		if card.BaseURL == "" || card.EpayPID == "" || card.EpayKey == "" {
+			cfg, _ := s.Store.Settings(ctx)
+			if card.BaseURL == "" {
+				card.BaseURL = cfg.EpayBaseURL
+			}
+			if card.EpayPID == "" {
+				card.EpayPID = cfg.EpayPID
+			}
+			if card.EpayKey == "" {
+				card.EpayKey = cfg.EpayKey
+			}
+		}
+		if card.BaseURL == "" || card.EpayPID == "" || card.EpayKey == "" {
+			return card, errors.New("易支付 Base URL、PID、Key 是必填")
+		}
 	case "newapi_orders", "sub2api_orders":
 		want := strings.TrimSuffix(card.SourceType, "_orders")
-		if card.UpstreamID == "" {
-			return card, errors.New("upstream_id is required")
+		if card.UpstreamID != "" && card.BaseURL == "" {
+			u, err := s.Store.Upstream(ctx, card.UpstreamID)
+			if err != nil {
+				return card, err
+			}
+			if u.Type != want {
+				return card, errors.New("upstream type does not match revenue card")
+			}
+			if card.Name == "" {
+				card.Name = u.Name
+			}
 		}
-		u, err := s.Store.Upstream(ctx, card.UpstreamID)
-		if err != nil {
-			return card, err
+		if card.BaseURL == "" && card.UpstreamID == "" {
+			return card, errors.New("Base URL 是必填")
 		}
-		if u.Type != want {
-			return card, errors.New("upstream type does not match revenue card")
+		if want == "newapi" && card.UpstreamID == "" && (card.UserID == "" || card.AccessToken == "") {
+			return card, errors.New("new-api 用户 ID 和 Access Token 是必填")
+		}
+		if want == "sub2api" && card.AdminAPIKey == "" && card.UpstreamID == "" {
+			return card, errors.New("sub2api 管理员 API Key 是必填")
 		}
 		if card.Name == "" {
-			card.Name = u.Name
+			card.Name = sourceTypeLabel(card.SourceType)
 		}
 	default:
 		return card, errors.New("source_type must be epay_total, newapi_orders or sub2api_orders")
@@ -793,21 +825,21 @@ func (s *Service) TodayRevenue(ctx context.Context) ([]domain.RevenueRow, error)
 		row.CheckedAt = time.Now().UTC()
 		switch card.SourceType {
 		case "epay_total":
-			balance := (epay.Client{HTTP: s.Client.HTTP}).MerchantBalance(ctx, epay.Config{BaseURL: cfg.EpayBaseURL, PID: cfg.EpayPID, Key: cfg.EpayKey})
+			balance := (epay.Client{HTTP: s.Client.HTTP}).MerchantBalance(ctx, epay.Config{BaseURL: firstNonEmpty(card.BaseURL, cfg.EpayBaseURL), PID: firstNonEmpty(card.EpayPID, cfg.EpayPID), Key: firstNonEmpty(card.EpayKey, cfg.EpayKey)})
 			row.Revenue, row.CheckedAt, row.Error = balance.Balance, balance.CheckedAt, balance.Error
 			if row.Error != "" {
 				row.Revenue = 0
 			}
 		case "newapi_orders", "sub2api_orders":
-			u, err := s.Store.Upstream(ctx, card.UpstreamID)
+			mu, upstreamID, err := s.revenueMonitorUpstream(ctx, card)
 			if err != nil {
 				row.Error = err.Error()
 				break
 			}
-			row.UpstreamName = u.Name
-			mu := toMonitorUpstream(u)
 			total, err := s.Client.TodayOrderRevenue(ctx, &mu, start)
-			_ = s.Store.SaveUpstreamTokens(ctx, u.ID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken)
+			if upstreamID != "" {
+				_ = s.Store.SaveUpstreamTokens(ctx, upstreamID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken)
+			}
 			row.Revenue, row.CheckedAt = total.Revenue, total.CheckedAt
 			if err != nil {
 				row.Revenue = 0
@@ -840,15 +872,68 @@ func (s *Service) SortRevenueCards(ctx context.Context, ids []string) error {
 }
 
 func (s *Service) enrichRevenueCards(ctx context.Context, cards []domain.RevenueCard) []domain.RevenueCard {
+	cfg, _ := s.Store.Settings(ctx)
 	for i := range cards {
-		if cards[i].UpstreamID == "" {
-			continue
+		if cards[i].SourceType == "epay_total" {
+			if cards[i].BaseURL == "" {
+				cards[i].BaseURL = cfg.EpayBaseURL
+			}
+			if cards[i].EpayPID == "" {
+				cards[i].EpayPID = cfg.EpayPID
+			}
+			if cards[i].EpayKey == "" {
+				cards[i].EpayKey = cfg.EpayKey
+			}
 		}
-		if u, err := s.Store.Upstream(ctx, cards[i].UpstreamID); err == nil {
-			cards[i].UpstreamName = u.Name
+		if cards[i].UpstreamID != "" {
+			if u, err := s.Store.Upstream(ctx, cards[i].UpstreamID); err == nil {
+				cards[i].UpstreamName = u.Name
+			}
 		}
 	}
 	return cards
+}
+
+func (s *Service) revenueMonitorUpstream(ctx context.Context, card domain.RevenueCard) (monitor.Upstream, string, error) {
+	typ := strings.TrimSuffix(card.SourceType, "_orders")
+	if card.UpstreamID != "" && card.BaseURL == "" {
+		u, err := s.Store.Upstream(ctx, card.UpstreamID)
+		if err != nil {
+			return monitor.Upstream{}, "", err
+		}
+		return toMonitorUpstream(u), u.ID, nil
+	}
+	if card.BaseURL == "" {
+		return monitor.Upstream{}, "", errors.New("Base URL 是必填")
+	}
+	return monitor.Upstream{
+		Name:        card.Name,
+		Type:        typ,
+		BaseURL:     card.BaseURL,
+		UserID:      card.UserID,
+		AccessToken: card.AccessToken,
+		AdminAPIKey: card.AdminAPIKey,
+	}, "", nil
+}
+
+func sourceTypeLabel(sourceType string) string {
+	switch sourceType {
+	case "newapi_orders":
+		return "new-api 订单"
+	case "sub2api_orders":
+		return "sub2api 订单"
+	default:
+		return "今日收入"
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func todayStart() time.Time {
@@ -892,7 +977,6 @@ func (s *Service) alert(ctx context.Context, u domain.Upstream, kind string, fai
 	sent := s.sendTelegram(ctx, dec.Message) == nil
 	return s.Store.SaveAlert(ctx, u.ID, dec, sent)
 }
-
 func (s *Service) sendTelegram(ctx context.Context, message string) error {
 	cfg, err := s.Store.Settings(ctx)
 	if err != nil {

@@ -3,8 +3,8 @@ import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { GripVertical, Loader2, Pencil, Plus, RefreshCcw, Save, Settings, Trash2 } from 'lucide-react'
-import { EmptyPanel, Field, FormError, HoverText, IconAction, MiniStat, SkeletonCardGrid, StatusBadge } from '@/components/common'
+import { GripVertical, Loader2, Pencil, Plus, RefreshCcw, Save, Trash2 } from 'lucide-react'
+import { EmptyPanel, Field, FormError, HoverText, IconAction, SkeletonCardGrid, StatusBadge } from '@/components/common'
 import { Page } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,21 +14,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api } from '@/lib/api'
 import { errorMessage, fmtTime, num } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { RevenueCard, RevenueCardForm, RevenueRow, UpstreamRow } from '@/types'
+import type { RevenueCard, RevenueCardForm, RevenueRow } from '@/types'
 
 const emptyRevenueForm: RevenueCardForm = {
   name: '',
   source_type: 'epay_total',
-  upstream_id: '',
+  base_url: '',
+  user_id: '',
+  access_token: '',
+  admin_api_key: '',
+  epay_pid: '',
+  epay_key: '',
   enabled: true,
 }
 
-export function RevenuePage({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function RevenuePage() {
   const qc = useQueryClient()
   const [layoutEditing, setLayoutEditing] = useState(false)
   const [draftRows, setDraftRows] = useState<RevenueRow[]>([])
   const q = useQuery({ queryKey: ['revenue', 'today'], queryFn: () => api<RevenueRow[]>('/api/revenue/today'), refetchInterval: 60000 })
-  const upstreams = useQuery({ queryKey: ['upstreams'], queryFn: () => api<UpstreamRow[]>('/api/upstreams') })
   const rows = q.data ?? []
   const shownRows = layoutEditing ? draftRows : rows
   const sortDirty = !sameIDs(rows, draftRows)
@@ -60,7 +64,7 @@ export function RevenuePage({ onOpenSettings }: { onOpenSettings: () => void }) 
       description="收入卡片和来源明细"
       actions={
         <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-          {(q.isFetching || upstreams.isFetching) && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          {q.isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
           <Button variant="outline" size="sm" onClick={() => void q.refetch()} disabled={q.isFetching}>
             <RefreshCcw className={cn('size-4', q.isFetching && 'animate-spin')} />
             刷新
@@ -76,7 +80,7 @@ export function RevenuePage({ onOpenSettings }: { onOpenSettings: () => void }) 
           ) : (
             rows.length > 0 && <Button variant="outline" size="sm" onClick={() => { setDraftRows(rows); setLayoutEditing(true) }}>修改布局</Button>
           )}
-          <RevenueCardDialog rows={upstreams.data ?? []} />
+          <RevenueCardDialog />
         </div>
       }
     >
@@ -87,13 +91,13 @@ export function RevenuePage({ onOpenSettings }: { onOpenSettings: () => void }) 
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={shownRows.map((row) => row.id)} strategy={rectSortingStrategy}>
               <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {shownRows.map((row) => <SortableRevenueCard key={row.id} row={row} rows={upstreams.data ?? []} sorting={sortCards.isPending} onOpenSettings={onOpenSettings} />)}
+                {shownRows.map((row) => <SortableRevenueCard key={row.id} row={row} sorting={sortCards.isPending} />)}
               </div>
             </SortableContext>
           </DndContext>
         ) : (
           <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {shownRows.map((row) => <RevenueCardView key={row.id} row={row} rows={upstreams.data ?? []} onOpenSettings={onOpenSettings} />)}
+            {shownRows.map((row) => <RevenueCardView key={row.id} row={row} />)}
           </div>
         )
       )}
@@ -104,22 +108,16 @@ export function RevenuePage({ onOpenSettings }: { onOpenSettings: () => void }) 
 
 function SortableRevenueCard({
   row,
-  rows,
   sorting,
-  onOpenSettings,
 }: {
   row: RevenueRow
-  rows: UpstreamRow[]
   sorting: boolean
-  onOpenSettings: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.id })
   return (
     <div ref={setNodeRef} className={cn('min-w-0', isDragging && 'z-10 opacity-80')} style={{ transform: CSS.Transform.toString(transform), transition }}>
       <RevenueCardView
         row={row}
-        rows={rows}
-        onOpenSettings={onOpenSettings}
         dragHandle={
           <Button variant="outline" size="icon" title="拖拽排序" disabled={sorting} className="touch-none" {...attributes} {...listeners}>
             <GripVertical className="size-4" />
@@ -133,45 +131,35 @@ function SortableRevenueCard({
 
 function RevenueCardView({
   row,
-  rows,
   dragHandle,
-  onOpenSettings,
 }: {
   row: RevenueRow
-  rows: UpstreamRow[]
   dragHandle?: ReactNode
-  onOpenSettings: () => void
 }) {
   const ok = row.enabled && !row.error
   const badgeText = !row.enabled ? '停用' : row.error ? '异常' : '正常'
   return (
     <Card className={cn('min-w-0 bg-card', row.error && 'border-destructive/40')}>
-      <CardHeader className="min-h-16 gap-2 border-b border-border">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
-          <div className="min-w-0 pt-1">
-            <CardTitle className="break-words text-lg leading-tight">{row.name}</CardTitle>
-            <CardDescription className="mt-1.5 text-xs leading-relaxed">{cardDescription(row)}</CardDescription>
+      <CardHeader className="gap-2">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle className="truncate">{row.name}</CardTitle>
+            <CardDescription>{sourceLabel(row.source_type)}</CardDescription>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5">
             <StatusBadge ok={ok} okText={badgeText} failText={badgeText} />
             <div className="flex flex-wrap justify-end gap-1.5">
               {dragHandle}
-              <RevenueCardDialog rows={rows} card={row} />
-              {row.source_type === 'epay_total' && row.error && (
-                <Button variant="outline" size="icon" onClick={onOpenSettings} title="设置">
-                  <Settings className="size-4" />
-                  <span className="sr-only">设置</span>
-                </Button>
-              )}
+              <RevenueCardDialog card={row} />
             </div>
           </div>
         </div>
       </CardHeader>
-      <CardContent className="grid gap-2.5 pt-2.5">
-        <div className="font-display break-words text-3xl font-normal">{row.enabled ? `${num(row.revenue)} 元` : '-'}</div>
-        <div className="grid min-w-0 grid-cols-2 gap-2">
-          <MiniStat label="来源" value={sourceLabel(row.source_type)} />
-          <MiniStat label="刷新时间" value={displayTime(row.checked_at)} />
+      <CardContent className="grid gap-3">
+        <div>
+          <div className="text-sm text-muted-foreground">收入金额</div>
+          <div className="break-words font-display text-3xl font-normal">{row.enabled ? `${num(row.revenue)} 元` : '-'}</div>
+          <div className="mt-1.5 text-xs text-muted-foreground">最后刷新：{displayTime(row.checked_at)}</div>
         </div>
         {row.error && <HoverText value={row.error} className="rounded-sm bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive" alwaysTooltip />}
       </CardContent>
@@ -179,12 +167,10 @@ function RevenueCardView({
   )
 }
 
-function RevenueCardDialog({ rows, card }: { rows: UpstreamRow[]; card?: RevenueCard }) {
+function RevenueCardDialog({ card }: { card?: RevenueCard }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<RevenueCardForm>(() => cardToForm(card))
-  const upstreamType = sourceUpstreamType(form.source_type)
-  const upstreamOptions = upstreamType ? rows.filter((row) => row.upstream.type === upstreamType) : []
   const save = useMutation({
     mutationFn: () =>
       api(card ? `/api/revenue/cards/${card.id}` : '/api/revenue/cards', {
@@ -234,10 +220,7 @@ function RevenueCardDialog({ rows, card }: { rows: UpstreamRow[]; card?: Revenue
             <Input value={form.name} onChange={(e) => update({ name: e.target.value })} />
           </Field>
           <Field label="类型">
-            <Select
-              value={form.source_type}
-              onValueChange={(value) => update({ source_type: value as RevenueCardForm['source_type'], upstream_id: '' })}
-            >
+            <Select value={form.source_type} onValueChange={(value) => update({ source_type: value as RevenueCardForm['source_type'] })}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -248,20 +231,32 @@ function RevenueCardDialog({ rows, card }: { rows: UpstreamRow[]; card?: Revenue
               </SelectContent>
             </Select>
           </Field>
-          {upstreamType && (
-            <Field label="上游">
-              <Select value={form.upstream_id} onValueChange={(value) => update({ upstream_id: value })}>
-                <SelectTrigger>
-                  <SelectValue placeholder="选择上游" />
-                </SelectTrigger>
-                <SelectContent>
-                  {upstreamOptions.map((row) => (
-                    <SelectItem key={row.upstream.id} value={row.upstream.id}>
-                      {row.upstream.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <Field label="Base URL">
+            <Input value={form.base_url} placeholder={baseURLPlaceholder(form.source_type)} onChange={(e) => update({ base_url: e.target.value })} />
+          </Field>
+          {form.source_type === 'epay_total' && (
+            <>
+              <Field label="PID">
+                <Input value={form.epay_pid} onChange={(e) => update({ epay_pid: e.target.value })} />
+              </Field>
+              <Field label="Key">
+                <Input type="password" value={form.epay_key} onChange={(e) => update({ epay_key: e.target.value })} />
+              </Field>
+            </>
+          )}
+          {form.source_type === 'newapi_orders' && (
+            <>
+              <Field label="New-Api-User">
+                <Input value={form.user_id} onChange={(e) => update({ user_id: e.target.value })} />
+              </Field>
+              <Field label="Access Token">
+                <Input type="password" value={form.access_token} onChange={(e) => update({ access_token: e.target.value })} />
+              </Field>
+            </>
+          )}
+          {form.source_type === 'sub2api_orders' && (
+            <Field label="管理员 API Key">
+              <Input type="password" value={form.admin_api_key} placeholder="admin-..." onChange={(e) => update({ admin_api_key: e.target.value })} />
             </Field>
           )}
           <Field label="启用状态">
@@ -288,18 +283,12 @@ function RevenueCardDialog({ rows, card }: { rows: UpstreamRow[]; card?: Revenue
   )
 }
 
-function cardDescription(row: RevenueCard) {
-  return row.upstream_name ? `${sourceLabel(row.source_type)} · ${row.upstream_name}` : sourceLabel(row.source_type)
-}
-
 function sourceLabel(type: RevenueCard['source_type']) {
   return ({ epay_total: '总收入', newapi_orders: 'new-api 订单', sub2api_orders: 'sub2api 订单' } as const)[type] ?? type
 }
 
-function sourceUpstreamType(type: RevenueCard['source_type']) {
-  if (type === 'newapi_orders') return 'newapi'
-  if (type === 'sub2api_orders') return 'sub2api'
-  return ''
+function baseURLPlaceholder(type: RevenueCard['source_type']) {
+  return type === 'epay_total' ? 'https://pay.example.com' : 'https://example.com'
 }
 
 function cardToForm(card?: RevenueCard): RevenueCardForm {
@@ -307,7 +296,12 @@ function cardToForm(card?: RevenueCard): RevenueCardForm {
   return {
     name: card.name || '',
     source_type: card.source_type,
-    upstream_id: card.upstream_id || '',
+    base_url: card.base_url || '',
+    user_id: card.user_id || '',
+    access_token: card.access_token || '',
+    admin_api_key: card.admin_api_key || '',
+    epay_pid: card.epay_pid || '',
+    epay_key: card.epay_key || '',
     enabled: card.enabled,
   }
 }
@@ -316,14 +310,24 @@ function cardPayload(form: RevenueCardForm) {
   return {
     name: form.name,
     source_type: form.source_type,
-    upstream_id: sourceUpstreamType(form.source_type) ? form.upstream_id : '',
+    base_url: form.base_url,
+    user_id: form.source_type === 'newapi_orders' ? form.user_id : '',
+    access_token: form.source_type === 'newapi_orders' ? form.access_token : '',
+    admin_api_key: form.source_type === 'sub2api_orders' ? form.admin_api_key : '',
+    epay_pid: form.source_type === 'epay_total' ? form.epay_pid : '',
+    epay_key: form.source_type === 'epay_total' ? form.epay_key : '',
+    upstream_id: '',
     enabled: form.enabled,
   }
 }
 
 function formReady(form: RevenueCardForm) {
   if (!form.name.trim()) return false
-  return !sourceUpstreamType(form.source_type) || Boolean(form.upstream_id)
+  if (!form.base_url.trim()) return false
+  if (form.source_type === 'epay_total') return Boolean(form.epay_pid.trim() && form.epay_key.trim())
+  if (form.source_type === 'newapi_orders') return Boolean(form.user_id.trim() && form.access_token.trim())
+  if (form.source_type === 'sub2api_orders') return Boolean(form.admin_api_key.trim())
+  return false
 }
 
 function sameIDs(a: RevenueRow[], b: RevenueRow[]) {

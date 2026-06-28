@@ -138,6 +138,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS revenue_cards (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, source_type TEXT NOT NULL, upstream_id TEXT NOT NULL DEFAULT '',
+			base_url TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', access_token TEXT NOT NULL DEFAULT '',
+			admin_api_key TEXT NOT NULL DEFAULT '', epay_pid TEXT NOT NULL DEFAULT '', epay_key TEXT NOT NULL DEFAULT '',
 			enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_upstream ON api_keys(upstream_id)`,
@@ -191,6 +193,18 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if err := s.addColumnIfMissing(ctx, "balance_recharge_logs", "raw_status", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
+	}
+	for _, col := range []struct{ name, def string }{
+		{"base_url", "TEXT NOT NULL DEFAULT ''"},
+		{"user_id", "TEXT NOT NULL DEFAULT ''"},
+		{"access_token", "TEXT NOT NULL DEFAULT ''"},
+		{"admin_api_key", "TEXT NOT NULL DEFAULT ''"},
+		{"epay_pid", "TEXT NOT NULL DEFAULT ''"},
+		{"epay_key", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "revenue_cards", col.name, col.def); err != nil {
+			return err
+		}
 	}
 	if _, err := s.exec(ctx, `INSERT INTO settings (id, check_interval_minutes, probe_model) VALUES ('default', 5, ?) ON CONFLICT(id) DO NOTHING`, domain.ProbeModel); err != nil {
 		return err
@@ -713,8 +727,11 @@ func (s *Store) CreateRevenueCard(ctx context.Context, c domain.RevenueCard) (do
 	}
 	now := time.Now().UTC()
 	c.CreatedAt, c.UpdatedAt = now, now
-	_, err := s.exec(ctx, `INSERT INTO revenue_cards (id, name, source_type, upstream_id, enabled, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, c.SourceType, c.UpstreamID, boolInt(c.Enabled), c.SortOrder, c.CreatedAt.Format(time.RFC3339Nano), c.UpdatedAt.Format(time.RFC3339Nano))
+	_, err := s.exec(ctx, `INSERT INTO revenue_cards
+		(id, name, source_type, upstream_id, base_url, user_id, access_token, admin_api_key, epay_pid, epay_key, enabled, sort_order, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.SourceType, c.UpstreamID, c.BaseURL, c.UserID, c.AccessToken, c.AdminAPIKey, c.EpayPID, c.EpayKey,
+		boolInt(c.Enabled), c.SortOrder, c.CreatedAt.Format(time.RFC3339Nano), c.UpdatedAt.Format(time.RFC3339Nano))
 	return c, err
 }
 
@@ -726,8 +743,10 @@ func (s *Store) nextRevenueCardSortOrder(ctx context.Context) (int, error) {
 
 func (s *Store) UpdateRevenueCard(ctx context.Context, c domain.RevenueCard) (domain.RevenueCard, error) {
 	c.UpdatedAt = time.Now().UTC()
-	_, err := s.exec(ctx, `UPDATE revenue_cards SET name=?, source_type=?, upstream_id=?, enabled=?, sort_order=?, updated_at=? WHERE id=?`,
-		c.Name, c.SourceType, c.UpstreamID, boolInt(c.Enabled), c.SortOrder, c.UpdatedAt.Format(time.RFC3339Nano), c.ID)
+	_, err := s.exec(ctx, `UPDATE revenue_cards SET name=?, source_type=?, upstream_id=?, base_url=?, user_id=?, access_token=?,
+		admin_api_key=?, epay_pid=?, epay_key=?, enabled=?, sort_order=?, updated_at=? WHERE id=?`,
+		c.Name, c.SourceType, c.UpstreamID, c.BaseURL, c.UserID, c.AccessToken, c.AdminAPIKey, c.EpayPID, c.EpayKey,
+		boolInt(c.Enabled), c.SortOrder, c.UpdatedAt.Format(time.RFC3339Nano), c.ID)
 	return c, err
 }
 
@@ -737,11 +756,11 @@ func (s *Store) DeleteRevenueCard(ctx context.Context, id string) error {
 }
 
 func (s *Store) RevenueCard(ctx context.Context, id string) (domain.RevenueCard, error) {
-	return s.scanRevenueCard(s.row(ctx, `SELECT id, name, source_type, upstream_id, enabled, sort_order, created_at, updated_at FROM revenue_cards WHERE id=?`, id))
+	return s.scanRevenueCard(s.row(ctx, revenueCardSelectSQL()+` WHERE id=?`, id))
 }
 
 func (s *Store) ListRevenueCards(ctx context.Context) ([]domain.RevenueCard, error) {
-	rows, err := s.query(ctx, `SELECT id, name, source_type, upstream_id, enabled, sort_order, created_at, updated_at FROM revenue_cards ORDER BY sort_order, name`)
+	rows, err := s.query(ctx, revenueCardSelectSQL()+` ORDER BY sort_order, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +780,8 @@ func (s *Store) scanRevenueCard(row *sql.Row) (domain.RevenueCard, error) {
 	var c domain.RevenueCard
 	var enabled int
 	var created, updated string
-	err := row.Scan(&c.ID, &c.Name, &c.SourceType, &c.UpstreamID, &enabled, &c.SortOrder, &created, &updated)
+	err := row.Scan(&c.ID, &c.Name, &c.SourceType, &c.UpstreamID, &c.BaseURL, &c.UserID, &c.AccessToken,
+		&c.AdminAPIKey, &c.EpayPID, &c.EpayKey, &enabled, &c.SortOrder, &created, &updated)
 	c.Enabled = boolFromInt(enabled)
 	c.CreatedAt, c.UpdatedAt = parseTime(created), parseTime(updated)
 	return c, err
@@ -771,10 +791,15 @@ func scanRevenueCardRows(rows *sql.Rows) (domain.RevenueCard, error) {
 	var c domain.RevenueCard
 	var enabled int
 	var created, updated string
-	err := rows.Scan(&c.ID, &c.Name, &c.SourceType, &c.UpstreamID, &enabled, &c.SortOrder, &created, &updated)
+	err := rows.Scan(&c.ID, &c.Name, &c.SourceType, &c.UpstreamID, &c.BaseURL, &c.UserID, &c.AccessToken,
+		&c.AdminAPIKey, &c.EpayPID, &c.EpayKey, &enabled, &c.SortOrder, &created, &updated)
 	c.Enabled = boolFromInt(enabled)
 	c.CreatedAt, c.UpdatedAt = parseTime(created), parseTime(updated)
 	return c, err
+}
+
+func revenueCardSelectSQL() string {
+	return `SELECT id, name, source_type, upstream_id, base_url, user_id, access_token, admin_api_key, epay_pid, epay_key, enabled, sort_order, created_at, updated_at FROM revenue_cards`
 }
 
 func (s *Store) UpdateRevenueCardOrder(ctx context.Context, ids []string) error {

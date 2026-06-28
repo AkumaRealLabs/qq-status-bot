@@ -152,6 +152,12 @@ type RevenueCard struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	SourceType   string    `json:"source_type"`
+	BaseURL      string    `json:"base_url,omitempty"`
+	UserID       string    `json:"user_id,omitempty"`
+	AccessToken  string    `json:"access_token,omitempty"`
+	AdminAPIKey  string    `json:"admin_api_key,omitempty"`
+	EpayPID      string    `json:"epay_pid,omitempty"`
+	EpayKey      string    `json:"epay_key,omitempty"`
 	UpstreamID   string    `json:"upstream_id,omitempty"`
 	UpstreamName string    `json:"upstream_name,omitempty"`
 	Enabled      bool      `json:"enabled"`

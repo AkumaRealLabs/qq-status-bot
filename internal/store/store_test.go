@@ -245,6 +245,12 @@ func TestRevenueCardCRUDAndSort(t *testing.T) {
 		t.Fatalf("sort_order = %d, want 2", card.SortOrder)
 	}
 	card.Name = "订单收入"
+	card.BaseURL = "https://orders.example.test"
+	card.UserID = "new-user"
+	card.AccessToken = "new-token"
+	card.AdminAPIKey = "admin-secret"
+	card.EpayPID = "1000"
+	card.EpayKey = "pay-secret"
 	card.Enabled = false
 	if _, err := s.UpdateRevenueCard(t.Context(), card); err != nil {
 		t.Fatal(err)
@@ -253,7 +259,7 @@ func TestRevenueCardCRUDAndSort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "订单收入" || got.Enabled {
+	if got.Name != "订单收入" || got.Enabled || got.BaseURL != "https://orders.example.test" || got.UserID != "new-user" || got.AccessToken != "new-token" || got.AdminAPIKey != "admin-secret" || got.EpayPID != "1000" || got.EpayKey != "pay-secret" {
 		t.Fatalf("card = %+v", got)
 	}
 	if err := s.UpdateRevenueCardOrder(t.Context(), []string{card.ID, defaults[0].ID}); err != nil {

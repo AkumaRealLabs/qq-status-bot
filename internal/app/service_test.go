@@ -88,14 +88,14 @@ func TestTodayRevenueMapsEpayBalance(t *testing.T) {
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := st.Settings(t.Context())
+	cards, err := st.ListRevenueCards(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.EpayBaseURL = ts.URL
-	cfg.EpayPID = "1000"
-	cfg.EpayKey = "secret"
-	if _, err := st.UpdateSettings(t.Context(), cfg); err != nil {
+	cards[0].BaseURL = ts.URL
+	cards[0].EpayPID = "1000"
+	cards[0].EpayKey = "secret"
+	if _, err := st.UpdateRevenueCard(t.Context(), cards[0]); err != nil {
 		t.Fatal(err)
 	}
 	svc := New(st)
@@ -112,17 +112,25 @@ func TestTodayRevenueMapsEpayBalance(t *testing.T) {
 func TestTodayRevenueReturnsIndependentCardRows(t *testing.T) {
 	now := todayStart().Add(time.Hour).Format(time.RFC3339)
 	old := todayStart().Add(-time.Second).Format(time.RFC3339)
+	var sub2AdminKey string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api.php":
+			if r.URL.Query().Get("pid") != "1000" || r.URL.Query().Get("key") != "secret" {
+				t.Fatalf("bad epay query: %s", r.URL.RawQuery)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "money": "88.66"})
 		case "/api/user/topup/self":
+			if r.Header.Get("Authorization") != "new-token" || r.Header.Get("New-Api-User") != "new-user" {
+				t.Fatalf("bad newapi auth: auth=%q user=%q", r.Header.Get("Authorization"), r.Header.Get("New-Api-User"))
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": []map[string]any{
 				{"amount": 12.5, "status": "success", "created_at": now},
 				{"amount": 99, "status": "pending", "created_at": now},
 				{"amount": 100, "status": "success", "created_at": old},
 			}}})
-		case "/api/v1/payment/orders":
+		case "/api/v1/admin/payment/orders":
+			sub2AdminKey = r.Header.Get("x-api-key")
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"orders": []map[string]any{
 				{"amount": 7.25, "status": "COMPLETED", "created_at": now},
 			}}})
@@ -140,30 +148,22 @@ func TestTodayRevenueReturnsIndependentCardRows(t *testing.T) {
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := st.Settings(t.Context())
+	cards, err := st.ListRevenueCards(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.EpayBaseURL = ts.URL
-	cfg.EpayPID = "1000"
-	cfg.EpayKey = "secret"
-	if _, err := st.UpdateSettings(t.Context(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	newapi, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "N", Type: "newapi", BaseURL: ts.URL, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sub2api, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "S", Type: "sub2api", BaseURL: ts.URL, Enabled: true, Sub2APIAccessToken: "token"})
-	if err != nil {
+	cards[0].BaseURL = ts.URL
+	cards[0].EpayPID = "1000"
+	cards[0].EpayKey = "secret"
+	if _, err := st.UpdateRevenueCard(t.Context(), cards[0]); err != nil {
 		t.Fatal(err)
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "N 订单", SourceType: "newapi_orders", UpstreamID: newapi.ID, Enabled: true}); err != nil {
+	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "N 订单", SourceType: "newapi_orders", BaseURL: ts.URL, UserID: "new-user", AccessToken: "new-token", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "S 订单", SourceType: "sub2api_orders", UpstreamID: sub2api.ID, Enabled: true}); err != nil {
+	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "S 订单", SourceType: "sub2api_orders", BaseURL: ts.URL, AdminAPIKey: "admin-secret", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := svc.TodayRevenue(t.Context())
@@ -177,9 +177,12 @@ func TestTodayRevenueReturnsIndependentCardRows(t *testing.T) {
 	if amounts["epay_total"] != 88.66 || amounts["newapi_orders"] != 12.5 || amounts["sub2api_orders"] != 7.25 {
 		t.Fatalf("rows = %+v", rows)
 	}
+	if sub2AdminKey != "admin-secret" {
+		t.Fatalf("sub2 admin key = %q", sub2AdminKey)
+	}
 }
 
-func TestSaveRevenueCardValidatesTypeAndUpstream(t *testing.T) {
+func TestSaveRevenueCardValidatesCardCredentials(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -189,21 +192,20 @@ func TestSaveRevenueCardValidatesTypeAndUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := New(st)
-	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "bad", SourceType: "newapi_orders", Enabled: true}); err == nil {
-		t.Fatal("missing upstream should fail")
+	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "bad", SourceType: "newapi_orders", BaseURL: "https://n.example.test", Enabled: true}); err == nil {
+		t.Fatal("missing new-api credentials should fail")
 	}
-	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "S", Type: "sub2api", BaseURL: "https://s.example.test", Enabled: true})
+	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "bad", SourceType: "sub2api_orders", BaseURL: "https://s.example.test", Enabled: true}); err == nil {
+		t.Fatal("missing sub2api admin key should fail")
+	}
+	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{SourceType: "epay_total", Enabled: true}); err == nil {
+		t.Fatal("missing epay config should fail")
+	}
+	card, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{SourceType: "epay_total", BaseURL: "https://pay.example.test", EpayPID: "1000", EpayKey: "secret", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "bad", SourceType: "newapi_orders", UpstreamID: u.ID, Enabled: true}); err == nil {
-		t.Fatal("mismatched upstream should fail")
-	}
-	card, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{SourceType: "epay_total", UpstreamID: u.ID, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if card.Name != "今日收入" || card.UpstreamID != "" {
+	if card.Name != "今日收入" || card.UpstreamID != "" || card.BaseURL != "https://pay.example.test" {
 		t.Fatalf("card = %+v", card)
 	}
 }

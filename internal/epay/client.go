@@ -35,7 +35,7 @@ func (c Client) MerchantBalance(ctx context.Context, cfg Config) BalanceResult {
 	cfg.PID = strings.TrimSpace(cfg.PID)
 	cfg.Key = strings.TrimSpace(cfg.Key)
 	if cfg.BaseURL == "" || cfg.PID == "" || cfg.Key == "" {
-		out.Error = "请先在设置里填写易支付 v1 配置"
+		out.Error = "请先在收入卡片里填写易支付 Base URL、PID、Key"
 		return out
 	}
 	if balance, err := c.balance(ctx, cfg); err != nil {

@@ -71,7 +71,7 @@ export function SettingsPage() {
   }
   if (!data) return <ShellLoading />
   return (
-    <Page title="设置" description="监控周期、Telegram 告警和易支付配置">
+    <Page title="设置" description="监控周期、Telegram 告警和数据备份">
       <Card className="w-full max-w-2xl bg-card">
         <CardHeader>
           <CardTitle>基础设置</CardTitle>
@@ -98,23 +98,6 @@ export function SettingsPage() {
           </Field>
           <Field label="构建版本">
             <Input value={buildVersion} disabled />
-          </Field>
-        </CardContent>
-      </Card>
-      <Card className="w-full max-w-2xl bg-card">
-        <CardHeader>
-          <CardTitle>易支付 v1</CardTitle>
-          <CardDescription>用于收入页的易支付配置</CardDescription>
-        </CardHeader>
-        <CardContent className="grid min-w-0 gap-4">
-          <Field label="Base URL">
-            <Input value={data.epay_base_url ?? ''} placeholder="https://pay.example.com" onChange={(e) => setForm({ ...data, epay_base_url: e.target.value })} />
-          </Field>
-          <Field label="PID">
-            <Input value={data.epay_pid ?? ''} onChange={(e) => setForm({ ...data, epay_pid: e.target.value })} />
-          </Field>
-          <Field label="Key">
-            <Input type="password" value={data.epay_key ?? ''} onChange={(e) => setForm({ ...data, epay_key: e.target.value })} />
           </Field>
         </CardContent>
       </Card>

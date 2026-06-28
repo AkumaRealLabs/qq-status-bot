@@ -157,6 +157,12 @@ export type RevenueCard = {
   id: string
   name: string
   source_type: 'epay_total' | 'newapi_orders' | 'sub2api_orders'
+  base_url?: string
+  user_id?: string
+  access_token?: string
+  admin_api_key?: string
+  epay_pid?: string
+  epay_key?: string
   upstream_id?: string
   upstream_name?: string
   enabled: boolean
@@ -172,7 +178,12 @@ export type RevenueRow = RevenueCard & {
 export type RevenueCardForm = {
   name: string
   source_type: RevenueCard['source_type']
-  upstream_id: string
+  base_url: string
+  user_id: string
+  access_token: string
+  admin_api_key: string
+  epay_pid: string
+  epay_key: string
   enabled: boolean
 }
 

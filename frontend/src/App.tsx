@@ -153,7 +153,7 @@ export default function App() {
           <MobileTabs tab={tab} setTab={navigate} tabs={tabs} />
           {tab === 'status' && <AdminStatusPage />}
           {tab === 'balances' && <BalancesPage />}
-          {tab === 'revenue' && <RevenuePage onOpenSettings={() => navigate('settings')} />}
+          {tab === 'revenue' && <RevenuePage />}
           {tab === 'upstreams' && <UpstreamsPage />}
           {tab === 'settings' && <SettingsPage />}
         </main>

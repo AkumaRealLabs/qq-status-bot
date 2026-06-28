@@ -21,7 +21,7 @@ func TestTodayOrderRevenueNewapiPaginatesAndStopsAtOlderOrder(t *testing.T) {
 		pages++
 		if r.URL.Query().Get("p") == "1" {
 			items := []map[string]any{
-				{"amount": 10, "status": "success", "created_at": now},
+				{"amount": 10000, "money": 10, "status": "success", "complete_time": time.Now().Unix()},
 				{"amount": 2, "status": "paid", "created_at": now},
 				{"amount": 99, "status": "pending", "created_at": now},
 			}
@@ -68,6 +68,34 @@ func TestTodayOrderRevenueSub2apiCountsCompletedOrders(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out.Revenue != 7.25 {
+		t.Fatalf("out = %+v", out)
+	}
+}
+
+func TestTodayOrderRevenueSub2apiUsesAdminAPIKey(t *testing.T) {
+	start := time.Now().Add(-time.Hour)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/admin/payment/orders" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("x-api-key") != "admin-secret" {
+			t.Fatalf("bad api key: %q", r.Header.Get("x-api-key"))
+		}
+		if r.URL.Query().Get("page_size") != "50" {
+			t.Fatalf("bad query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": []map[string]any{
+			{"amount": 8.5, "status": "COMPLETED", "paid_at": time.Now().UnixMilli()},
+		}}})
+	}))
+	defer ts.Close()
+
+	out, err := (Client{HTTP: ts.Client()}).TodayOrderRevenue(t.Context(), &Upstream{Type: "sub2api", BaseURL: ts.URL, AdminAPIKey: "admin-secret"}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Revenue != 8.5 {
 		t.Fatalf("out = %+v", out)
 	}
 }

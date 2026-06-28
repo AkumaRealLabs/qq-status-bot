@@ -12,6 +12,7 @@ type Upstream struct {
 	AccessToken         string
 	Email               string
 	Password            string
+	AdminAPIKey         string
 	Sub2APIAccessToken  string
 	Sub2APIRefreshToken string
 	LowBalanceThreshold float64

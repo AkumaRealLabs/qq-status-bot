@@ -393,10 +393,16 @@ func (s *Server) listRevenueCards(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createRevenueCard(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name       string `json:"name"`
-		SourceType string `json:"source_type"`
-		UpstreamID string `json:"upstream_id"`
-		Enabled    *bool  `json:"enabled"`
+		Name        string `json:"name"`
+		SourceType  string `json:"source_type"`
+		BaseURL     string `json:"base_url"`
+		UserID      string `json:"user_id"`
+		AccessToken string `json:"access_token"`
+		AdminAPIKey string `json:"admin_api_key"`
+		EpayPID     string `json:"epay_pid"`
+		EpayKey     string `json:"epay_key"`
+		UpstreamID  string `json:"upstream_id"`
+		Enabled     *bool  `json:"enabled"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -406,17 +412,24 @@ func (s *Server) createRevenueCard(w http.ResponseWriter, r *http.Request) {
 		enabled = *body.Enabled
 	}
 	card, err := s.App.SaveRevenueCard(r.Context(), "", domain.RevenueCard{
-		Name: body.Name, SourceType: body.SourceType, UpstreamID: body.UpstreamID, Enabled: enabled,
+		Name: body.Name, SourceType: body.SourceType, BaseURL: body.BaseURL, UserID: body.UserID, AccessToken: body.AccessToken,
+		AdminAPIKey: body.AdminAPIKey, EpayPID: body.EpayPID, EpayKey: body.EpayKey, UpstreamID: body.UpstreamID, Enabled: enabled,
 	})
 	writeJSONOrError(w, card, err)
 }
 
 func (s *Server) updateRevenueCard(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name       string `json:"name"`
-		SourceType string `json:"source_type"`
-		UpstreamID string `json:"upstream_id"`
-		Enabled    *bool  `json:"enabled"`
+		Name        string `json:"name"`
+		SourceType  string `json:"source_type"`
+		BaseURL     string `json:"base_url"`
+		UserID      string `json:"user_id"`
+		AccessToken string `json:"access_token"`
+		AdminAPIKey string `json:"admin_api_key"`
+		EpayPID     string `json:"epay_pid"`
+		EpayKey     string `json:"epay_key"`
+		UpstreamID  string `json:"upstream_id"`
+		Enabled     *bool  `json:"enabled"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -437,12 +450,18 @@ func (s *Server) updateRevenueCard(w http.ResponseWriter, r *http.Request) {
 	if sourceType == "" {
 		sourceType = old.SourceType
 	}
-	if upstreamID == "" && sourceType == old.SourceType {
+	hasCardConfig := body.BaseURL != "" || body.UserID != "" || body.AccessToken != "" || body.AdminAPIKey != "" || body.EpayPID != "" || body.EpayKey != ""
+	if upstreamID == "" && sourceType == old.SourceType && !hasCardConfig {
 		upstreamID = old.UpstreamID
 	}
-	card, err := s.App.SaveRevenueCard(r.Context(), r.PathValue("id"), domain.RevenueCard{
-		Name: name, SourceType: sourceType, UpstreamID: upstreamID, Enabled: enabled,
-	})
+	in := domain.RevenueCard{
+		Name: name, SourceType: sourceType, BaseURL: body.BaseURL, UserID: body.UserID, AccessToken: body.AccessToken,
+		AdminAPIKey: body.AdminAPIKey, EpayPID: body.EpayPID, EpayKey: body.EpayKey, UpstreamID: upstreamID, Enabled: enabled,
+	}
+	if !hasCardConfig && sourceType == old.SourceType {
+		in.BaseURL, in.UserID, in.AccessToken, in.AdminAPIKey, in.EpayPID, in.EpayKey = old.BaseURL, old.UserID, old.AccessToken, old.AdminAPIKey, old.EpayPID, old.EpayKey
+	}
+	card, err := s.App.SaveRevenueCard(r.Context(), r.PathValue("id"), in)
 	writeJSONOrError(w, card, err)
 }
 
