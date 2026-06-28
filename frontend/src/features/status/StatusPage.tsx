@@ -25,6 +25,7 @@ const emptyCardForm: CardForm = {
   api_key: '',
   upstream_id: '',
   key_id: '',
+  display_group: '',
   enabled: true,
   public_enabled: false,
 }
@@ -61,9 +62,7 @@ export function PublicStatusPage({ site }: { site?: SiteSettings }) {
           <StatusSummary data={q.data} />
           {q.isLoading && <SkeletonCardGrid count={6} />}
           {!q.isLoading && cards.length > 0 && (
-            <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {cards.map((card, index) => <StatusMonitorCard key={`${card.name}-${index}`} card={card} windowValue={windowValue} publicView />)}
-            </div>
+            <StatusCardGroups cards={cards} render={(card, index) => <StatusMonitorCard key={`${card.name}-${index}`} card={card} windowValue={windowValue} publicView />} />
           )}
           {!q.isLoading && cards.length === 0 && <EmptyPanel text="暂无公开卡片" />}
         </Page>
@@ -143,13 +142,32 @@ export function AdminStatusPage() {
             </SortableContext>
           </DndContext>
         ) : (
-          <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {shownCards.map((card) => <StatusMonitorCard key={card.id} card={card} windowValue={windowValue} rows={upstreams.data ?? []} />)}
-          </div>
+          <StatusCardGroups cards={shownCards} render={(card) => <StatusMonitorCard key={card.id} card={card} windowValue={windowValue} rows={upstreams.data ?? []} />} />
         )
       )}
       {!q.isLoading && cards.length === 0 && <EmptyPanel text="暂无卡片" />}
     </Page>
+  )
+}
+
+function StatusCardGroups<T extends ModelCard | PublicModelCard>({
+  cards,
+  render,
+}: {
+  cards: T[]
+  render: (card: T, index: number) => ReactNode
+}) {
+  return (
+    <div className="grid min-w-0 gap-5">
+      {groupCards(cards).map((group) => (
+        <section key={group.name} className="grid min-w-0 gap-2">
+          <div className="text-sm font-medium text-foreground">{group.name}</div>
+          <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {group.cards.map(render)}
+          </div>
+        </section>
+      ))}
+    </div>
   )
 }
 
@@ -240,6 +258,7 @@ function StatusMonitorCard({
   const successCount = history.filter(probeOK).length
   const uptime = history.length ? `${((successCount / history.length) * 100).toFixed(2)}%` : '-'
   const groupName = editableCard?.key_group || (editableCard?.base_url ? '自定义' : '-')
+  const displayGroup = cardDisplayGroup(card)
   const ratio = editableCard?.effective_ratio || editableCard?.key_group_ratio || '-'
   return (
     <Card className={cn('min-w-0 bg-card', !ok && 'border-destructive/40')}>
@@ -249,7 +268,8 @@ function StatusMonitorCard({
             <CardTitle className="break-words text-lg leading-tight">{cardTitle(card, ratio)}</CardTitle>
             {!publicView && (
               <CardDescription className="mt-1.5 grid gap-0.5 text-xs leading-relaxed">
-                <span>分组：{groupName}</span>
+                <span>展示分组：{displayGroup}</span>
+                <span>Key 分组：{groupName}</span>
                 <span>模型：gpt-5.5</span>
               </CardDescription>
             )}
@@ -382,6 +402,9 @@ function CardDialog({ rows, card }: { rows: UpstreamRow[]; card?: ModelCard }) {
                 <SelectItem value="upstream">选择上游 Key</SelectItem>
               </SelectContent>
             </Select>
+          </Field>
+          <Field label="展示分组">
+            <Input value={form.display_group} placeholder="留空归到其他" onChange={(e) => update({ display_group: e.target.value })} />
           </Field>
           {form.source === 'custom' ? (
             <>
@@ -560,6 +583,7 @@ function cardToForm(card?: ModelCard): CardForm {
     api_key: card.api_key || '',
     upstream_id: card.upstream_id || '',
     key_id: card.key_id || '',
+    display_group: card.display_group || '',
     enabled: card.enabled,
     public_enabled: card.public_enabled,
   }
@@ -572,9 +596,28 @@ function cardPayload(form: CardForm) {
     api_key: form.source === 'custom' ? form.api_key : '',
     upstream_id: form.source === 'upstream' ? form.upstream_id : '',
     key_id: form.source === 'upstream' ? form.key_id : '',
+    display_group: form.display_group,
     enabled: form.enabled,
     public_enabled: form.public_enabled,
   }
+}
+
+function groupCards<T extends ModelCard | PublicModelCard>(cards: T[]) {
+  const groups: { name: string; cards: T[] }[] = []
+  for (const card of cards) {
+    const name = cardDisplayGroup(card)
+    let group = groups.find((item) => item.name === name)
+    if (!group) {
+      group = { name, cards: [] }
+      groups.push(group)
+    }
+    group.cards.push(card)
+  }
+  return groups
+}
+
+function cardDisplayGroup(card: ModelCard | PublicModelCard) {
+  return card.display_group?.trim() || '其他'
 }
 
 function cardFormReady(form: CardForm) {

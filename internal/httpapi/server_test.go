@@ -121,7 +121,7 @@ func TestPublicMonitorStatusDoesNotRequireAuth(t *testing.T) {
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "公开", BaseURL: "https://api.example.test", APIKey: "sk-public", Enabled: true, PublicEnabled: true})
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "公开", BaseURL: "https://api.example.test", APIKey: "sk-public", DisplayGroup: "生产", Enabled: true, PublicEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,8 +144,37 @@ func TestPublicMonitorStatusDoesNotRequireAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(out)
-	if strings.Contains(string(body), "sk-public") || !strings.Contains(string(body), "公开测试题目") || !strings.Contains(string(body), "banana") {
+	if strings.Contains(string(body), "sk-public") || !strings.Contains(string(body), "公开测试题目") || !strings.Contains(string(body), "banana") || !strings.Contains(string(body), "生产") {
 		t.Fatalf("public body = %s", body)
+	}
+}
+
+func TestUpdateCardCanClearDisplayGroup(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", BaseURL: "https://api.example.test", APIKey: "sk-test", DisplayGroup: "生产", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/cards/"+card.ID, strings.NewReader(`{"display_group":""}`))
+	req.SetPathValue("id", card.ID)
+	rr := httptest.NewRecorder()
+	(&Server{App: app.New(st)}).updateCard(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	got, err := st.Card(t.Context(), card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DisplayGroup != "" {
+		t.Fatalf("display_group = %q", got.DisplayGroup)
 	}
 }
 

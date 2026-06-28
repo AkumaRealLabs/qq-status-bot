@@ -164,14 +164,14 @@ func TestMigrateAddsCardPublicAndCustomColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cols["base_url"] || !cols["api_key"] || !cols["public_enabled"] || !cols["sort_order"] {
+	if !cols["base_url"] || !cols["api_key"] || !cols["public_enabled"] || !cols["display_group"] || !cols["sort_order"] {
 		t.Fatalf("columns = %#v", cols)
 	}
 	card, err := s.Card(t.Context(), "c1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if card.PublicEnabled || card.BaseURL != "" || card.APIKey != "" {
+	if card.PublicEnabled || card.BaseURL != "" || card.APIKey != "" || card.DisplayGroup != "" {
 		t.Fatalf("card = %+v", card)
 	}
 }
@@ -332,7 +332,7 @@ func TestBalanceRechargeLogs(t *testing.T) {
 func TestCardStoresCustomFields(t *testing.T) {
 	s := testStore(t)
 	card, err := s.CreateCard(t.Context(), domain.ModelCard{
-		Name: "自定义", BaseURL: "https://api.example.test", APIKey: "sk-test", Enabled: true, PublicEnabled: true,
+		Name: "自定义", BaseURL: "https://api.example.test", APIKey: "sk-test", DisplayGroup: "生产", Enabled: true, PublicEnabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -341,7 +341,7 @@ func TestCardStoresCustomFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "自定义" || got.BaseURL != "https://api.example.test" || got.APIKey != "sk-test" || !got.PublicEnabled {
+	if got.Name != "自定义" || got.BaseURL != "https://api.example.test" || got.APIKey != "sk-test" || got.DisplayGroup != "生产" || !got.PublicEnabled {
 		t.Fatalf("card = %+v", got)
 	}
 }

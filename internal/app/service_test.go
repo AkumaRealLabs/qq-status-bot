@@ -294,12 +294,12 @@ func TestSaveCardSupportsCustomAndUpstreamKey(t *testing.T) {
 	}
 	svc := New(st)
 	custom, err := svc.SaveCard(t.Context(), "", domain.ModelCard{
-		Name: "自定义", BaseURL: " https://api.example.test/ ", APIKey: " sk-test ", Enabled: true, PublicEnabled: true,
+		Name: "自定义", BaseURL: " https://api.example.test/ ", APIKey: " sk-test ", DisplayGroup: " 生产 ", Enabled: true, PublicEnabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if custom.BaseURL != "https://api.example.test" || custom.APIKey != "sk-test" || !custom.PublicEnabled {
+	if custom.BaseURL != "https://api.example.test" || custom.APIKey != "sk-test" || custom.DisplayGroup != "生产" || !custom.PublicEnabled {
 		t.Fatalf("custom = %+v", custom)
 	}
 	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "A", Type: "newapi", BaseURL: "https://upstream.test", Enabled: true})

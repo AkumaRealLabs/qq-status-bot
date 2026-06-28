@@ -241,6 +241,7 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 		APIKey        string `json:"api_key"`
 		UpstreamID    string `json:"upstream_id"`
 		KeyID         string `json:"key_id"`
+		DisplayGroup  string `json:"display_group"`
 		Enabled       *bool  `json:"enabled"`
 		PublicEnabled *bool  `json:"public_enabled"`
 	}
@@ -257,20 +258,21 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 	}
 	card, err := s.App.SaveCard(r.Context(), "", domain.ModelCard{
 		Name: body.Name, BaseURL: body.BaseURL, APIKey: body.APIKey, UpstreamID: body.UpstreamID, KeyID: body.KeyID,
-		Enabled: enabled, PublicEnabled: publicEnabled,
+		DisplayGroup: body.DisplayGroup, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
 	writeJSONOrError(w, card, err)
 }
 
 func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name          string `json:"name"`
-		BaseURL       string `json:"base_url"`
-		APIKey        string `json:"api_key"`
-		UpstreamID    string `json:"upstream_id"`
-		KeyID         string `json:"key_id"`
-		Enabled       *bool  `json:"enabled"`
-		PublicEnabled *bool  `json:"public_enabled"`
+		Name          string  `json:"name"`
+		BaseURL       string  `json:"base_url"`
+		APIKey        string  `json:"api_key"`
+		UpstreamID    string  `json:"upstream_id"`
+		KeyID         string  `json:"key_id"`
+		DisplayGroup  *string `json:"display_group"`
+		Enabled       *bool   `json:"enabled"`
+		PublicEnabled *bool   `json:"public_enabled"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -289,15 +291,19 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 		publicEnabled = *body.PublicEnabled
 	}
 	name, baseURL, apiKey, upstreamID, keyID := body.Name, body.BaseURL, body.APIKey, body.UpstreamID, body.KeyID
+	displayGroup := old.DisplayGroup
 	if name == "" {
 		name = old.Name
+	}
+	if body.DisplayGroup != nil {
+		displayGroup = *body.DisplayGroup
 	}
 	if baseURL == "" && apiKey == "" && upstreamID == "" && keyID == "" {
 		baseURL, apiKey, upstreamID, keyID = old.BaseURL, old.APIKey, old.UpstreamID, old.KeyID
 	}
 	card, err := s.App.SaveCard(r.Context(), r.PathValue("id"), domain.ModelCard{
 		Name: name, BaseURL: baseURL, APIKey: apiKey, UpstreamID: upstreamID, KeyID: keyID,
-		Enabled: enabled, PublicEnabled: publicEnabled,
+		DisplayGroup: displayGroup, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
 	writeJSONOrError(w, card, err)
 }

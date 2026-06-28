@@ -377,6 +377,7 @@ func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domai
 		UpstreamID:    strings.TrimSpace(in.UpstreamID),
 		KeyID:         strings.TrimSpace(in.KeyID),
 		Model:         domain.ProbeModel,
+		DisplayGroup:  strings.TrimSpace(in.DisplayGroup),
 		Enabled:       in.Enabled,
 		PublicEnabled: in.PublicEnabled,
 		SortOrder:     in.SortOrder,
@@ -585,7 +586,7 @@ func publicCards(cards []domain.ModelCard) []domain.PublicModelCard {
 		if !c.PublicEnabled {
 			continue
 		}
-		card := domain.PublicModelCard{Name: c.Name}
+		card := domain.PublicModelCard{Name: c.Name, DisplayGroup: c.DisplayGroup}
 		for i := range c.History {
 			p := c.History[i]
 			p.Status = probeStatusLabel(p.Status)

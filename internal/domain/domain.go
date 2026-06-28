@@ -57,6 +57,7 @@ type ModelCard struct {
 	KeyRatio       string     `json:"key_group_ratio,omitempty"`
 	EffectiveRatio string     `json:"effective_ratio,omitempty"`
 	Model          string     `json:"model"`
+	DisplayGroup   string     `json:"display_group"`
 	Enabled        bool       `json:"enabled"`
 	PublicEnabled  bool       `json:"public_enabled"`
 	SortOrder      int        `json:"sort_order"`
@@ -68,9 +69,10 @@ type ModelCard struct {
 }
 
 type PublicModelCard struct {
-	Name      string           `json:"name"`
-	LastError string           `json:"last_error,omitempty"`
-	History   []PublicProbeRun `json:"history,omitempty"`
+	Name         string           `json:"name"`
+	DisplayGroup string           `json:"display_group"`
+	LastError    string           `json:"last_error,omitempty"`
+	History      []PublicProbeRun `json:"history,omitempty"`
 }
 
 type BalanceSnapshot struct {

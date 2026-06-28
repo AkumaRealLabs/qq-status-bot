@@ -49,6 +49,7 @@ export type ModelCard = {
   key_group?: string
   key_group_ratio?: string
   effective_ratio?: string
+  display_group: string
   enabled: boolean
   public_enabled: boolean
   sort_order: number
@@ -56,7 +57,7 @@ export type ModelCard = {
   history?: Probe[]
 }
 
-export type PublicModelCard = Pick<ModelCard, 'name' | 'last_error' | 'history'>
+export type PublicModelCard = Pick<ModelCard, 'name' | 'display_group' | 'last_error' | 'history'>
 
 export type Probe = {
   checked_at: string
@@ -202,6 +203,7 @@ export type CardForm = {
   api_key: string
   upstream_id: string
   key_id: string
+  display_group: string
   enabled: boolean
   public_enabled: boolean
 }
