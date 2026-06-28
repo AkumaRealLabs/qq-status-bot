@@ -38,8 +38,11 @@ func (c Client) TodayRevenueOrders(ctx context.Context, u *Upstream, start time.
 }
 
 func (c Client) newapiTodayRevenueOrders(ctx context.Context, u *Upstream, start time.Time) ([]RevenueOrder, error) {
+	if strings.TrimSpace(u.UserID) == "" || strings.TrimSpace(u.AccessToken) == "" {
+		return nil, fmt.Errorf("new-api 收入卡片需要配置管理员用户 ID 和 Access Token")
+	}
 	return c.collectTodayOrders(start, func(page int, raw *map[string]any) error {
-		path := fmt.Sprintf("/api/user/topup/self?p=%d&page_size=%d", page, revenueOrderPageSize)
+		path := fmt.Sprintf("/api/user/topup?p=%d&page_size=%d", page, revenueOrderPageSize)
 		return c.doJSON(ctx, http.MethodGet, joinURL(u.BaseURL, path), nil, newapiHeaders(u), raw)
 	})
 }
@@ -136,7 +139,7 @@ func findOrderArray(v any) []any {
 
 func successfulOrder(row map[string]any) bool {
 	switch strings.ToLower(strings.TrimSpace(str(first(row, "status", "state", "trade_status", "payment_status")))) {
-	case "success", "paid", "completed":
+	case "success", "paid", "completed", "succeeded":
 		return true
 	default:
 		return false

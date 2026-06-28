@@ -317,10 +317,10 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
           )}
           {form.source_type === 'newapi_orders' && (
             <>
-              <Field label="New-Api-User">
+              <Field label="管理员用户 ID">
                 <Input value={form.user_id} onChange={(e) => update({ user_id: e.target.value })} />
               </Field>
-              <Field label="Access Token">
+              <Field label="管理员 Access Token">
                 <Input type="password" value={form.access_token} onChange={(e) => update({ access_token: e.target.value })} />
               </Field>
             </>

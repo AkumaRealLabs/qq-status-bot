@@ -14,9 +14,12 @@ func TestTodayOrderRevenueNewapiPaginatesAndStopsAtOlderOrder(t *testing.T) {
 	old := start.Add(-time.Second).Format(time.RFC3339)
 	var pages int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/user/topup/self" {
+		if r.URL.Path != "/api/user/topup" {
 			http.NotFound(w, r)
 			return
+		}
+		if r.Header.Get("Authorization") != "admin-token" || r.Header.Get("New-Api-User") != "1" {
+			t.Fatalf("bad newapi admin auth: auth=%q user=%q", r.Header.Get("Authorization"), r.Header.Get("New-Api-User"))
 		}
 		pages++
 		if r.URL.Query().Get("p") == "1" {
@@ -37,7 +40,7 @@ func TestTodayOrderRevenueNewapiPaginatesAndStopsAtOlderOrder(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	out, err := (Client{HTTP: ts.Client()}).TodayOrderRevenue(t.Context(), &Upstream{Type: "newapi", BaseURL: ts.URL}, start)
+	out, err := (Client{HTTP: ts.Client()}).TodayOrderRevenue(t.Context(), &Upstream{Type: "newapi", BaseURL: ts.URL, UserID: "1", AccessToken: "admin-token"}, start)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +52,7 @@ func TestTodayOrderRevenueNewapiPaginatesAndStopsAtOlderOrder(t *testing.T) {
 func TestTodayRevenueOrdersReturnsDetails(t *testing.T) {
 	start := time.Now().Add(-time.Hour)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/user/topup/self" {
+		if r.URL.Path != "/api/user/topup" {
 			http.NotFound(w, r)
 			return
 		}
@@ -60,7 +63,7 @@ func TestTodayRevenueOrdersReturnsDetails(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	orders, err := (Client{HTTP: ts.Client()}).TodayRevenueOrders(t.Context(), &Upstream{Type: "newapi", BaseURL: ts.URL}, start)
+	orders, err := (Client{HTTP: ts.Client()}).TodayRevenueOrders(t.Context(), &Upstream{Type: "newapi", BaseURL: ts.URL, UserID: "1", AccessToken: "token"}, start)
 	if err != nil {
 		t.Fatal(err)
 	}

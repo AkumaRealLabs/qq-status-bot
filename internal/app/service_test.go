@@ -123,7 +123,7 @@ func TestTodayRevenueReturnsIndependentCardRows(t *testing.T) {
 				t.Fatalf("bad epay query: %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "money": "88.66"})
-		case "/api/user/topup/self":
+		case "/api/user/topup":
 			if r.Header.Get("Authorization") != "new-token" || r.Header.Get("New-Api-User") != "new-user" {
 				t.Fatalf("bad newapi auth: auth=%q user=%q", r.Header.Get("Authorization"), r.Header.Get("New-Api-User"))
 			}
