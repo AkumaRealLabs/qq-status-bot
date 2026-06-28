@@ -6,6 +6,7 @@ import { Page } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
@@ -391,9 +392,13 @@ function MessageList({ messages, channels, loading }: { messages: TGMessage[]; c
         </CardContent>
       </Card>
       {grouped.map((group) => (
-        <section key={group.channel.id} className="grid gap-2">
-          <div className="text-sm font-medium text-foreground">{group.channel.display_name}</div>
-          <div className="grid gap-2">
+        <section key={group.channel.id} className="grid gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-sm font-medium text-foreground">{group.channel.display_name}</div>
+            <Badge variant="secondary">{group.messages.length} 条</Badge>
+          </div>
+          <div className="relative grid gap-3 pl-5">
+            <div aria-hidden className="absolute bottom-2 left-1.5 top-2 w-px bg-border" />
             {group.messages.map((message) => (
               <MessageItem key={message.id} message={message} selected={selected.has(message.id)} onSelectedChange={(checked) => toggleSelected(message.id, checked)} />
             ))}
@@ -406,52 +411,72 @@ function MessageList({ messages, channels, loading }: { messages: TGMessage[]; c
 
 function MessageItem({ message, selected, onSelectedChange }: { message: TGMessage; selected: boolean; onSelectedChange: (checked: boolean) => void }) {
   return (
-    <Card className="bg-card">
-      <CardContent className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
-        <div className="flex min-w-0 gap-3">
-          <input
-            type="checkbox"
-            className="mt-1 size-4 shrink-0 accent-primary"
-            checked={selected}
-            onChange={(event) => onSelectedChange(event.target.checked)}
-            aria-label="选择消息"
-          />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>{displayTime(message.published_at)}</span>
-              {message.media_type && <Badge variant="secondary">{mediaLabel(message.media_type)}</Badge>}
-              {message.media_type && !message.media_cached && <Badge variant="destructive">媒体未缓存</Badge>}
+    <div className="relative">
+      <div aria-hidden className="absolute -left-5 top-5 size-3 rounded-full border-2 border-background bg-primary" />
+      <Card className={`bg-card ${selected ? 'ring-1 ring-primary' : ''}`}>
+        <CardContent className="grid gap-3 p-3">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">{displayTime(message.published_at)}</span>
+                {message.media_type && <Badge variant="secondary">{mediaLabel(message.media_type)}</Badge>}
+                {message.media_type && !message.media_cached && <Badge variant="destructive">媒体未缓存</Badge>}
+              </div>
             </div>
-            <HoverText value={message.text || '(无文本)'} className="mt-2 text-sm leading-[1.6]" alwaysTooltip>
-              <div data-hover-text className="line-clamp-4 whitespace-pre-wrap break-words">{message.text || '(无文本)'}</div>
-            </HoverText>
-            {message.link && (
-              <Button asChild variant="outline" size="sm" className="mt-3">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 shrink-0 accent-primary"
+              checked={selected}
+              onChange={(event) => onSelectedChange(event.target.checked)}
+              aria-label="选择消息"
+            />
+          </div>
+          <HoverText value={message.text || '(无文本)'} className="text-sm leading-[1.6]" alwaysTooltip>
+            <div data-hover-text className="line-clamp-5 whitespace-pre-wrap break-words">{message.text || '(无文本)'}</div>
+          </HoverText>
+          <MediaPreview message={message} />
+          {message.link && (
+            <div className="flex justify-end">
+              <Button asChild variant="outline" size="sm">
                 <a href={message.link} target="_blank" rel="noreferrer">跳转</a>
               </Button>
-            )}
-          </div>
-        </div>
-        <MediaPreview message={message} />
-      </CardContent>
-    </Card>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
 function MediaPreview({ message }: { message: TGMessage }) {
   if (!message.media_type) return null
   if (!message.media_cached || !message.media_url) {
-    return <div className="grid min-h-28 place-items-center rounded-sm border border-dashed border-border text-xs text-muted-foreground">媒体未缓存</div>
+    return <div className="grid min-h-36 place-items-center rounded-sm border border-dashed border-border text-xs text-muted-foreground">媒体未缓存</div>
   }
   if (message.media_type === 'photo' || message.media_type === 'image' || message.media_url.endsWith('.jpg')) {
     return (
-      <a href={message.media_url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-sm border border-border bg-background">
-        <img src={message.media_url} alt="" className="h-32 w-full object-cover" />
-      </a>
+      <Dialog>
+        <DialogTrigger asChild>
+          <button type="button" className="block overflow-hidden rounded-sm border border-border bg-background text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/30">
+            <img src={message.media_url} alt="" className="h-40 w-full object-cover sm:h-44" />
+          </button>
+        </DialogTrigger>
+        <DialogContent className="max-w-[960px] bg-background">
+          <DialogTitle>图片预览</DialogTitle>
+          <div className="overflow-hidden rounded-sm border border-border bg-card">
+            <img src={message.media_url} alt="" className="max-h-[70vh] w-full object-contain" />
+          </div>
+          <div className="flex justify-end">
+            <Button asChild variant="outline" size="sm">
+              <a href={message.media_url} target="_blank" rel="noreferrer">打开原图</a>
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     )
   }
   if (message.media_type === 'video') {
-    return <video src={message.media_url} controls className="h-32 w-full rounded-sm border border-border bg-background object-cover" />
+    return <video src={message.media_url} controls className="h-40 w-full rounded-sm border border-border bg-background object-cover sm:h-44" />
   }
   return (
     <Button asChild variant="outline" size="sm" className="self-start">
