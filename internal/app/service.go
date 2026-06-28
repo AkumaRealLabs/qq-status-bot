@@ -711,12 +711,150 @@ func (s *Service) BalanceRows(ctx context.Context) ([]map[string]any, error) {
 	return out, nil
 }
 
-func (s *Service) MerchantBalance(ctx context.Context) (domain.MerchantBalanceSummary, error) {
+func (s *Service) SaveRevenueCard(ctx context.Context, id string, in domain.RevenueCard) (domain.RevenueCard, error) {
+	card, err := s.normalizeRevenueCard(ctx, in)
+	if err != nil {
+		return domain.RevenueCard{}, err
+	}
+	if id == "" {
+		return s.Store.CreateRevenueCard(ctx, card)
+	}
+	old, err := s.Store.RevenueCard(ctx, id)
+	if err != nil {
+		return domain.RevenueCard{}, err
+	}
+	card.ID = old.ID
+	card.SortOrder = old.SortOrder
+	card.CreatedAt = old.CreatedAt
+	return s.Store.UpdateRevenueCard(ctx, card)
+}
+
+func (s *Service) normalizeRevenueCard(ctx context.Context, in domain.RevenueCard) (domain.RevenueCard, error) {
+	card := domain.RevenueCard{
+		Name:       strings.TrimSpace(in.Name),
+		SourceType: strings.TrimSpace(in.SourceType),
+		UpstreamID: strings.TrimSpace(in.UpstreamID),
+		Enabled:    in.Enabled,
+		SortOrder:  in.SortOrder,
+	}
+	switch card.SourceType {
+	case "epay_total":
+		if card.Name == "" {
+			card.Name = "今日收入"
+		}
+		card.UpstreamID = ""
+	case "newapi_orders", "sub2api_orders":
+		want := strings.TrimSuffix(card.SourceType, "_orders")
+		if card.UpstreamID == "" {
+			return card, errors.New("upstream_id is required")
+		}
+		u, err := s.Store.Upstream(ctx, card.UpstreamID)
+		if err != nil {
+			return card, err
+		}
+		if u.Type != want {
+			return card, errors.New("upstream type does not match revenue card")
+		}
+		if card.Name == "" {
+			card.Name = u.Name
+		}
+	default:
+		return card, errors.New("source_type must be epay_total, newapi_orders or sub2api_orders")
+	}
+	return card, nil
+}
+
+func (s *Service) ListRevenueCards(ctx context.Context) ([]domain.RevenueCard, error) {
+	cards, err := s.Store.ListRevenueCards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichRevenueCards(ctx, cards), nil
+}
+
+func (s *Service) TodayRevenue(ctx context.Context) ([]domain.RevenueRow, error) {
+	cards, err := s.Store.ListRevenueCards(ctx)
+	if err != nil {
+		return nil, err
+	}
 	cfg, err := s.Store.Settings(ctx)
 	if err != nil {
-		return domain.MerchantBalanceSummary{}, err
+		return nil, err
 	}
-	return (epay.Client{HTTP: s.Client.HTTP}).MerchantBalance(ctx, epay.Config{BaseURL: cfg.EpayBaseURL, PID: cfg.EpayPID, Key: cfg.EpayKey}), nil
+	cards = s.enrichRevenueCards(ctx, cards)
+	out := []domain.RevenueRow{}
+	start := todayStart()
+	for _, card := range cards {
+		row := domain.RevenueRow{RevenueCard: card}
+		if !card.Enabled {
+			out = append(out, row)
+			continue
+		}
+		row.CheckedAt = time.Now().UTC()
+		switch card.SourceType {
+		case "epay_total":
+			balance := (epay.Client{HTTP: s.Client.HTTP}).MerchantBalance(ctx, epay.Config{BaseURL: cfg.EpayBaseURL, PID: cfg.EpayPID, Key: cfg.EpayKey})
+			row.Revenue, row.CheckedAt, row.Error = balance.Balance, balance.CheckedAt, balance.Error
+			if row.Error != "" {
+				row.Revenue = 0
+			}
+		case "newapi_orders", "sub2api_orders":
+			u, err := s.Store.Upstream(ctx, card.UpstreamID)
+			if err != nil {
+				row.Error = err.Error()
+				break
+			}
+			row.UpstreamName = u.Name
+			mu := toMonitorUpstream(u)
+			total, err := s.Client.TodayOrderRevenue(ctx, &mu, start)
+			_ = s.Store.SaveUpstreamTokens(ctx, u.ID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken)
+			row.Revenue, row.CheckedAt = total.Revenue, total.CheckedAt
+			if err != nil {
+				row.Revenue = 0
+				row.Error = err.Error()
+			}
+		default:
+			row.Error = "unsupported revenue card type"
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (s *Service) SortRevenueCards(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return errors.New("ids are required")
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return errors.New("card id is required")
+		}
+		if _, ok := seen[id]; ok {
+			return errors.New("duplicate card id")
+		}
+		seen[id] = struct{}{}
+	}
+	return s.Store.UpdateRevenueCardOrder(ctx, ids)
+}
+
+func (s *Service) enrichRevenueCards(ctx context.Context, cards []domain.RevenueCard) []domain.RevenueCard {
+	for i := range cards {
+		if cards[i].UpstreamID == "" {
+			continue
+		}
+		if u, err := s.Store.Upstream(ctx, cards[i].UpstreamID); err == nil {
+			cards[i].UpstreamName = u.Name
+		}
+	}
+	return cards
+}
+
+func todayStart() time.Time {
+	now := time.Now()
+	y, m, d := now.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, now.Location())
 }
 
 func (s *Service) UpstreamRows(ctx context.Context) ([]map[string]any, error) {

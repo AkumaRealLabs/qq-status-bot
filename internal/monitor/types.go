@@ -73,6 +73,11 @@ type RechargeOrderResult struct {
 	Raw           map[string]any `json:"raw,omitempty"`
 }
 
+type RevenueOrderTotal struct {
+	Revenue   float64
+	CheckedAt time.Time
+}
+
 type ProbeResult struct {
 	HTTPStatus     int
 	Latency        time.Duration

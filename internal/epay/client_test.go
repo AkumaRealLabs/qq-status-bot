@@ -19,7 +19,7 @@ func TestSummaryReadsMerchantBalanceOnly(t *testing.T) {
 	defer ts.Close()
 
 	out := (Client{HTTP: ts.Client()}).MerchantBalance(t.Context(), Config{BaseURL: ts.URL, PID: "1000", Key: "secret"})
-	if out.MerchantBalance != 44.33 || out.Error != "" {
+	if out.Balance != 44.33 || out.Error != "" {
 		t.Fatalf("summary = %+v", out)
 	}
 }

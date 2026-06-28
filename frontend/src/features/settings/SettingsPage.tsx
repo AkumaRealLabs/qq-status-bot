@@ -104,7 +104,7 @@ export function SettingsPage() {
       <Card className="w-full max-w-2xl bg-card">
         <CardHeader>
           <CardTitle>易支付 v1</CardTitle>
-          <CardDescription>商户余额页只读取易支付商户余额</CardDescription>
+          <CardDescription>用于收入页的易支付配置</CardDescription>
         </CardHeader>
         <CardContent className="grid min-w-0 gap-4">
           <Field label="Base URL">

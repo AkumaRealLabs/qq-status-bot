@@ -220,6 +220,60 @@ func TestMigrateAddsEpaySettingsColumns(t *testing.T) {
 	}
 }
 
+func TestMigrateCreatesDefaultRevenueCard(t *testing.T) {
+	s := testStore(t)
+	cards, err := s.ListRevenueCards(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards) != 1 || cards[0].Name != "今日收入" || cards[0].SourceType != "epay_total" || !cards[0].Enabled {
+		t.Fatalf("cards = %+v", cards)
+	}
+}
+
+func TestRevenueCardCRUDAndSort(t *testing.T) {
+	s := testStore(t)
+	defaults, err := s.ListRevenueCards(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := s.CreateRevenueCard(t.Context(), domain.RevenueCard{Name: "订单", SourceType: "newapi_orders", UpstreamID: "u1", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.SortOrder != 2 {
+		t.Fatalf("sort_order = %d, want 2", card.SortOrder)
+	}
+	card.Name = "订单收入"
+	card.Enabled = false
+	if _, err := s.UpdateRevenueCard(t.Context(), card); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.RevenueCard(t.Context(), card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "订单收入" || got.Enabled {
+		t.Fatalf("card = %+v", got)
+	}
+	if err := s.UpdateRevenueCardOrder(t.Context(), []string{card.ID, defaults[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ListRevenueCards(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].ID != card.ID || rows[1].ID != defaults[0].ID {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if err := s.UpdateRevenueCardOrder(t.Context(), []string{"missing"}); err == nil {
+		t.Fatal("missing revenue card id should fail")
+	}
+	if err := s.DeleteRevenueCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBalanceRechargeLogs(t *testing.T) {
 	s := testStore(t)
 	if err := s.Migrate(t.Context()); err != nil {
@@ -419,5 +473,24 @@ func TestExportImportData(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("imported keys = %d", n)
+	}
+}
+
+func TestImportOldDataCreatesDefaultRevenueCard(t *testing.T) {
+	dst := testStore(t)
+	if err := dst.ImportData(t.Context(), ExportData{
+		Version: "1",
+		Tables: map[string][]RowMap{
+			"settings": {{"id": "default", "check_interval_minutes": 5, "probe_model": domain.ProbeModel, "site_name": "AI 上游监控"}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cards, err := dst.ListRevenueCards(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards) != 1 || cards[0].SourceType != "epay_total" {
+		t.Fatalf("cards = %+v", cards)
 	}
 }

@@ -66,13 +66,20 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/monitor/status", s.auth(s.monitorStatus))
 	mux.HandleFunc("GET /api/monitor/balances", s.auth(s.balances))
 	mux.HandleFunc("POST /api/monitor/balances/refresh", s.auth(s.refreshBalances))
-	mux.HandleFunc("GET /api/merchant-balance", s.auth(s.merchantBalance))
+	mux.HandleFunc("GET /api/revenue/today", s.auth(s.todayRevenue))
+	mux.HandleFunc("GET /api/revenue/cards", s.auth(s.listRevenueCards))
+	mux.HandleFunc("POST /api/revenue/cards", s.auth(s.createRevenueCard))
+	mux.HandleFunc("POST /api/revenue/cards/order", s.auth(s.sortRevenueCards))
+	mux.HandleFunc("PATCH /api/revenue/cards/{id}", s.auth(s.updateRevenueCard))
+	mux.HandleFunc("DELETE /api/revenue/cards/{id}", s.auth(s.deleteRevenueCard))
 	mux.HandleFunc("/browser/", s.auth(s.proxyBrowser))
 	mux.HandleFunc("/websockify", s.auth(s.proxyBrowser))
 	mux.HandleFunc("GET /admin", redirectTo("/admin/status"))
+	mux.HandleFunc("GET /admin/merchant-balance", redirectTo("/admin/revenue"))
 	mux.HandleFunc("GET /status", redirectTo("/admin/status"))
 	mux.HandleFunc("GET /balances", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /merchant-balance", redirectTo("/admin/merchant-balance"))
+	mux.HandleFunc("GET /revenue", redirectTo("/admin/revenue"))
+	mux.HandleFunc("GET /merchant-balance", redirectTo("/admin/revenue"))
 	mux.HandleFunc("GET /upstreams", redirectTo("/admin/upstreams"))
 	mux.HandleFunc("GET /settings", redirectTo("/admin/settings"))
 	mux.Handle("/", s.static())
@@ -374,9 +381,83 @@ func (s *Server) refreshBalances(w http.ResponseWriter, r *http.Request) {
 	writeNoContentOrError(w, s.App.RefreshBalances(r.Context()))
 }
 
-func (s *Server) merchantBalance(w http.ResponseWriter, r *http.Request) {
-	out, err := s.App.MerchantBalance(r.Context())
+func (s *Server) todayRevenue(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.TodayRevenue(r.Context())
 	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) listRevenueCards(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.ListRevenueCards(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) createRevenueCard(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name       string `json:"name"`
+		SourceType string `json:"source_type"`
+		UpstreamID string `json:"upstream_id"`
+		Enabled    *bool  `json:"enabled"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	enabled := true
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
+	card, err := s.App.SaveRevenueCard(r.Context(), "", domain.RevenueCard{
+		Name: body.Name, SourceType: body.SourceType, UpstreamID: body.UpstreamID, Enabled: enabled,
+	})
+	writeJSONOrError(w, card, err)
+}
+
+func (s *Server) updateRevenueCard(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name       string `json:"name"`
+		SourceType string `json:"source_type"`
+		UpstreamID string `json:"upstream_id"`
+		Enabled    *bool  `json:"enabled"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	old, err := s.App.Store.RevenueCard(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	enabled := old.Enabled
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
+	name, sourceType, upstreamID := body.Name, body.SourceType, body.UpstreamID
+	if name == "" {
+		name = old.Name
+	}
+	if sourceType == "" {
+		sourceType = old.SourceType
+	}
+	if upstreamID == "" && sourceType == old.SourceType {
+		upstreamID = old.UpstreamID
+	}
+	card, err := s.App.SaveRevenueCard(r.Context(), r.PathValue("id"), domain.RevenueCard{
+		Name: name, SourceType: sourceType, UpstreamID: upstreamID, Enabled: enabled,
+	})
+	writeJSONOrError(w, card, err)
+}
+
+func (s *Server) deleteRevenueCard(w http.ResponseWriter, r *http.Request) {
+	writeNoContentOrError(w, s.App.Store.DeleteRevenueCard(r.Context(), r.PathValue("id")))
+}
+
+func (s *Server) sortRevenueCards(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	writeNoContentOrError(w, s.App.SortRevenueCards(r.Context(), body.IDs))
 }
 
 func (s *Server) browserLogin(w http.ResponseWriter, r *http.Request) {
@@ -446,7 +527,7 @@ func writeJSONOrError(w http.ResponseWriter, out any, err error) {
 
 func statusError(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "required") || strings.Contains(msg, "already") || strings.Contains(msg, "must") || strings.Contains(msg, "belong")
+	return strings.Contains(msg, "required") || strings.Contains(msg, "already") || strings.Contains(msg, "must") || strings.Contains(msg, "belong") || strings.Contains(msg, "match")
 }
 
 func writeNoContentOrError(w http.ResponseWriter, err error) {

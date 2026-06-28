@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"ai-upstream-monitor/internal/domain"
 )
 
 type Config struct {
@@ -25,8 +23,14 @@ type Client struct {
 	HTTP *http.Client
 }
 
-func (c Client) MerchantBalance(ctx context.Context, cfg Config) domain.MerchantBalanceSummary {
-	out := domain.MerchantBalanceSummary{CheckedAt: time.Now().UTC()}
+type BalanceResult struct {
+	Balance   float64
+	CheckedAt time.Time
+	Error     string
+}
+
+func (c Client) MerchantBalance(ctx context.Context, cfg Config) BalanceResult {
+	out := BalanceResult{CheckedAt: time.Now().UTC()}
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	cfg.PID = strings.TrimSpace(cfg.PID)
 	cfg.Key = strings.TrimSpace(cfg.Key)
@@ -37,7 +41,7 @@ func (c Client) MerchantBalance(ctx context.Context, cfg Config) domain.Merchant
 	if balance, err := c.balance(ctx, cfg); err != nil {
 		out.Error = err.Error()
 	} else {
-		out.MerchantBalance = balance
+		out.Balance = balance
 	}
 	return out
 }

@@ -70,6 +70,144 @@ func TestEffectiveRatioUsesBalanceRate(t *testing.T) {
 	}
 }
 
+func TestTodayRevenueMapsEpayBalance(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.Path != "/api.php" || q.Get("act") != "query" || q.Get("pid") != "1000" || q.Get("key") != "secret" {
+			t.Fatalf("bad epay request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "money": "88.66"})
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := st.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.EpayBaseURL = ts.URL
+	cfg.EpayPID = "1000"
+	cfg.EpayKey = "secret"
+	if _, err := st.UpdateSettings(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	out, err := svc.TodayRevenue(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].SourceType != "epay_total" || out[0].Revenue != 88.66 {
+		t.Fatalf("revenue = %+v", out)
+	}
+}
+
+func TestTodayRevenueReturnsIndependentCardRows(t *testing.T) {
+	now := todayStart().Add(time.Hour).Format(time.RFC3339)
+	old := todayStart().Add(-time.Second).Format(time.RFC3339)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api.php":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "money": "88.66"})
+		case "/api/user/topup/self":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": []map[string]any{
+				{"amount": 12.5, "status": "success", "created_at": now},
+				{"amount": 99, "status": "pending", "created_at": now},
+				{"amount": 100, "status": "success", "created_at": old},
+			}}})
+		case "/api/v1/payment/orders":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"orders": []map[string]any{
+				{"amount": 7.25, "status": "COMPLETED", "created_at": now},
+			}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := st.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.EpayBaseURL = ts.URL
+	cfg.EpayPID = "1000"
+	cfg.EpayKey = "secret"
+	if _, err := st.UpdateSettings(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	newapi, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "N", Type: "newapi", BaseURL: ts.URL, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub2api, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "S", Type: "sub2api", BaseURL: ts.URL, Enabled: true, Sub2APIAccessToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "N 订单", SourceType: "newapi_orders", UpstreamID: newapi.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "S 订单", SourceType: "sub2api_orders", UpstreamID: sub2api.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := svc.TodayRevenue(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	amounts := map[string]float64{}
+	for _, row := range rows {
+		amounts[row.SourceType] = row.Revenue
+	}
+	if amounts["epay_total"] != 88.66 || amounts["newapi_orders"] != 12.5 || amounts["sub2api_orders"] != 7.25 {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestSaveRevenueCardValidatesTypeAndUpstream(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "bad", SourceType: "newapi_orders", Enabled: true}); err == nil {
+		t.Fatal("missing upstream should fail")
+	}
+	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "S", Type: "sub2api", BaseURL: "https://s.example.test", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{Name: "bad", SourceType: "newapi_orders", UpstreamID: u.ID, Enabled: true}); err == nil {
+		t.Fatal("mismatched upstream should fail")
+	}
+	card, err := svc.SaveRevenueCard(t.Context(), "", domain.RevenueCard{SourceType: "epay_total", UpstreamID: u.ID, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.Name != "今日收入" || card.UpstreamID != "" {
+		t.Fatalf("card = %+v", card)
+	}
+}
+
 func TestMonitorStatusCountsProbeStatuses(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
 	if err != nil {

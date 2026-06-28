@@ -149,14 +149,31 @@ export type SettingsData = {
 
 export type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>
 
-export type TabID = 'status' | 'balances' | 'merchant_balance' | 'upstreams' | 'settings'
+export type TabID = 'status' | 'balances' | 'revenue' | 'upstreams' | 'settings'
 
 export type NavTab = { id: TabID; label: string; short: string; icon: ElementType }
 
-export type MerchantBalanceSummary = {
-  merchant_balance: number
-  checked_at: string
+export type RevenueCard = {
+  id: string
+  name: string
+  source_type: 'epay_total' | 'newapi_orders' | 'sub2api_orders'
+  upstream_id?: string
+  upstream_name?: string
+  enabled: boolean
+  sort_order: number
+}
+
+export type RevenueRow = RevenueCard & {
+  revenue: number
+  checked_at?: string
   error?: string
+}
+
+export type RevenueCardForm = {
+  name: string
+  source_type: RevenueCard['source_type']
+  upstream_id: string
+  enabled: boolean
 }
 
 export type CardForm = {

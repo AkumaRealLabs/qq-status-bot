@@ -148,10 +148,23 @@ type Settings struct {
 	EpayKey              string `json:"epay_key"`
 }
 
-type MerchantBalanceSummary struct {
-	MerchantBalance float64   `json:"merchant_balance"`
-	CheckedAt       time.Time `json:"checked_at"`
-	Error           string    `json:"error,omitempty"`
+type RevenueCard struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	SourceType   string    `json:"source_type"`
+	UpstreamID   string    `json:"upstream_id,omitempty"`
+	UpstreamName string    `json:"upstream_name,omitempty"`
+	Enabled      bool      `json:"enabled"`
+	SortOrder    int       `json:"sort_order"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type RevenueRow struct {
+	RevenueCard
+	Revenue   float64   `json:"revenue"`
+	CheckedAt time.Time `json:"checked_at"`
+	Error     string    `json:"error,omitempty"`
 }
 
 type User struct {
