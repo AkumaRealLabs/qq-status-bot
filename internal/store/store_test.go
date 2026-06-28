@@ -231,6 +231,99 @@ func TestMigrateCreatesDefaultRevenueCard(t *testing.T) {
 	}
 }
 
+func TestTGMigrateAndCRUD(t *testing.T) {
+	s := testStore(t)
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := s.SaveTGSession(t.Context(), domain.TGSession{APIID: 12345, APIHash: "hash", Phone: "+100", CodeHash: "code", SessionBlob: []byte("session")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotSess, err := s.TGSession(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ID != "default" || gotSess.APIID != 12345 || string(gotSess.SessionBlob) != "session" {
+		t.Fatalf("session = %+v", gotSess)
+	}
+	gotSess.Authorized = true
+	gotSess.SessionBlob = nil
+	if _, err := s.SaveTGSession(t.Context(), gotSess); err != nil {
+		t.Fatal(err)
+	}
+	gotSess, err = s.TGSession(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotSess.SessionBlob) != "session" {
+		t.Fatalf("session blob was not preserved: %+v", gotSess)
+	}
+
+	ch, err := s.CreateTGChannel(t.Context(), domain.TGChannel{DisplayName: "频道", Identifier: "@demo", Username: "demo", PeerID: 100, AccessHash: 200, Enabled: true, MessageLimit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.Enabled = false
+	ch.MessageLimit = 20
+	if _, err := s.UpdateTGChannel(t.Context(), ch); err != nil {
+		t.Fatal(err)
+	}
+	channels, err := s.ListTGChannels(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(channels) != 1 || channels[0].Enabled || channels[0].MessageLimit != 20 {
+		t.Fatalf("channels = %+v", channels)
+	}
+	if _, err := s.CreateTGChannel(t.Context(), domain.TGChannel{DisplayName: "频道新名", Identifier: "@demo", Username: "demo", PeerID: 100, AccessHash: 300, Enabled: true, MessageLimit: 10}); err != nil {
+		t.Fatal(err)
+	}
+	channels, err = s.ListTGChannels(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(channels) != 1 || channels[0].Enabled || channels[0].MessageLimit != 20 || channels[0].AccessHash != 300 {
+		t.Fatalf("upsert should preserve user config and refresh peer data: %+v", channels)
+	}
+}
+
+func TestTGMessagesSortedByChannelAndTime(t *testing.T) {
+	s := testStore(t)
+	ch1, err := s.CreateTGChannel(t.Context(), domain.TGChannel{DisplayName: "A", PeerID: 1, AccessHash: 10, Enabled: true, MessageLimit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch2, err := s.CreateTGChannel(t.Context(), domain.TGChannel{DisplayName: "B", PeerID: 2, AccessHash: 20, Enabled: true, MessageLimit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, msg := range []domain.TGMessage{
+		{ChannelID: ch1.ID, RemoteID: 1, PublishedAt: now.Add(-time.Hour), Text: "old"},
+		{ChannelID: ch1.ID, RemoteID: 2, PublishedAt: now, Text: "new"},
+		{ChannelID: ch2.ID, RemoteID: 3, PublishedAt: now.Add(time.Minute), Text: "other"},
+	} {
+		if _, err := s.SaveTGMessage(t.Context(), msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := s.TGMessages(t.Context(), ch1.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].RemoteID != 2 || rows[1].RemoteID != 1 || rows[0].ChannelName != "A" {
+		t.Fatalf("rows = %+v", rows)
+	}
+	all, err := s.TGMessages(t.Context(), "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || all[0].ChannelID != ch2.ID || all[1].RemoteID != 2 {
+		t.Fatalf("all = %+v", all)
+	}
+}
+
 func TestRevenueCardCRUDAndSort(t *testing.T) {
 	s := testStore(t)
 	defaults, err := s.ListRevenueCards(t.Context())

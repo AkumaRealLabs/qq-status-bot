@@ -12,6 +12,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,6 +75,18 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/revenue/cards/order", s.auth(s.sortRevenueCards))
 	mux.HandleFunc("PATCH /api/revenue/cards/{id}", s.auth(s.updateRevenueCard))
 	mux.HandleFunc("DELETE /api/revenue/cards/{id}", s.auth(s.deleteRevenueCard))
+	mux.HandleFunc("GET /api/tg/session/status", s.auth(s.tgSessionStatus))
+	mux.HandleFunc("POST /api/tg/session/start", s.auth(s.startTGSession))
+	mux.HandleFunc("POST /api/tg/session/verify", s.auth(s.verifyTGSession))
+	mux.HandleFunc("POST /api/tg/session/password", s.auth(s.tgSessionPassword))
+	mux.HandleFunc("GET /api/tg/channels", s.auth(s.listTGChannels))
+	mux.HandleFunc("POST /api/tg/channels", s.auth(s.createTGChannel))
+	mux.HandleFunc("PATCH /api/tg/channels/{id}", s.auth(s.updateTGChannel))
+	mux.HandleFunc("DELETE /api/tg/channels/{id}", s.auth(s.deleteTGChannel))
+	mux.HandleFunc("POST /api/tg/channels/sync", s.auth(s.syncTGChannels))
+	mux.HandleFunc("GET /api/tg/messages", s.auth(s.listTGMessages))
+	mux.HandleFunc("POST /api/tg/messages/refresh", s.auth(s.refreshTGMessages))
+	mux.HandleFunc("GET /api/tg/media/{name}", s.auth(s.tgMedia))
 	mux.HandleFunc("/browser/", s.auth(s.proxyBrowser))
 	mux.HandleFunc("/websockify", s.auth(s.proxyBrowser))
 	mux.HandleFunc("GET /admin", redirectTo("/admin/status"))
@@ -81,6 +95,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /balances", redirectTo("/admin/balances"))
 	mux.HandleFunc("GET /revenue", redirectTo("/admin/revenue"))
 	mux.HandleFunc("GET /merchant-balance", redirectTo("/admin/revenue"))
+	mux.HandleFunc("GET /messages", redirectTo("/admin/messages"))
 	mux.HandleFunc("GET /upstreams", redirectTo("/admin/upstreams"))
 	mux.HandleFunc("GET /settings", redirectTo("/admin/settings"))
 	mux.Handle("/", s.static())
@@ -489,6 +504,136 @@ func (s *Server) sortRevenueCards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeNoContentOrError(w, s.App.SortRevenueCards(r.Context(), body.IDs))
+}
+
+func (s *Server) tgSessionStatus(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.TGSessionStatus(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) startTGSession(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		APIID   int    `json:"api_id"`
+		APIHash string `json:"api_hash"`
+		Phone   string `json:"phone"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	out, err := s.App.StartTGSession(r.Context(), body.APIID, body.APIHash, body.Phone)
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) verifyTGSession(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Code string `json:"code"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	out, err := s.App.VerifyTGSession(r.Context(), body.Code)
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) tgSessionPassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Password string `json:"password"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	out, err := s.App.TGSessionPassword(r.Context(), body.Password)
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) listTGChannels(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.Store.ListTGChannels(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) createTGChannel(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		DisplayName  string `json:"display_name"`
+		Identifier   string `json:"identifier"`
+		Enabled      *bool  `json:"enabled"`
+		MessageLimit int    `json:"message_limit"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	enabled := true
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
+	out, err := s.App.SaveTGChannel(r.Context(), "", domain.TGChannel{
+		DisplayName: body.DisplayName, Identifier: body.Identifier, Enabled: enabled, MessageLimit: body.MessageLimit,
+	})
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) updateTGChannel(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		DisplayName  string `json:"display_name"`
+		Enabled      *bool  `json:"enabled"`
+		MessageLimit int    `json:"message_limit"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	old, err := s.App.Store.TGChannel(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	enabled := old.Enabled
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
+	if body.DisplayName == "" {
+		body.DisplayName = old.DisplayName
+	}
+	if body.MessageLimit == 0 {
+		body.MessageLimit = old.MessageLimit
+	}
+	out, err := s.App.SaveTGChannel(r.Context(), old.ID, domain.TGChannel{
+		DisplayName: body.DisplayName, Identifier: old.Identifier, Username: old.Username, PeerID: old.PeerID, AccessHash: old.AccessHash,
+		Enabled: enabled, MessageLimit: body.MessageLimit,
+	})
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) deleteTGChannel(w http.ResponseWriter, r *http.Request) {
+	writeNoContentOrError(w, s.App.Store.DeleteTGChannel(r.Context(), r.PathValue("id")))
+}
+
+func (s *Server) syncTGChannels(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.SyncTGChannels(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) listTGMessages(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	out, err := s.App.Store.TGMessages(r.Context(), r.URL.Query().Get("channel_id"), limit)
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) refreshTGMessages(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ChannelID string `json:"channel_id"`
+	}
+	if r.Body != nil && r.ContentLength != 0 && !decode(w, r, &body) {
+		return
+	}
+	writeNoContentOrError(w, s.App.RefreshTGMessages(r.Context(), body.ChannelID))
+}
+
+func (s *Server) tgMedia(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" || name != filepath.Base(name) {
+		writeError(w, http.StatusBadRequest, "bad media name")
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(s.App.TGMediaDir, name))
 }
 
 func (s *Server) browserLogin(w http.ResponseWriter, r *http.Request) {

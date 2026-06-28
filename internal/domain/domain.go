@@ -175,6 +175,51 @@ type RevenueRow struct {
 	Error     string    `json:"error,omitempty"`
 }
 
+type TGSession struct {
+	ID             string    `json:"id"`
+	APIID          int       `json:"api_id"`
+	APIHash        string    `json:"api_hash,omitempty"`
+	Phone          string    `json:"phone"`
+	CodeHash       string    `json:"-"`
+	SessionBlob    []byte    `json:"-"`
+	Authorized     bool      `json:"authorized"`
+	PasswordNeeded bool      `json:"password_needed"`
+	LastError      string    `json:"last_error,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type TGChannel struct {
+	ID           string    `json:"id"`
+	DisplayName  string    `json:"display_name"`
+	Identifier   string    `json:"identifier"`
+	Username     string    `json:"username,omitempty"`
+	PeerID       int64     `json:"peer_id"`
+	AccessHash   int64     `json:"access_hash,omitempty"`
+	Enabled      bool      `json:"enabled"`
+	MessageLimit int       `json:"message_limit"`
+	LastSyncAt   time.Time `json:"last_sync_at"`
+	LastError    string    `json:"last_error,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type TGMessage struct {
+	ID          string    `json:"id"`
+	ChannelID   string    `json:"channel_id"`
+	ChannelName string    `json:"channel_name,omitempty"`
+	RemoteID    int       `json:"remote_id"`
+	PublishedAt time.Time `json:"published_at"`
+	Text        string    `json:"text"`
+	MediaType   string    `json:"media_type,omitempty"`
+	MediaPath   string    `json:"media_path,omitempty"`
+	MediaURL    string    `json:"media_url,omitempty"`
+	MediaCached bool      `json:"media_cached"`
+	Link        string    `json:"link,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type User struct {
 	ID           string    `json:"id"`
 	Username     string    `json:"username"`

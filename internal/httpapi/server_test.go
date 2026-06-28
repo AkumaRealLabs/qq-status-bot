@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"ai-upstream-monitor/internal/app"
 	"ai-upstream-monitor/internal/domain"
@@ -235,5 +236,77 @@ func TestRevenueRoutesRequireAuth(t *testing.T) {
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("%s %s status = %d", tc.method, tc.path, resp.StatusCode)
 		}
+	}
+}
+
+func TestTGRoutesRequireAuth(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
+	defer ts.Close()
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/tg/session/status"},
+		{http.MethodPost, "/api/tg/session/start"},
+		{http.MethodGet, "/api/tg/channels"},
+		{http.MethodPost, "/api/tg/messages/refresh"},
+	} {
+		req, _ := http.NewRequest(tc.method, ts.URL+tc.path, strings.NewReader(`{}`))
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s %s status = %d", tc.method, tc.path, resp.StatusCode)
+		}
+	}
+}
+
+func TestTGSessionStatusAPI(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveTGSession(t.Context(), domain.TGSession{APIID: 123, APIHash: "hash", Phone: "+100", Authorized: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUser(t.Context(), "admin", "hash"); err != nil {
+		t.Fatal(err)
+	}
+	user, err := st.UserByUsername(t.Context(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := st.CreateSession(t.Context(), user.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/tg/session/status", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	rr := httptest.NewRecorder()
+	(&Server{App: app.New(st)}).auth((&Server{App: app.New(st)}).tgSessionStatus)(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out["authorized"] != true || out["configured"] != true || out["phone"] != "+100" {
+		t.Fatalf("out = %#v", out)
 	}
 }

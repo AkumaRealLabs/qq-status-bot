@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, BarChart3, Database, ExternalLink, Loader2, LogOut, Settings, WalletCards } from 'lucide-react'
+import { Activity, BarChart3, Database, ExternalLink, Loader2, LogOut, MessageSquare, Settings, WalletCards } from 'lucide-react'
 import { BrandIcon, MobileTabs, NavItem, ShellLoading } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { LoginPage, SetupPage } from '@/features/auth/AuthPages'
 import { BalancesPage } from '@/features/balances/BalancesPage'
+import { MessagesPage } from '@/features/messages/MessagesPage'
 import { RevenuePage } from '@/features/revenue/RevenuePage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { AdminStatusPage, PublicStatusPage } from '@/features/status/StatusPage'
@@ -17,6 +18,7 @@ const tabs: NavTab[] = [
   { id: 'status', label: '状态监控', short: '状态', icon: Activity },
   { id: 'balances', label: '余额监控', short: '余额', icon: WalletCards },
   { id: 'revenue', label: '今日收入', short: '收入', icon: BarChart3 },
+  { id: 'messages', label: '最新消息', short: '消息', icon: MessageSquare },
   { id: 'upstreams', label: '上游管理', short: '上游', icon: Database },
   { id: 'settings', label: '设置', short: '设置', icon: Settings },
 ]
@@ -25,6 +27,7 @@ const tabPaths: Record<TabID, string> = {
   status: '/admin/status',
   balances: '/admin/balances',
   revenue: '/admin/revenue',
+  messages: '/admin/messages',
   upstreams: '/admin/upstreams',
   settings: '/admin/settings',
 }
@@ -154,6 +157,7 @@ export default function App() {
           {tab === 'status' && <AdminStatusPage />}
           {tab === 'balances' && <BalancesPage />}
           {tab === 'revenue' && <RevenuePage />}
+          {tab === 'messages' && <MessagesPage />}
           {tab === 'upstreams' && <UpstreamsPage />}
           {tab === 'settings' && <SettingsPage />}
         </main>

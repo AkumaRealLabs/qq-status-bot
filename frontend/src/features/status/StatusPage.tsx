@@ -126,7 +126,7 @@ export function AdminStatusPage() {
           ) : (
             cards.length > 0 && <Button variant="outline" size="sm" onClick={() => { setDraftCards(cards); setLayoutEditing(true) }}>修改布局</Button>
           )}
-          <CardDialog rows={upstreams.data ?? []} />
+          <CardDialog rows={upstreams.data ?? []} cards={cards} />
         </div>
       }
     >
@@ -137,12 +137,12 @@ export function AdminStatusPage() {
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={shownCards.map((card) => card.id)} strategy={rectSortingStrategy}>
               <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {shownCards.map((card) => <SortableStatusCard key={card.id} card={card} windowValue={windowValue} rows={upstreams.data ?? []} sorting={sortCards.isPending} />)}
+                {shownCards.map((card) => <SortableStatusCard key={card.id} card={card} windowValue={windowValue} rows={upstreams.data ?? []} cards={cards} sorting={sortCards.isPending} />)}
               </div>
             </SortableContext>
           </DndContext>
         ) : (
-          <StatusCardGroups cards={shownCards} render={(card) => <StatusMonitorCard key={card.id} card={card} windowValue={windowValue} rows={upstreams.data ?? []} />} />
+          <StatusCardGroups cards={shownCards} render={(card) => <StatusMonitorCard key={card.id} card={card} windowValue={windowValue} rows={upstreams.data ?? []} cards={cards} />} />
         )
       )}
       {!q.isLoading && cards.length === 0 && <EmptyPanel text="暂无卡片" />}
@@ -188,11 +188,13 @@ function SortableStatusCard({
   card,
   windowValue,
   rows,
+  cards,
   sorting,
 }: {
   card: ModelCard
   windowValue: string
   rows: UpstreamRow[]
+  cards: ModelCard[]
   sorting: boolean
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id })
@@ -206,6 +208,7 @@ function SortableStatusCard({
         card={card}
         windowValue={windowValue}
         rows={rows}
+        cards={cards}
         dragHandle={
           <Button
             variant="outline"
@@ -229,12 +232,14 @@ function StatusMonitorCard({
   card,
   windowValue,
   rows = [],
+  cards = [],
   publicView,
   dragHandle,
 }: {
   card: ModelCard | PublicModelCard
   windowValue: string
   rows?: UpstreamRow[]
+  cards?: ModelCard[]
   publicView?: boolean
   dragHandle?: ReactNode
 }) {
@@ -279,7 +284,7 @@ function StatusMonitorCard({
             {!publicView && editableCard && (
               <div className="flex flex-wrap justify-end gap-1.5">
                 {dragHandle}
-                <CardDialog rows={rows} card={editableCard} />
+                <CardDialog rows={rows} cards={cards} card={editableCard} />
                 <Button variant="outline" size="icon" onClick={() => check.mutate()} disabled={check.isPending} title="检查">
                   {check.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCcw className="size-3" />}
                   <span className="sr-only">检查</span>
@@ -339,11 +344,13 @@ function StatusMonitorCard({
   )
 }
 
-function CardDialog({ rows, card }: { rows: UpstreamRow[]; card?: ModelCard }) {
+function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCard[]; card?: ModelCard }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<CardForm>(() => cardToForm(card))
   const keys = keysOf(rows.find((row) => row.upstream.id === form.upstream_id))
+  const displayGroups = existingDisplayGroups(cards)
+  const displayGroupListID = card ? `display-groups-${card.id}` : 'display-groups-new'
   const save = useMutation({
     mutationFn: () =>
       api(card ? `/api/cards/${card.id}` : '/api/cards', {
@@ -404,7 +411,12 @@ function CardDialog({ rows, card }: { rows: UpstreamRow[]; card?: ModelCard }) {
             </Select>
           </Field>
           <Field label="展示分组">
-            <Input value={form.display_group} placeholder="留空归到其他" onChange={(e) => update({ display_group: e.target.value })} />
+            <Input list={displayGroupListID} value={form.display_group} placeholder="留空归到其他" onChange={(e) => update({ display_group: e.target.value })} />
+            {displayGroups.length > 0 && (
+              <datalist id={displayGroupListID}>
+                {displayGroups.map((group) => <option key={group} value={group} />)}
+              </datalist>
+            )}
           </Field>
           {form.source === 'custom' ? (
             <>
@@ -614,6 +626,10 @@ function groupCards<T extends ModelCard | PublicModelCard>(cards: T[]) {
     group.cards.push(card)
   }
   return groups
+}
+
+function existingDisplayGroups(cards: ModelCard[]) {
+  return Array.from(new Set(cards.map((card) => card.display_group.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
 }
 
 function cardDisplayGroup(card: ModelCard | PublicModelCard) {

@@ -150,7 +150,7 @@ export type SettingsData = {
 
 export type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>
 
-export type TabID = 'status' | 'balances' | 'revenue' | 'upstreams' | 'settings'
+export type TabID = 'status' | 'balances' | 'revenue' | 'messages' | 'upstreams' | 'settings'
 
 export type NavTab = { id: TabID; label: string; short: string; icon: ElementType }
 
@@ -194,6 +194,49 @@ export type RevenueCardForm = {
   epay_pid: string
   epay_key: string
   enabled: boolean
+}
+
+export type TGSessionStatus = {
+  configured: boolean
+  authorized: boolean
+  phone?: string
+  api_id?: number
+  password_needed: boolean
+  last_error?: string
+}
+
+export type TGChannel = {
+  id: string
+  display_name: string
+  identifier: string
+  username?: string
+  peer_id: number
+  access_hash?: number
+  enabled: boolean
+  message_limit: number
+  last_sync_at?: string
+  last_error?: string
+}
+
+export type TGMessage = {
+  id: string
+  channel_id: string
+  channel_name?: string
+  remote_id: number
+  published_at: string
+  text: string
+  media_type?: string
+  media_url?: string
+  media_cached: boolean
+  link?: string
+}
+
+export type TGLoginForm = {
+  api_id: string
+  api_hash: string
+  phone: string
+  code: string
+  password: string
 }
 
 export type CardForm = {

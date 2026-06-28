@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,8 @@ import (
 	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/monitor"
 	"ai-upstream-monitor/internal/store"
+
+	"github.com/gotd/td/tg"
 )
 
 func TestSetupOnlyOnce(t *testing.T) {
@@ -249,6 +252,49 @@ func TestSaveRevenueCardValidatesCardCredentials(t *testing.T) {
 	}
 	if card.Name != "今日收入" || card.UpstreamID != "" || card.BaseURL != "https://pay.example.test" {
 		t.Fatalf("card = %+v", card)
+	}
+}
+
+func TestTGMediaDownloadFailureKeepsMessageData(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	parent := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(parent, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc.TGMediaDir = filepath.Join(parent, "media")
+	ch, err := st.CreateTGChannel(t.Context(), domain.TGChannel{DisplayName: "频道", PeerID: 1, AccessHash: 2, Enabled: true, MessageLimit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := &tg.Message{
+		ID:      7,
+		Date:    int(time.Now().Unix()),
+		Message: "text",
+		Media: &tg.MessageMediaPhoto{Photo: &tg.Photo{
+			ID: 1, AccessHash: 2, Sizes: []tg.PhotoSizeClass{&tg.PhotoSize{Type: "m", W: 10, H: 10}},
+		}},
+	}
+	typ, path, url, cached := svc.cacheTGMedia(t.Context(), nil, ch.ID, msg)
+	if typ != "photo" || path != "" || url != "" || cached {
+		t.Fatalf("media = %q %q %q %v", typ, path, url, cached)
+	}
+	if _, err := st.SaveTGMessage(t.Context(), domain.TGMessage{ChannelID: ch.ID, RemoteID: msg.ID, PublishedAt: time.Now(), Text: msg.Message, MediaType: typ, MediaCached: cached}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.TGMessages(t.Context(), ch.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Text != "text" || rows[0].MediaType != "photo" || rows[0].MediaCached {
+		t.Fatalf("rows = %+v", rows)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,15 +23,22 @@ import (
 )
 
 type Service struct {
-	Store   *store.Store
-	Client  monitor.Client
-	mu      sync.Mutex
-	running bool
-	lastRun time.Time
+	Store      *store.Store
+	Client     monitor.Client
+	TGMediaDir string
+	mu         sync.Mutex
+	running    bool
+	lastRun    time.Time
+	tgRunning  bool
+	tgLastRun  time.Time
 }
 
 func New(st *store.Store) *Service {
-	return &Service{Store: st, Client: monitor.Client{HTTP: &http.Client{Timeout: 45 * time.Second}}}
+	mediaDir := os.Getenv("TG_MEDIA_DIR")
+	if mediaDir == "" {
+		mediaDir = "/app/data/tg_media"
+	}
+	return &Service{Store: st, Client: monitor.Client{HTTP: &http.Client{Timeout: 45 * time.Second}}, TGMediaDir: mediaDir}
 }
 
 func (s *Service) StartScheduler(ctx context.Context) {
@@ -43,6 +51,7 @@ func (s *Service) StartScheduler(ctx context.Context) {
 				return
 			case <-t.C:
 				_ = s.CheckDue(context.Background())
+				_ = s.RefreshTGMessagesDue(context.Background())
 			}
 		}
 	}()
