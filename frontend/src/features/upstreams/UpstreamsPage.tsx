@@ -211,13 +211,13 @@ export function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
         <DialogTitle>余额充值 · {upstream.name}</DialogTitle>
         {caps.isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />探测充值能力...</div>}
         <FormError error={caps.error || createOrder.error || redeem.error} />
-        {unavailable && <EmptyPanel text="该站点未开放余额充值或兑换码" />}
+        {unavailable && <EmptyPanel text="该站点未开放在线充值、兑换码兑换或购买地址" />}
         {caps.data?.external_url && (
           <div className="rounded-sm border border-border bg-secondary/50 p-3">
-            <Button asChild variant="outline" size="sm">
+            <Button asChild size="sm">
               <a href={caps.data.external_url} target="_blank" rel="noreferrer">
                 <ExternalLink className="size-4" />
-                打开上游充值页
+                打开兑换码购买地址
               </a>
             </Button>
           </div>

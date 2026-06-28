@@ -122,7 +122,9 @@ func TestRechargeCapabilitiesHideUnavailableMethods(t *testing.T) {
 		case "/newapi/api/user/topup/info":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 				"enable_redemption":            true,
+				"enable_online_topup":          false,
 				"payment_compliance_confirmed": false,
+				"topup_link":                   "https://example.com/redeem",
 			}})
 		case "/sub2api/api/v1/payment/config":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"enabled": true}})
@@ -143,7 +145,7 @@ func TestRechargeCapabilitiesHideUnavailableMethods(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if newapiCaps.RedeemEnabled {
+	if newapiCaps.OnlineEnabled || newapiCaps.RedeemEnabled || newapiCaps.ExternalURL != "https://example.com/redeem" {
 		t.Fatalf("newapi caps = %+v", newapiCaps)
 	}
 
