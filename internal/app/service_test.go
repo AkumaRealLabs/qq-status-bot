@@ -182,6 +182,48 @@ func TestTodayRevenueReturnsIndependentCardRows(t *testing.T) {
 	}
 }
 
+func TestRevenueCardOrdersReturnsEpayOrders(t *testing.T) {
+	now := todayStart().Add(time.Hour).Format("2006-01-02 15:04:05")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.Path != "/api.php" || q.Get("act") != "orders" || q.Get("pid") != "1000" || q.Get("key") != "secret" {
+			t.Fatalf("bad epay request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "data": []map[string]any{
+			{"trade_no": "E-1", "money": "12.34", "type": "alipay", "status": "1", "endtime": now},
+		}})
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cards, err := st.ListRevenueCards(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cards[0].BaseURL = ts.URL
+	cards[0].EpayPID = "1000"
+	cards[0].EpayKey = "secret"
+	if _, err := st.UpdateRevenueCard(t.Context(), cards[0]); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	orders, err := svc.RevenueCardOrders(t.Context(), cards[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orders) != 1 || orders[0].RemoteID != "E-1" || orders[0].Amount != 12.34 || orders[0].PaymentType != "alipay" {
+		t.Fatalf("orders = %+v", orders)
+	}
+}
+
 func TestSaveRevenueCardValidatesCardCredentials(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
 	if err != nil {

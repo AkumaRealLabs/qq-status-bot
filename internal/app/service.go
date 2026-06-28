@@ -858,8 +858,26 @@ func (s *Service) RevenueCardOrders(ctx context.Context, id string) ([]monitor.R
 	if err != nil {
 		return nil, err
 	}
-	if !card.Enabled || card.SourceType == "epay_total" {
+	if !card.Enabled {
 		return []monitor.RevenueOrder{}, nil
+	}
+	if card.SourceType == "epay_total" {
+		cfg, err := s.Store.Settings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		orders, err := (epay.Client{HTTP: s.Client.HTTP}).TodayOrders(ctx, epay.Config{BaseURL: firstNonEmpty(card.BaseURL, cfg.EpayBaseURL), PID: firstNonEmpty(card.EpayPID, cfg.EpayPID), Key: firstNonEmpty(card.EpayKey, cfg.EpayKey)}, todayStart())
+		out := make([]monitor.RevenueOrder, 0, len(orders))
+		for _, order := range orders {
+			out = append(out, monitor.RevenueOrder{
+				RemoteID:    order.RemoteID,
+				Amount:      order.Amount,
+				Status:      order.Status,
+				PaymentType: order.PaymentType,
+				PaidAt:      order.PaidAt,
+			})
+		}
+		return out, err
 	}
 	mu, upstreamID, err := s.revenueMonitorUpstream(ctx, card)
 	if err != nil {

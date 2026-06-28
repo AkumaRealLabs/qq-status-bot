@@ -186,7 +186,7 @@ function RevenueOrdersDialog({ row, open, setOpen }: { row: RevenueRow; open: bo
   const q = useQuery({
     queryKey: ['revenue', 'orders', row.id],
     queryFn: () => api<RevenueOrder[]>(`/api/revenue/cards/${row.id}/orders`),
-    enabled: open && row.enabled && row.source_type !== 'epay_total',
+    enabled: open && row.enabled,
   })
   const orders = q.data ?? []
   const total = orders.reduce((sum, order) => sum + order.amount, 0)
@@ -194,9 +194,7 @@ function RevenueOrdersDialog({ row, open, setOpen }: { row: RevenueRow; open: bo
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-[860px]">
         <DialogTitle>{row.name}</DialogTitle>
-        {row.source_type === 'epay_total' ? (
-          <div className="rounded-sm border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">总收入卡片来自易支付余额，不提供订单明细</div>
-        ) : !row.enabled ? (
+        {!row.enabled ? (
           <div className="rounded-sm border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">卡片已停用</div>
         ) : (
           <>
