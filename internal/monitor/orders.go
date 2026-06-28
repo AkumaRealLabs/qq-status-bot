@@ -12,59 +12,68 @@ import (
 const revenueOrderPageSize = 50
 
 func (c Client) TodayOrderRevenue(ctx context.Context, u *Upstream, start time.Time) (RevenueOrderTotal, error) {
+	out := RevenueOrderTotal{CheckedAt: time.Now().UTC()}
+	orders, err := c.TodayRevenueOrders(ctx, u, start)
+	for _, order := range orders {
+		out.Revenue += order.Amount
+	}
+	return out, err
+}
+
+func (c Client) TodayRevenueOrders(ctx context.Context, u *Upstream, start time.Time) ([]RevenueOrder, error) {
 	switch u.Type {
 	case "newapi":
-		return c.newapiTodayOrderRevenue(ctx, u, start)
+		return c.newapiTodayRevenueOrders(ctx, u, start)
 	case "sub2api":
 		if strings.TrimSpace(u.AdminAPIKey) != "" {
-			return c.sub2apiAdminTodayOrderRevenue(ctx, u, start)
+			return c.sub2apiAdminTodayRevenueOrders(ctx, u, start)
 		}
 		if u.Sub2APIAccessToken == "" && u.Sub2APIRefreshToken == "" && (u.Email == "" || u.Password == "") {
-			return RevenueOrderTotal{}, fmt.Errorf("sub2api 收入卡片需要配置管理员 API Key")
+			return nil, fmt.Errorf("sub2api 收入卡片需要配置管理员 API Key")
 		}
-		return c.sub2apiUserTodayOrderRevenue(ctx, u, start)
+		return c.sub2apiUserTodayRevenueOrders(ctx, u, start)
 	default:
-		return RevenueOrderTotal{}, fmt.Errorf("unsupported upstream type %q", u.Type)
+		return nil, fmt.Errorf("unsupported upstream type %q", u.Type)
 	}
 }
 
-func (c Client) newapiTodayOrderRevenue(ctx context.Context, u *Upstream, start time.Time) (RevenueOrderTotal, error) {
-	return c.sumTodayOrders(start, func(page int, raw *map[string]any) error {
+func (c Client) newapiTodayRevenueOrders(ctx context.Context, u *Upstream, start time.Time) ([]RevenueOrder, error) {
+	return c.collectTodayOrders(start, func(page int, raw *map[string]any) error {
 		path := fmt.Sprintf("/api/user/topup/self?p=%d&page_size=%d", page, revenueOrderPageSize)
 		return c.doJSON(ctx, http.MethodGet, joinURL(u.BaseURL, path), nil, newapiHeaders(u), raw)
 	})
 }
 
-func (c Client) sub2apiAdminTodayOrderRevenue(ctx context.Context, u *Upstream, start time.Time) (RevenueOrderTotal, error) {
-	return c.sumTodayOrders(start, func(page int, raw *map[string]any) error {
+func (c Client) sub2apiAdminTodayRevenueOrders(ctx context.Context, u *Upstream, start time.Time) ([]RevenueOrder, error) {
+	return c.collectTodayOrders(start, func(page int, raw *map[string]any) error {
 		path := fmt.Sprintf("/api/v1/admin/payment/orders?page=%d&page_size=%d", page, revenueOrderPageSize)
 		return c.doJSON(ctx, http.MethodGet, joinURL(u.BaseURL, path), nil, map[string]string{"x-api-key": strings.TrimSpace(u.AdminAPIKey)}, raw)
 	})
 }
 
-func (c Client) sub2apiUserTodayOrderRevenue(ctx context.Context, u *Upstream, start time.Time) (RevenueOrderTotal, error) {
+func (c Client) sub2apiUserTodayRevenueOrders(ctx context.Context, u *Upstream, start time.Time) ([]RevenueOrder, error) {
 	if err := c.sub2apiAuth(ctx, u); err != nil {
-		return RevenueOrderTotal{}, err
+		return nil, err
 	}
-	out, err := c.sub2apiUserTodayOrderRevenueWithToken(ctx, u, start)
+	out, err := c.sub2apiUserTodayRevenueOrdersWithToken(ctx, u, start)
 	if IsAuthError(err) {
 		if err = c.sub2apiForceAuth(ctx, u); err != nil {
 			return out, err
 		}
-		out, err = c.sub2apiUserTodayOrderRevenueWithToken(ctx, u, start)
+		out, err = c.sub2apiUserTodayRevenueOrdersWithToken(ctx, u, start)
 	}
 	return out, err
 }
 
-func (c Client) sub2apiUserTodayOrderRevenueWithToken(ctx context.Context, u *Upstream, start time.Time) (RevenueOrderTotal, error) {
-	return c.sumTodayOrders(start, func(page int, raw *map[string]any) error {
+func (c Client) sub2apiUserTodayRevenueOrdersWithToken(ctx context.Context, u *Upstream, start time.Time) ([]RevenueOrder, error) {
+	return c.collectTodayOrders(start, func(page int, raw *map[string]any) error {
 		path := fmt.Sprintf("/api/v1/payment/orders?limit=%d&page=%d", revenueOrderPageSize, page)
 		return markAuth(c.doJSON(ctx, http.MethodGet, joinURL(u.BaseURL, path), nil, bearer(u.Sub2APIAccessToken), raw))
 	})
 }
 
-func (c Client) sumTodayOrders(start time.Time, fetch func(page int, raw *map[string]any) error) (RevenueOrderTotal, error) {
-	out := RevenueOrderTotal{CheckedAt: time.Now().UTC()}
+func (c Client) collectTodayOrders(start time.Time, fetch func(page int, raw *map[string]any) error) ([]RevenueOrder, error) {
+	var out []RevenueOrder
 	for page := 1; page <= 20; page++ {
 		var raw map[string]any
 		if err := fetch(page, &raw); err != nil {
@@ -87,7 +96,7 @@ func (c Client) sumTodayOrders(start time.Time, fetch func(page int, raw *map[st
 			if !ok || !successfulOrder(row) {
 				continue
 			}
-			out.Revenue += orderAmount(row)
+			out = append(out, revenueOrderFromRow(row, at))
 		}
 		if stop {
 			return out, nil
@@ -136,6 +145,16 @@ func successfulOrder(row map[string]any) bool {
 
 func orderAmount(row map[string]any) float64 {
 	return num(first(row, "money", "total_amount", "pay_amount", "actual_amount", "price", "value", "topup_amount", "amount"))
+}
+
+func revenueOrderFromRow(row map[string]any, at time.Time) RevenueOrder {
+	return RevenueOrder{
+		RemoteID:    str(first(row, "trade_no", "out_trade_no", "order_id", "orderId", "remote_order_id", "payment_trade_no", "id")),
+		Amount:      orderAmount(row),
+		Status:      str(first(row, "status", "state", "trade_status", "payment_status")),
+		PaymentType: str(first(row, "payment_type", "payment_method", "payment_provider", "provider_payment_type", "order_type")),
+		PaidAt:      at,
+	}
 }
 
 func orderTime(row map[string]any) (time.Time, bool) {

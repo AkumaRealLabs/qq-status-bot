@@ -853,6 +853,25 @@ func (s *Service) TodayRevenue(ctx context.Context) ([]domain.RevenueRow, error)
 	return out, nil
 }
 
+func (s *Service) RevenueCardOrders(ctx context.Context, id string) ([]monitor.RevenueOrder, error) {
+	card, err := s.Store.RevenueCard(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !card.Enabled || card.SourceType == "epay_total" {
+		return []monitor.RevenueOrder{}, nil
+	}
+	mu, upstreamID, err := s.revenueMonitorUpstream(ctx, card)
+	if err != nil {
+		return nil, err
+	}
+	orders, err := s.Client.TodayRevenueOrders(ctx, &mu, todayStart())
+	if upstreamID != "" {
+		_ = s.Store.SaveUpstreamTokens(ctx, upstreamID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken)
+	}
+	return orders, err
+}
+
 func (s *Service) SortRevenueCards(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return errors.New("ids are required")

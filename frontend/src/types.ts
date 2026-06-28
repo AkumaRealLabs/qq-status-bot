@@ -175,6 +175,14 @@ export type RevenueRow = RevenueCard & {
   error?: string
 }
 
+export type RevenueOrder = {
+  remote_id: string
+  amount: number
+  status: string
+  payment_type?: string
+  paid_at: string
+}
+
 export type RevenueCardForm = {
   name: string
   source_type: RevenueCard['source_type']

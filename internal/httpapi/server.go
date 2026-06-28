@@ -68,6 +68,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/monitor/balances/refresh", s.auth(s.refreshBalances))
 	mux.HandleFunc("GET /api/revenue/today", s.auth(s.todayRevenue))
 	mux.HandleFunc("GET /api/revenue/cards", s.auth(s.listRevenueCards))
+	mux.HandleFunc("GET /api/revenue/cards/{id}/orders", s.auth(s.revenueCardOrders))
 	mux.HandleFunc("POST /api/revenue/cards", s.auth(s.createRevenueCard))
 	mux.HandleFunc("POST /api/revenue/cards/order", s.auth(s.sortRevenueCards))
 	mux.HandleFunc("PATCH /api/revenue/cards/{id}", s.auth(s.updateRevenueCard))
@@ -388,6 +389,11 @@ func (s *Server) todayRevenue(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listRevenueCards(w http.ResponseWriter, r *http.Request) {
 	out, err := s.App.ListRevenueCards(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) revenueCardOrders(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.RevenueCardOrders(r.Context(), r.PathValue("id"))
 	writeJSONOrError(w, out, err)
 }
 

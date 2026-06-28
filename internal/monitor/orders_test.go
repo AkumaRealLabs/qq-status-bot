@@ -46,6 +46,29 @@ func TestTodayOrderRevenueNewapiPaginatesAndStopsAtOlderOrder(t *testing.T) {
 	}
 }
 
+func TestTodayRevenueOrdersReturnsDetails(t *testing.T) {
+	start := time.Now().Add(-time.Hour)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/user/topup/self" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": []map[string]any{
+			{"trade_no": "N-1", "amount": 10000, "money": 10.5, "payment_method": "stripe", "status": "success", "complete_time": time.Now().Unix()},
+			{"trade_no": "N-2", "money": 99, "status": "pending", "complete_time": time.Now().Unix()},
+		}}})
+	}))
+	defer ts.Close()
+
+	orders, err := (Client{HTTP: ts.Client()}).TodayRevenueOrders(t.Context(), &Upstream{Type: "newapi", BaseURL: ts.URL}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orders) != 1 || orders[0].RemoteID != "N-1" || orders[0].Amount != 10.5 || orders[0].PaymentType != "stripe" {
+		t.Fatalf("orders = %+v", orders)
+	}
+}
+
 func TestTodayOrderRevenueSub2apiCountsCompletedOrders(t *testing.T) {
 	start := time.Now().Add(-time.Hour)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

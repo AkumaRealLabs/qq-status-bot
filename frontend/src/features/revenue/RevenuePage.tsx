@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api } from '@/lib/api'
 import { errorMessage, fmtTime, num } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { RevenueCard, RevenueCardForm, RevenueRow } from '@/types'
+import type { RevenueCard, RevenueCardForm, RevenueOrder, RevenueRow } from '@/types'
 
 const emptyRevenueForm: RevenueCardForm = {
   name: '',
@@ -136,34 +136,107 @@ function RevenueCardView({
   row: RevenueRow
   dragHandle?: ReactNode
 }) {
+  const [ordersOpen, setOrdersOpen] = useState(false)
   const ok = row.enabled && !row.error
   const badgeText = !row.enabled ? '停用' : row.error ? '异常' : '正常'
   return (
-    <Card className={cn('min-w-0 bg-card', row.error && 'border-destructive/40')}>
-      <CardHeader className="gap-2">
-        <div className="flex min-w-0 items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="truncate">{row.name}</CardTitle>
-            <CardDescription>{sourceLabel(row.source_type)}</CardDescription>
-          </div>
-          <div className="flex shrink-0 flex-col items-end gap-1.5">
-            <StatusBadge ok={ok} okText={badgeText} failText={badgeText} />
-            <div className="flex flex-wrap justify-end gap-1.5">
-              {dragHandle}
-              <RevenueCardDialog card={row} />
+    <>
+      <Card
+        role="button"
+        tabIndex={0}
+        className={cn('min-w-0 cursor-pointer bg-card transition-colors hover:border-primary/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30', row.error && 'border-destructive/40')}
+        onClick={() => setOrdersOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            setOrdersOpen(true)
+          }
+        }}
+      >
+        <CardHeader className="gap-2">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle className="truncate">{row.name}</CardTitle>
+              <CardDescription>{sourceLabel(row.source_type)}</CardDescription>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              <StatusBadge ok={ok} okText={badgeText} failText={badgeText} />
+              <div className="flex flex-wrap justify-end gap-1.5" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                {dragHandle}
+                <RevenueCardDialog card={row} />
+              </div>
             </div>
           </div>
-        </div>
-      </CardHeader>
-      <CardContent className="grid gap-3">
-        <div>
-          <div className="text-sm text-muted-foreground">收入金额</div>
-          <div className="break-words font-display text-3xl font-normal">{row.enabled ? `${num(row.revenue)} 元` : '-'}</div>
-          <div className="mt-1.5 text-xs text-muted-foreground">最后刷新：{displayTime(row.checked_at)}</div>
-        </div>
-        {row.error && <HoverText value={row.error} className="rounded-sm bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive" alwaysTooltip />}
-      </CardContent>
-    </Card>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <div>
+            <div className="text-sm text-muted-foreground">收入金额</div>
+            <div className="break-words font-display text-3xl font-normal">{row.enabled ? `${num(row.revenue)} 元` : '-'}</div>
+            <div className="mt-1.5 text-xs text-muted-foreground">最后刷新：{displayTime(row.checked_at)}</div>
+          </div>
+          {row.error && <HoverText value={row.error} className="rounded-sm bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive" alwaysTooltip />}
+        </CardContent>
+      </Card>
+      <RevenueOrdersDialog row={row} open={ordersOpen} setOpen={setOrdersOpen} />
+    </>
+  )
+}
+
+function RevenueOrdersDialog({ row, open, setOpen }: { row: RevenueRow; open: boolean; setOpen: (open: boolean) => void }) {
+  const q = useQuery({
+    queryKey: ['revenue', 'orders', row.id],
+    queryFn: () => api<RevenueOrder[]>(`/api/revenue/cards/${row.id}/orders`),
+    enabled: open && row.enabled && row.source_type !== 'epay_total',
+  })
+  const orders = q.data ?? []
+  const total = orders.reduce((sum, order) => sum + order.amount, 0)
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent className="max-w-[860px]">
+        <DialogTitle>{row.name}</DialogTitle>
+        {row.source_type === 'epay_total' ? (
+          <div className="rounded-sm border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">总收入卡片来自易支付余额，不提供订单明细</div>
+        ) : !row.enabled ? (
+          <div className="rounded-sm border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">卡片已停用</div>
+        ) : (
+          <>
+            <FormError error={q.error} />
+            <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+              <span>订单数：{orders.length}</span>
+              <span>金额：{num(total)} 元</span>
+            </div>
+            {q.isLoading && <div className="rounded-sm border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">加载中...</div>}
+            {!q.isLoading && !q.isError && orders.length === 0 && <div className="rounded-sm border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">暂无今日成功订单</div>}
+            {!q.isLoading && !q.isError && orders.length > 0 && (
+              <div className="overflow-x-auto rounded-sm border border-border">
+                <table className="w-full min-w-[640px] text-left text-sm">
+                  <thead className="bg-secondary text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">订单号</th>
+                      <th className="px-3 py-2 font-medium">金额</th>
+                      <th className="px-3 py-2 font-medium">方式</th>
+                      <th className="px-3 py-2 font-medium">状态</th>
+                      <th className="px-3 py-2 font-medium">完成时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders.map((order, index) => (
+                      <tr key={`${order.remote_id}-${index}`} className="border-t border-border">
+                        <td className="max-w-64 truncate px-3 py-2 font-mono text-xs">{order.remote_id || '-'}</td>
+                        <td className="px-3 py-2">{num(order.amount)} 元</td>
+                        <td className="px-3 py-2">{order.payment_type || '-'}</td>
+                        <td className="px-3 py-2">{order.status || '-'}</td>
+                        <td className="px-3 py-2">{displayTime(order.paid_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }
 

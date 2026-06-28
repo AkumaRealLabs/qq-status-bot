@@ -79,6 +79,14 @@ type RevenueOrderTotal struct {
 	CheckedAt time.Time
 }
 
+type RevenueOrder struct {
+	RemoteID    string    `json:"remote_id"`
+	Amount      float64   `json:"amount"`
+	Status      string    `json:"status"`
+	PaymentType string    `json:"payment_type,omitempty"`
+	PaidAt      time.Time `json:"paid_at"`
+}
+
 type ProbeResult struct {
 	HTTPStatus     int
 	Latency        time.Duration

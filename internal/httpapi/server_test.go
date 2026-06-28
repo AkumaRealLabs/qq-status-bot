@@ -193,6 +193,7 @@ func TestRevenueRoutesRequireAuth(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/revenue/today"},
 		{http.MethodGet, "/api/revenue/cards"},
+		{http.MethodGet, "/api/revenue/cards/card-id/orders"},
 		{http.MethodPost, "/api/revenue/cards"},
 		{http.MethodPost, "/api/revenue/cards/order"},
 	} {
