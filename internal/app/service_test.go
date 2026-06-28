@@ -73,19 +73,13 @@ func TestEffectiveRatioUsesBalanceRate(t *testing.T) {
 	}
 }
 
-func TestTodayRevenueSumsEpayTodayOrders(t *testing.T) {
-	now := todayStart().Add(time.Hour).Format("2006-01-02 15:04:05")
-	old := todayStart().Add(-time.Second).Format("2006-01-02 15:04:05")
+func TestTodayRevenueMapsEpayBalance(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if r.URL.Path != "/api.php" || q.Get("act") != "orders" || q.Get("pid") != "1000" || q.Get("key") != "secret" {
+		if r.URL.Path != "/api.php" || q.Get("act") != "query" || q.Get("pid") != "1000" || q.Get("key") != "secret" {
 			t.Fatalf("bad epay request: %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "data": []map[string]any{
-			{"money": "8.50", "status": "1", "endtime": now},
-			{"money": "99.00", "status": "0", "endtime": now},
-			{"money": "100.00", "status": "1", "endtime": old},
-		}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "money": "88.66"})
 	}))
 	defer ts.Close()
 
@@ -113,7 +107,7 @@ func TestTodayRevenueSumsEpayTodayOrders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 1 || out[0].SourceType != "epay_total" || out[0].Revenue != 8.5 {
+	if len(out) != 1 || out[0].SourceType != "epay_total" || out[0].Revenue != 88.66 {
 		t.Fatalf("revenue = %+v", out)
 	}
 }
@@ -128,9 +122,7 @@ func TestTodayRevenueReturnsIndependentCardRows(t *testing.T) {
 			if r.URL.Query().Get("pid") != "1000" || r.URL.Query().Get("key") != "secret" {
 				t.Fatalf("bad epay query: %s", r.URL.RawQuery)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "data": []map[string]any{
-				{"money": "19.75", "status": "1", "endtime": now},
-			}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "money": "88.66"})
 		case "/api/user/topup/self":
 			if r.Header.Get("Authorization") != "new-token" || r.Header.Get("New-Api-User") != "new-user" {
 				t.Fatalf("bad newapi auth: auth=%q user=%q", r.Header.Get("Authorization"), r.Header.Get("New-Api-User"))
@@ -185,7 +177,7 @@ func TestTodayRevenueReturnsIndependentCardRows(t *testing.T) {
 	for _, row := range rows {
 		amounts[row.SourceType] = row.Revenue
 	}
-	if amounts["epay_total"] != 19.75 || amounts["newapi_orders"] != 12.5 || amounts["sub2api_orders"] != 7.25 {
+	if amounts["epay_total"] != 88.66 || amounts["newapi_orders"] != 12.5 || amounts["sub2api_orders"] != 7.25 {
 		t.Fatalf("rows = %+v", rows)
 	}
 	if sub2AdminKey != "admin-secret" {

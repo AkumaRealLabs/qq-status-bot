@@ -835,13 +835,10 @@ func (s *Service) TodayRevenue(ctx context.Context) ([]domain.RevenueRow, error)
 		row.CheckedAt = time.Now().UTC()
 		switch card.SourceType {
 		case "epay_total":
-			orders, err := (epay.Client{HTTP: s.Client.HTTP}).TodayOrders(ctx, epay.Config{BaseURL: firstNonEmpty(card.BaseURL, cfg.EpayBaseURL), PID: firstNonEmpty(card.EpayPID, cfg.EpayPID), Key: firstNonEmpty(card.EpayKey, cfg.EpayKey)}, start)
-			for _, order := range orders {
-				row.Revenue += order.Amount
-			}
-			if err != nil {
+			balance := (epay.Client{HTTP: s.Client.HTTP}).MerchantBalance(ctx, epay.Config{BaseURL: firstNonEmpty(card.BaseURL, cfg.EpayBaseURL), PID: firstNonEmpty(card.EpayPID, cfg.EpayPID), Key: firstNonEmpty(card.EpayKey, cfg.EpayKey)})
+			row.Revenue, row.CheckedAt, row.Error = balance.Balance, balance.CheckedAt, balance.Error
+			if row.Error != "" {
 				row.Revenue = 0
-				row.Error = err.Error()
 			}
 		case "newapi_orders", "sub2api_orders":
 			mu, upstreamID, err := s.revenueMonitorUpstream(ctx, card)
