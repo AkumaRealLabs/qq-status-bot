@@ -85,7 +85,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/tg/channels/{id}", s.auth(s.deleteTGChannel))
 	mux.HandleFunc("POST /api/tg/channels/sync", s.auth(s.syncTGChannels))
 	mux.HandleFunc("GET /api/tg/messages", s.auth(s.listTGMessages))
+	mux.HandleFunc("DELETE /api/tg/messages", s.auth(s.clearTGMessages))
 	mux.HandleFunc("POST /api/tg/messages/refresh", s.auth(s.refreshTGMessages))
+	mux.HandleFunc("DELETE /api/tg/messages/{id}", s.auth(s.deleteTGMessage))
 	mux.HandleFunc("GET /api/tg/media/{name}", s.auth(s.tgMedia))
 	mux.HandleFunc("/browser/", s.auth(s.proxyBrowser))
 	mux.HandleFunc("/websockify", s.auth(s.proxyBrowser))
@@ -557,6 +559,7 @@ func (s *Server) createTGChannel(w http.ResponseWriter, r *http.Request) {
 		Identifier   string `json:"identifier"`
 		Enabled      *bool  `json:"enabled"`
 		MessageLimit int    `json:"message_limit"`
+		PinnedOnly   *bool  `json:"pinned_only"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -565,8 +568,12 @@ func (s *Server) createTGChannel(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled != nil {
 		enabled = *body.Enabled
 	}
+	pinnedOnly := false
+	if body.PinnedOnly != nil {
+		pinnedOnly = *body.PinnedOnly
+	}
 	out, err := s.App.SaveTGChannel(r.Context(), "", domain.TGChannel{
-		DisplayName: body.DisplayName, Identifier: body.Identifier, Enabled: enabled, MessageLimit: body.MessageLimit,
+		DisplayName: body.DisplayName, Identifier: body.Identifier, Enabled: enabled, MessageLimit: body.MessageLimit, PinnedOnly: pinnedOnly,
 	})
 	writeJSONOrError(w, out, err)
 }
@@ -576,6 +583,7 @@ func (s *Server) updateTGChannel(w http.ResponseWriter, r *http.Request) {
 		DisplayName  string `json:"display_name"`
 		Enabled      *bool  `json:"enabled"`
 		MessageLimit int    `json:"message_limit"`
+		PinnedOnly   *bool  `json:"pinned_only"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -595,9 +603,13 @@ func (s *Server) updateTGChannel(w http.ResponseWriter, r *http.Request) {
 	if body.MessageLimit == 0 {
 		body.MessageLimit = old.MessageLimit
 	}
+	pinnedOnly := old.PinnedOnly
+	if body.PinnedOnly != nil {
+		pinnedOnly = *body.PinnedOnly
+	}
 	out, err := s.App.SaveTGChannel(r.Context(), old.ID, domain.TGChannel{
 		DisplayName: body.DisplayName, Identifier: old.Identifier, Username: old.Username, PeerID: old.PeerID, AccessHash: old.AccessHash,
-		Enabled: enabled, MessageLimit: body.MessageLimit,
+		Enabled: enabled, MessageLimit: body.MessageLimit, PinnedOnly: pinnedOnly,
 	})
 	writeJSONOrError(w, out, err)
 }
@@ -625,6 +637,14 @@ func (s *Server) refreshTGMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeNoContentOrError(w, s.App.RefreshTGMessages(r.Context(), body.ChannelID))
+}
+
+func (s *Server) clearTGMessages(w http.ResponseWriter, r *http.Request) {
+	writeNoContentOrError(w, s.App.Store.DeleteAllTGMessages(r.Context()))
+}
+
+func (s *Server) deleteTGMessage(w http.ResponseWriter, r *http.Request) {
+	writeNoContentOrError(w, s.App.Store.DeleteTGMessage(r.Context(), r.PathValue("id")))
 }
 
 func (s *Server) tgMedia(w http.ResponseWriter, r *http.Request) {

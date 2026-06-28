@@ -266,6 +266,7 @@ func TestTGMigrateAndCRUD(t *testing.T) {
 	}
 	ch.Enabled = false
 	ch.MessageLimit = 20
+	ch.PinnedOnly = true
 	if _, err := s.UpdateTGChannel(t.Context(), ch); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +274,7 @@ func TestTGMigrateAndCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(channels) != 1 || channels[0].Enabled || channels[0].MessageLimit != 20 {
+	if len(channels) != 1 || channels[0].Enabled || channels[0].MessageLimit != 20 || !channels[0].PinnedOnly {
 		t.Fatalf("channels = %+v", channels)
 	}
 	if _, err := s.CreateTGChannel(t.Context(), domain.TGChannel{DisplayName: "频道新名", Identifier: "@demo", Username: "demo", PeerID: 100, AccessHash: 300, Enabled: true, MessageLimit: 10}); err != nil {
@@ -283,7 +284,7 @@ func TestTGMigrateAndCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(channels) != 1 || channels[0].Enabled || channels[0].MessageLimit != 20 || channels[0].AccessHash != 300 {
+	if len(channels) != 1 || channels[0].Enabled || channels[0].MessageLimit != 20 || !channels[0].PinnedOnly || channels[0].AccessHash != 300 {
 		t.Fatalf("upsert should preserve user config and refresh peer data: %+v", channels)
 	}
 }
@@ -321,6 +322,17 @@ func TestTGMessagesSortedByChannelAndTime(t *testing.T) {
 	}
 	if len(all) != 2 || all[0].ChannelID != ch2.ID || all[1].RemoteID != 2 {
 		t.Fatalf("all = %+v", all)
+	}
+	ch1.MessageLimit = 1
+	if _, err := s.UpdateTGChannel(t.Context(), ch1); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = s.TGMessages(t.Context(), ch1.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].RemoteID != 2 {
+		t.Fatalf("trimmed rows = %+v", rows)
 	}
 }
 

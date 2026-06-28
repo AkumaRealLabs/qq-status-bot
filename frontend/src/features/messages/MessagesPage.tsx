@@ -16,17 +16,12 @@ const emptyLogin: TGLoginForm = { api_id: '', api_hash: '', phone: '', code: '',
 
 export function MessagesPage() {
   const qc = useQueryClient()
+  const [showChannels, setShowChannels] = useState(false)
   const status = useQuery({ queryKey: ['tg', 'session'], queryFn: () => api<TGSessionStatus>('/api/tg/session/status') })
   const channels = useQuery({ queryKey: ['tg', 'channels'], queryFn: () => api<TGChannel[]>('/api/tg/channels'), enabled: status.data?.authorized })
   const messages = useQuery({ queryKey: ['tg', 'messages'], queryFn: () => api<TGMessage[]>('/api/tg/messages?limit=100'), enabled: status.data?.authorized, refetchInterval: 60000 })
   const refresh = useMutation({
     mutationFn: () => api('/api/tg/messages/refresh', { method: 'POST', body: JSON.stringify({}) }),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['tg'] })
-    },
-  })
-  const sync = useMutation({
-    mutationFn: () => api('/api/tg/channels/sync', { method: 'POST', body: JSON.stringify({}) }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['tg'] })
     },
@@ -39,9 +34,8 @@ export function MessagesPage() {
       actions={
         authed && (
           <div className="flex flex-wrap justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => sync.mutate()} disabled={sync.isPending}>
-              {sync.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
-              同步频道
+            <Button variant="outline" size="sm" onClick={() => setShowChannels((value) => !value)}>
+              {showChannels ? '收起频道管理' : '频道管理'}
             </Button>
             <Button variant="outline" size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
               {refresh.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
@@ -51,12 +45,12 @@ export function MessagesPage() {
         )
       }
     >
-      <FormError error={status.error || refresh.error || sync.error} />
-      <SessionPanel status={status.data} loading={status.isLoading} />
+      <FormError error={status.error || refresh.error} />
+      {(!authed || status.data?.last_error) && <SessionPanel status={status.data} loading={status.isLoading} />}
       {!authed ? <LoginWizard status={status.data} /> : (
         <>
-          <ChannelPanel channels={channels.data ?? []} loading={channels.isLoading} />
           <MessageList messages={messages.data ?? []} channels={channels.data ?? []} loading={messages.isLoading} />
+          {showChannels && <ChannelPanel channels={channels.data ?? []} loading={channels.isLoading} />}
         </>
       )}
     </Page>
@@ -163,6 +157,13 @@ function LoginWizard({ status }: { status?: TGSessionStatus }) {
 function ChannelPanel({ channels, loading }: { channels: TGChannel[]; loading: boolean }) {
   const qc = useQueryClient()
   const [identifier, setIdentifier] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const sync = useMutation({
+    mutationFn: () => api('/api/tg/channels/sync', { method: 'POST', body: JSON.stringify({}) }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['tg'] })
+    },
+  })
   const create = useMutation({
     mutationFn: () => api<TGChannel>('/api/tg/channels', { method: 'POST', body: JSON.stringify({ identifier, message_limit: 10 }) }),
     onSuccess: async () => {
@@ -170,6 +171,24 @@ function ChannelPanel({ channels, loading }: { channels: TGChannel[]; loading: b
       await qc.invalidateQueries({ queryKey: ['tg', 'channels'] })
     },
   })
+  const removeSelected = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map((id) => api(`/api/tg/channels/${id}`, { method: 'DELETE' })))
+    },
+    onSuccess: async () => {
+      setSelected(new Set())
+      await qc.invalidateQueries({ queryKey: ['tg'] })
+    },
+  })
+  const selectedIds = channels.filter((channel) => selected.has(channel.id)).map((channel) => channel.id)
+  const allSelected = channels.length > 0 && selectedIds.length === channels.length
+  const toggleSelected = (id: string, checked: boolean) => setSelected((value) => {
+    const next = new Set(value)
+    if (checked) next.add(id)
+    else next.delete(id)
+    return next
+  })
+  const setAllSelected = (checked: boolean) => setSelected(checked ? new Set(channels.map((channel) => channel.id)) : new Set())
   return (
     <Card className="bg-card">
       <CardHeader>
@@ -178,21 +197,60 @@ function ChannelPanel({ channels, loading }: { channels: TGChannel[]; loading: b
             <CardTitle>频道管理</CardTitle>
             <CardDescription>公开频道可手动添加，私密频道用同步频道导入</CardDescription>
           </div>
-          {loading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {loading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+            {channels.length > 0 && (
+              <>
+                <Button variant="outline" size="sm" onClick={() => setAllSelected(!allSelected)}>
+                  {allSelected ? '取消全选' : '全选'}
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => confirmDelete(`选中的 ${selectedIds.length} 个频道`) && removeSelected.mutate(selectedIds)}
+                  disabled={removeSelected.isPending || selectedIds.length === 0}
+                >
+                  {removeSelected.isPending ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                  删除选中
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => confirmDelete('全部频道') && removeSelected.mutate(channels.map((channel) => channel.id))}
+                  disabled={removeSelected.isPending}
+                >
+                  清空全部
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <FormError error={create.error} />
+        <FormError error={create.error || sync.error} />
         <div className="grid gap-2 md:grid-cols-[1fr_auto]">
           <Input value={identifier} placeholder="@channel 或 https://t.me/channel" onChange={(e) => setIdentifier(e.target.value)} />
-          <Button onClick={() => create.mutate()} disabled={create.isPending || !identifier.trim()}>
-            {create.isPending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            新增频道
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => create.mutate()} disabled={create.isPending || !identifier.trim()}>
+              {create.isPending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+              新增频道
+            </Button>
+            <Button variant="outline" onClick={() => sync.mutate()} disabled={sync.isPending}>
+              {sync.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
+              同步频道
+            </Button>
+          </div>
         </div>
         {channels.length === 0 ? <EmptyPanel text="暂无频道" /> : (
-          <div className="grid gap-2">
-            {channels.map((channel) => <ChannelRow key={channel.id} channel={channel} />)}
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {channels.map((channel) => (
+              <ChannelCard
+                key={channel.id}
+                channel={channel}
+                selected={selected.has(channel.id)}
+                onSelectedChange={(checked) => toggleSelected(channel.id, checked)}
+              />
+            ))}
           </div>
         )}
       </CardContent>
@@ -200,7 +258,7 @@ function ChannelPanel({ channels, loading }: { channels: TGChannel[]; loading: b
   )
 }
 
-function ChannelRow({ channel }: { channel: TGChannel }) {
+function ChannelCard({ channel, selected, onSelectedChange }: { channel: TGChannel; selected: boolean; onSelectedChange: (checked: boolean) => void }) {
   const qc = useQueryClient()
   const [limit, setLimit] = useState(String(channel.message_limit || 10))
   const update = useMutation({
@@ -216,45 +274,129 @@ function ChannelRow({ channel }: { channel: TGChannel }) {
     },
   })
   return (
-    <div className="grid gap-3 rounded-sm border border-border bg-background p-3 md:grid-cols-[1fr_auto] md:items-center">
-      <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="truncate font-medium text-foreground">{channel.display_name}</span>
-          <Badge variant={channel.enabled ? 'success' : 'secondary'}>{channel.enabled ? '启用' : '停用'}</Badge>
-          {channel.last_error && <Badge variant="destructive">异常</Badge>}
+    <Card className="bg-background">
+      <CardContent className="grid gap-3 p-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <input
+            type="checkbox"
+            className="mt-1 size-4 accent-primary"
+            checked={selected}
+            onChange={(event) => onSelectedChange(event.target.checked)}
+            aria-label={`选择 ${channel.display_name}`}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="truncate font-medium text-foreground">{channel.display_name}</span>
+              <Badge variant={channel.enabled ? 'success' : 'secondary'}>{channel.enabled ? '启用' : '停用'}</Badge>
+              {channel.pinned_only && <Badge variant="secondary">只看置顶</Badge>}
+              {channel.last_error && <Badge variant="destructive">异常</Badge>}
+            </div>
+            <div className="mt-1 truncate text-xs text-muted-foreground">{channel.identifier || channel.username || channel.peer_id}</div>
+          </div>
+          <IconAction title="删除" icon={Trash2} onClick={() => confirmDelete(channel.display_name) && remove.mutate()} pending={remove.isPending} danger />
         </div>
-        <div className="mt-1 truncate text-xs text-muted-foreground">{channel.identifier || channel.username || channel.peer_id}</div>
-      </div>
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Input className="h-9 w-20" inputMode="numeric" value={limit} onChange={(e) => setLimit(e.target.value)} onBlur={() => update.mutate({})} />
-        <Select value={channel.enabled ? 'true' : 'false'} onValueChange={(value) => update.mutate({ enabled: value === 'true' })}>
-          <SelectTrigger className="w-24">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="true">启用</SelectItem>
-            <SelectItem value="false">停用</SelectItem>
-          </SelectContent>
-        </Select>
-        <IconAction title="删除" icon={Trash2} onClick={() => confirmDelete(channel.display_name) && remove.mutate()} pending={remove.isPending} danger />
-      </div>
-    </div>
+        <div className="grid gap-2 sm:grid-cols-[80px_1fr_92px]">
+          <Field label="条数">
+            <Input className="h-9" inputMode="numeric" value={limit} onChange={(e) => setLimit(e.target.value)} onBlur={() => update.mutate({})} />
+          </Field>
+          <Field label="内容">
+            <Select value={channel.pinned_only ? 'pinned' : 'all'} onValueChange={(value) => update.mutate({ pinned_only: value === 'pinned' })}>
+              <SelectTrigger className="h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部消息</SelectItem>
+                <SelectItem value="pinned">只看置顶</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="状态">
+            <Select value={channel.enabled ? 'true' : 'false'} onValueChange={(value) => update.mutate({ enabled: value === 'true' })}>
+              <SelectTrigger className="h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="true">启用</SelectItem>
+                <SelectItem value="false">停用</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
 function MessageList({ messages, channels, loading }: { messages: TGMessage[]; channels: TGChannel[]; loading: boolean }) {
+  const qc = useQueryClient()
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const removeSelected = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map((id) => api(`/api/tg/messages/${id}`, { method: 'DELETE' })))
+    },
+    onSuccess: async () => {
+      setSelected(new Set())
+      await qc.invalidateQueries({ queryKey: ['tg', 'messages'] })
+    },
+  })
+  const clearAll = useMutation({
+    mutationFn: () => api('/api/tg/messages', { method: 'DELETE' }),
+    onSuccess: async () => {
+      setSelected(new Set())
+      await qc.invalidateQueries({ queryKey: ['tg', 'messages'] })
+    },
+  })
   const grouped = channels
     .map((channel) => ({ channel, messages: messages.filter((msg) => msg.channel_id === channel.id) }))
     .filter((group) => group.messages.length > 0)
+  const selectedIds = messages.filter((message) => selected.has(message.id)).map((message) => message.id)
+  const allSelected = messages.length > 0 && selectedIds.length === messages.length
+  const toggleSelected = (id: string, checked: boolean) => setSelected((value) => {
+    const next = new Set(value)
+    if (checked) next.add(id)
+    else next.delete(id)
+    return next
+  })
   if (loading) return <EmptyPanel text="加载中..." />
   if (messages.length === 0) return <EmptyPanel text="暂无消息" />
   return (
     <div className="grid gap-4">
+      <FormError error={removeSelected.error || clearAll.error} />
+      <Card className="bg-card">
+        <CardContent className="flex flex-wrap items-center justify-between gap-2 py-3">
+          <div className="text-sm text-muted-foreground">当前显示 {messages.length} 条消息</div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setSelected(allSelected ? new Set() : new Set(messages.map((message) => message.id)))}>
+              {allSelected ? '取消全选' : '全选消息'}
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => confirmDelete(`选中的 ${selectedIds.length} 条消息`) && removeSelected.mutate(selectedIds)}
+              disabled={removeSelected.isPending || selectedIds.length === 0}
+            >
+              {removeSelected.isPending ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              删除选中
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => confirmDelete('全部消息缓存') && clearAll.mutate()}
+              disabled={clearAll.isPending}
+            >
+              {clearAll.isPending && <Loader2 className="size-4 animate-spin" />}
+              清空消息
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
       {grouped.map((group) => (
         <section key={group.channel.id} className="grid gap-2">
           <div className="text-sm font-medium text-foreground">{group.channel.display_name}</div>
           <div className="grid gap-2">
-            {group.messages.map((message) => <MessageItem key={message.id} message={message} />)}
+            {group.messages.map((message) => (
+              <MessageItem key={message.id} message={message} selected={selected.has(message.id)} onSelectedChange={(checked) => toggleSelected(message.id, checked)} />
+            ))}
           </div>
         </section>
       ))}
@@ -262,24 +404,33 @@ function MessageList({ messages, channels, loading }: { messages: TGMessage[]; c
   )
 }
 
-function MessageItem({ message }: { message: TGMessage }) {
+function MessageItem({ message, selected, onSelectedChange }: { message: TGMessage; selected: boolean; onSelectedChange: (checked: boolean) => void }) {
   return (
     <Card className="bg-card">
       <CardContent className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>{displayTime(message.published_at)}</span>
-            {message.media_type && <Badge variant="secondary">{mediaLabel(message.media_type)}</Badge>}
-            {message.media_type && !message.media_cached && <Badge variant="destructive">媒体未缓存</Badge>}
+        <div className="flex min-w-0 gap-3">
+          <input
+            type="checkbox"
+            className="mt-1 size-4 shrink-0 accent-primary"
+            checked={selected}
+            onChange={(event) => onSelectedChange(event.target.checked)}
+            aria-label="选择消息"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>{displayTime(message.published_at)}</span>
+              {message.media_type && <Badge variant="secondary">{mediaLabel(message.media_type)}</Badge>}
+              {message.media_type && !message.media_cached && <Badge variant="destructive">媒体未缓存</Badge>}
+            </div>
+            <HoverText value={message.text || '(无文本)'} className="mt-2 text-sm leading-[1.6]" alwaysTooltip>
+              <div data-hover-text className="line-clamp-4 whitespace-pre-wrap break-words">{message.text || '(无文本)'}</div>
+            </HoverText>
+            {message.link && (
+              <Button asChild variant="outline" size="sm" className="mt-3">
+                <a href={message.link} target="_blank" rel="noreferrer">跳转</a>
+              </Button>
+            )}
           </div>
-          <HoverText value={message.text || '(无文本)'} className="mt-2 text-sm leading-[1.6]" alwaysTooltip>
-            <div data-hover-text className="line-clamp-4 whitespace-pre-wrap break-words">{message.text || '(无文本)'}</div>
-          </HoverText>
-          {message.link && (
-            <Button asChild variant="outline" size="sm" className="mt-3">
-              <a href={message.link} target="_blank" rel="noreferrer">跳转</a>
-            </Button>
-          )}
         </div>
         <MediaPreview message={message} />
       </CardContent>

@@ -148,6 +148,7 @@ func (s *Service) SaveTGChannel(ctx context.Context, id string, in domain.TGChan
 		AccessHash:   in.AccessHash,
 		Enabled:      in.Enabled,
 		MessageLimit: in.MessageLimit,
+		PinnedOnly:   in.PinnedOnly,
 	}
 	if ch.MessageLimit <= 0 {
 		ch.MessageLimit = 10
@@ -192,7 +193,14 @@ func (s *Service) SaveTGChannel(ctx context.Context, id string, in domain.TGChan
 		ch.PeerID, ch.AccessHash = old.PeerID, old.AccessHash
 	}
 	ch.ID, ch.LastSyncAt, ch.LastError, ch.CreatedAt = old.ID, old.LastSyncAt, old.LastError, old.CreatedAt
-	return s.Store.UpdateTGChannel(ctx, ch)
+	ch, err = s.Store.UpdateTGChannel(ctx, ch)
+	if err != nil {
+		return ch, err
+	}
+	if old.PinnedOnly != ch.PinnedOnly {
+		err = s.Store.DeleteTGMessages(ctx, ch.ID)
+	}
+	return ch, err
 }
 
 func (s *Service) SyncTGChannels(ctx context.Context) ([]domain.TGChannel, error) {
@@ -285,18 +293,15 @@ func (s *Service) refreshTGChannel(ctx context.Context, api *tg.Client, client *
 	if limit <= 0 {
 		limit = 10
 	}
-	history, err := api.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
-		Peer:  &tg.InputPeerChannel{ChannelID: ch.PeerID, AccessHash: ch.AccessHash},
-		Limit: limit,
-	})
+	peer := &tg.InputPeerChannel{ChannelID: ch.PeerID, AccessHash: ch.AccessHash}
+	messages, err := tgChannelMessages(ctx, api, peer, limit, ch.PinnedOnly)
 	if err != nil {
 		return err
 	}
-	mod, ok := history.AsModified()
-	if !ok {
-		return nil
+	if err := s.Store.DeleteTGMessages(ctx, ch.ID); err != nil {
+		return err
 	}
-	for _, item := range mod.GetMessages() {
+	for _, item := range messages {
 		msg, ok := item.(*tg.Message)
 		if !ok {
 			continue
@@ -316,6 +321,28 @@ func (s *Service) refreshTGChannel(ctx context.Context, api *tg.Client, client *
 	ch.LastSyncAt, ch.LastError = time.Now().UTC(), ""
 	_, err = s.Store.UpdateTGChannel(ctx, ch)
 	return err
+}
+
+func tgChannelMessages(ctx context.Context, api *tg.Client, peer tg.InputPeerClass, limit int, pinnedOnly bool) ([]tg.MessageClass, error) {
+	if pinnedOnly {
+		res, err := api.MessagesSearch(ctx, &tg.MessagesSearchRequest{Peer: peer, Q: "", Filter: &tg.InputMessagesFilterPinned{}, Limit: limit})
+		if err != nil {
+			return nil, err
+		}
+		return tgMessages(res), nil
+	}
+	res, err := api.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{Peer: peer, Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	return tgMessages(res), nil
+}
+
+func tgMessages(res tg.MessagesMessagesClass) []tg.MessageClass {
+	if mod, ok := res.AsModified(); ok {
+		return mod.GetMessages()
+	}
+	return nil
 }
 
 func (s *Service) withAuthorizedTG(ctx context.Context, fn func(context.Context, *tg.Client, *telegram.Client) error) error {

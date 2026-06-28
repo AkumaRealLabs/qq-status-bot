@@ -153,7 +153,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS tg_channels (
 			id TEXT PRIMARY KEY, display_name TEXT NOT NULL, identifier TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '',
 			peer_id INTEGER NOT NULL DEFAULT 0, access_hash INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,
-			message_limit INTEGER NOT NULL DEFAULT 10, last_sync_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '',
+			message_limit INTEGER NOT NULL DEFAULT 10, pinned_only INTEGER NOT NULL DEFAULT 0, last_sync_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(peer_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS tg_messages (
@@ -228,6 +228,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err := s.addColumnIfMissing(ctx, "revenue_cards", col.name, col.def); err != nil {
 			return err
 		}
+	}
+	if err := s.addColumnIfMissing(ctx, "tg_channels", "pinned_only", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
 	}
 	if _, err := s.exec(ctx, `INSERT INTO settings (id, check_interval_minutes, probe_model) VALUES ('default', 5, ?) ON CONFLICT(id) DO NOTHING`, domain.ProbeModel); err != nil {
 		return err
@@ -909,11 +912,11 @@ func (s *Store) CreateTGChannel(ctx context.Context, c domain.TGChannel) (domain
 	now := time.Now().UTC()
 	c.CreatedAt, c.UpdatedAt = now, now
 	_, err := s.exec(ctx, `INSERT INTO tg_channels
-		(id, display_name, identifier, username, peer_id, access_hash, enabled, message_limit, last_sync_at, last_error, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, display_name, identifier, username, peer_id, access_hash, enabled, message_limit, pinned_only, last_sync_at, last_error, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(peer_id) DO UPDATE SET display_name=excluded.display_name, identifier=excluded.identifier, username=excluded.username,
 			access_hash=excluded.access_hash, updated_at=excluded.updated_at`,
-		c.ID, c.DisplayName, c.Identifier, c.Username, c.PeerID, c.AccessHash, boolInt(c.Enabled), c.MessageLimit,
+		c.ID, c.DisplayName, c.Identifier, c.Username, c.PeerID, c.AccessHash, boolInt(c.Enabled), c.MessageLimit, boolInt(c.PinnedOnly),
 		c.LastSyncAt.Format(time.RFC3339Nano), c.LastError, c.CreatedAt.Format(time.RFC3339Nano), c.UpdatedAt.Format(time.RFC3339Nano))
 	return c, err
 }
@@ -923,10 +926,13 @@ func (s *Store) UpdateTGChannel(ctx context.Context, c domain.TGChannel) (domain
 	if c.MessageLimit <= 0 {
 		c.MessageLimit = 10
 	}
-	_, err := s.exec(ctx, `UPDATE tg_channels SET display_name=?, identifier=?, username=?, peer_id=?, access_hash=?, enabled=?, message_limit=?, last_sync_at=?, last_error=?, updated_at=? WHERE id=?`,
-		c.DisplayName, c.Identifier, c.Username, c.PeerID, c.AccessHash, boolInt(c.Enabled), c.MessageLimit,
+	_, err := s.exec(ctx, `UPDATE tg_channels SET display_name=?, identifier=?, username=?, peer_id=?, access_hash=?, enabled=?, message_limit=?, pinned_only=?, last_sync_at=?, last_error=?, updated_at=? WHERE id=?`,
+		c.DisplayName, c.Identifier, c.Username, c.PeerID, c.AccessHash, boolInt(c.Enabled), c.MessageLimit, boolInt(c.PinnedOnly),
 		c.LastSyncAt.Format(time.RFC3339Nano), c.LastError, c.UpdatedAt.Format(time.RFC3339Nano), c.ID)
-	return c, err
+	if err != nil {
+		return c, err
+	}
+	return c, s.TrimTGMessages(ctx, c.ID, c.MessageLimit)
 }
 
 func (s *Store) DeleteTGChannel(ctx context.Context, id string) error {
@@ -936,6 +942,33 @@ func (s *Store) DeleteTGChannel(ctx context.Context, id string) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) DeleteTGMessages(ctx context.Context, channelID string) error {
+	_, err := s.exec(ctx, `DELETE FROM tg_messages WHERE channel_id=?`, channelID)
+	return err
+}
+
+func (s *Store) DeleteAllTGMessages(ctx context.Context) error {
+	_, err := s.exec(ctx, `DELETE FROM tg_messages`)
+	return err
+}
+
+func (s *Store) DeleteTGMessage(ctx context.Context, id string) error {
+	_, err := s.exec(ctx, `DELETE FROM tg_messages WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) TrimTGMessages(ctx context.Context, channelID string, limit int) error {
+	if limit <= 0 {
+		limit = 10
+	}
+	_, err := s.exec(ctx, `DELETE FROM tg_messages WHERE id IN (
+		SELECT id FROM (
+			SELECT id, ROW_NUMBER() OVER (ORDER BY published_at DESC, remote_id DESC) rn FROM tg_messages WHERE channel_id=?
+		) ranked WHERE rn > ?
+	)`, channelID, limit)
+	return err
 }
 
 func (s *Store) TGChannel(ctx context.Context, id string) (domain.TGChannel, error) {
@@ -961,26 +994,28 @@ func (s *Store) ListTGChannels(ctx context.Context) ([]domain.TGChannel, error) 
 
 func (s *Store) scanTGChannel(row *sql.Row) (domain.TGChannel, error) {
 	var c domain.TGChannel
-	var enabled int
+	var enabled, pinnedOnly int
 	var lastSync, created, updated string
-	err := row.Scan(&c.ID, &c.DisplayName, &c.Identifier, &c.Username, &c.PeerID, &c.AccessHash, &enabled, &c.MessageLimit, &lastSync, &c.LastError, &created, &updated)
+	err := row.Scan(&c.ID, &c.DisplayName, &c.Identifier, &c.Username, &c.PeerID, &c.AccessHash, &enabled, &c.MessageLimit, &pinnedOnly, &lastSync, &c.LastError, &created, &updated)
 	c.Enabled = boolFromInt(enabled)
+	c.PinnedOnly = boolFromInt(pinnedOnly)
 	c.LastSyncAt, c.CreatedAt, c.UpdatedAt = parseTime(lastSync), parseTime(created), parseTime(updated)
 	return c, err
 }
 
 func scanTGChannelRows(rows *sql.Rows) (domain.TGChannel, error) {
 	var c domain.TGChannel
-	var enabled int
+	var enabled, pinnedOnly int
 	var lastSync, created, updated string
-	err := rows.Scan(&c.ID, &c.DisplayName, &c.Identifier, &c.Username, &c.PeerID, &c.AccessHash, &enabled, &c.MessageLimit, &lastSync, &c.LastError, &created, &updated)
+	err := rows.Scan(&c.ID, &c.DisplayName, &c.Identifier, &c.Username, &c.PeerID, &c.AccessHash, &enabled, &c.MessageLimit, &pinnedOnly, &lastSync, &c.LastError, &created, &updated)
 	c.Enabled = boolFromInt(enabled)
+	c.PinnedOnly = boolFromInt(pinnedOnly)
 	c.LastSyncAt, c.CreatedAt, c.UpdatedAt = parseTime(lastSync), parseTime(created), parseTime(updated)
 	return c, err
 }
 
 func tgChannelSelectSQL() string {
-	return `SELECT id, display_name, identifier, username, peer_id, access_hash, enabled, message_limit, last_sync_at, last_error, created_at, updated_at FROM tg_channels`
+	return `SELECT id, display_name, identifier, username, peer_id, access_hash, enabled, message_limit, pinned_only, last_sync_at, last_error, created_at, updated_at FROM tg_channels`
 }
 
 func (s *Store) SaveTGMessage(ctx context.Context, msg domain.TGMessage) (domain.TGMessage, error) {
@@ -1007,14 +1042,16 @@ func (s *Store) TGMessages(ctx context.Context, channelID string, limit int) ([]
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	query := `SELECT m.id, m.channel_id, c.display_name, m.remote_id, m.published_at, m.text, m.media_type, m.media_path, m.media_url, m.media_cached, m.link, m.created_at, m.updated_at
+	query := `SELECT id, channel_id, display_name, remote_id, published_at, text, media_type, media_path, media_url, media_cached, link, created_at, updated_at FROM (
+		SELECT m.id, m.channel_id, c.display_name, m.remote_id, m.published_at, m.text, m.media_type, m.media_path, m.media_url, m.media_cached, m.link, m.created_at, m.updated_at,
+			ROW_NUMBER() OVER (PARTITION BY m.channel_id ORDER BY m.published_at DESC, m.remote_id DESC) rn, c.message_limit
 		FROM tg_messages m JOIN tg_channels c ON c.id=m.channel_id`
 	args := []any{}
 	if channelID != "" {
 		query += ` WHERE m.channel_id=?`
 		args = append(args, channelID)
 	}
-	query += ` ORDER BY m.published_at DESC, m.remote_id DESC LIMIT ?`
+	query += `) ranked WHERE rn <= message_limit ORDER BY published_at DESC, remote_id DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.query(ctx, query, args...)
 	if err != nil {

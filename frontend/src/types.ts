@@ -214,6 +214,7 @@ export type TGChannel = {
   access_hash?: number
   enabled: boolean
   message_limit: number
+  pinned_only: boolean
   last_sync_at?: string
   last_error?: string
 }

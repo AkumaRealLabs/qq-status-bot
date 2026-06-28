@@ -198,6 +198,7 @@ type TGChannel struct {
 	AccessHash   int64     `json:"access_hash,omitempty"`
 	Enabled      bool      `json:"enabled"`
 	MessageLimit int       `json:"message_limit"`
+	PinnedOnly   bool      `json:"pinned_only"`
 	LastSyncAt   time.Time `json:"last_sync_at"`
 	LastError    string    `json:"last_error,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
