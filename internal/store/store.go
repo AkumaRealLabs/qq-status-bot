@@ -151,11 +151,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 			last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS tg_channels (
-			id TEXT PRIMARY KEY, display_name TEXT NOT NULL, identifier TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '',
-			peer_id INTEGER NOT NULL DEFAULT 0, access_hash INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,
-			message_limit INTEGER NOT NULL DEFAULT 10, pinned_only INTEGER NOT NULL DEFAULT 0, last_sync_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(peer_id)
-		)`,
+				id TEXT PRIMARY KEY, display_name TEXT NOT NULL, identifier TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '',
+				peer_id INTEGER NOT NULL DEFAULT 0, access_hash INTEGER NOT NULL DEFAULT 0, avatar_url TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+				message_limit INTEGER NOT NULL DEFAULT 10, pinned_only INTEGER NOT NULL DEFAULT 0, last_sync_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '',
+				created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(peer_id)
+			)`,
 		`CREATE TABLE IF NOT EXISTS tg_messages (
 			id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, remote_id INTEGER NOT NULL, published_at TEXT NOT NULL, text TEXT NOT NULL DEFAULT '',
 			media_type TEXT NOT NULL DEFAULT '', media_path TEXT NOT NULL DEFAULT '', media_url TEXT NOT NULL DEFAULT '', media_cached INTEGER NOT NULL DEFAULT 0,
@@ -230,6 +230,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 	if err := s.addColumnIfMissing(ctx, "tg_channels", "pinned_only", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "tg_channels", "avatar_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if _, err := s.exec(ctx, `INSERT INTO settings (id, check_interval_minutes, probe_model) VALUES ('default', 5, ?) ON CONFLICT(id) DO NOTHING`, domain.ProbeModel); err != nil {
@@ -912,11 +915,13 @@ func (s *Store) CreateTGChannel(ctx context.Context, c domain.TGChannel) (domain
 	now := time.Now().UTC()
 	c.CreatedAt, c.UpdatedAt = now, now
 	_, err := s.exec(ctx, `INSERT INTO tg_channels
-		(id, display_name, identifier, username, peer_id, access_hash, enabled, message_limit, pinned_only, last_sync_at, last_error, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, display_name, identifier, username, peer_id, access_hash, avatar_url, enabled, message_limit, pinned_only, last_sync_at, last_error, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(peer_id) DO UPDATE SET display_name=excluded.display_name, identifier=excluded.identifier, username=excluded.username,
-			access_hash=excluded.access_hash, updated_at=excluded.updated_at`,
-		c.ID, c.DisplayName, c.Identifier, c.Username, c.PeerID, c.AccessHash, boolInt(c.Enabled), c.MessageLimit, boolInt(c.PinnedOnly),
+			access_hash=excluded.access_hash,
+			avatar_url=CASE WHEN excluded.avatar_url <> '' THEN excluded.avatar_url ELSE tg_channels.avatar_url END,
+			updated_at=excluded.updated_at`,
+		c.ID, c.DisplayName, c.Identifier, c.Username, c.PeerID, c.AccessHash, c.AvatarURL, boolInt(c.Enabled), c.MessageLimit, boolInt(c.PinnedOnly),
 		c.LastSyncAt.Format(time.RFC3339Nano), c.LastError, c.CreatedAt.Format(time.RFC3339Nano), c.UpdatedAt.Format(time.RFC3339Nano))
 	return c, err
 }
@@ -926,8 +931,8 @@ func (s *Store) UpdateTGChannel(ctx context.Context, c domain.TGChannel) (domain
 	if c.MessageLimit <= 0 {
 		c.MessageLimit = 10
 	}
-	_, err := s.exec(ctx, `UPDATE tg_channels SET display_name=?, identifier=?, username=?, peer_id=?, access_hash=?, enabled=?, message_limit=?, pinned_only=?, last_sync_at=?, last_error=?, updated_at=? WHERE id=?`,
-		c.DisplayName, c.Identifier, c.Username, c.PeerID, c.AccessHash, boolInt(c.Enabled), c.MessageLimit, boolInt(c.PinnedOnly),
+	_, err := s.exec(ctx, `UPDATE tg_channels SET display_name=?, identifier=?, username=?, peer_id=?, access_hash=?, avatar_url=?, enabled=?, message_limit=?, pinned_only=?, last_sync_at=?, last_error=?, updated_at=? WHERE id=?`,
+		c.DisplayName, c.Identifier, c.Username, c.PeerID, c.AccessHash, c.AvatarURL, boolInt(c.Enabled), c.MessageLimit, boolInt(c.PinnedOnly),
 		c.LastSyncAt.Format(time.RFC3339Nano), c.LastError, c.UpdatedAt.Format(time.RFC3339Nano), c.ID)
 	if err != nil {
 		return c, err
@@ -996,7 +1001,7 @@ func (s *Store) scanTGChannel(row *sql.Row) (domain.TGChannel, error) {
 	var c domain.TGChannel
 	var enabled, pinnedOnly int
 	var lastSync, created, updated string
-	err := row.Scan(&c.ID, &c.DisplayName, &c.Identifier, &c.Username, &c.PeerID, &c.AccessHash, &enabled, &c.MessageLimit, &pinnedOnly, &lastSync, &c.LastError, &created, &updated)
+	err := row.Scan(&c.ID, &c.DisplayName, &c.Identifier, &c.Username, &c.PeerID, &c.AccessHash, &c.AvatarURL, &enabled, &c.MessageLimit, &pinnedOnly, &lastSync, &c.LastError, &created, &updated)
 	c.Enabled = boolFromInt(enabled)
 	c.PinnedOnly = boolFromInt(pinnedOnly)
 	c.LastSyncAt, c.CreatedAt, c.UpdatedAt = parseTime(lastSync), parseTime(created), parseTime(updated)
@@ -1007,7 +1012,7 @@ func scanTGChannelRows(rows *sql.Rows) (domain.TGChannel, error) {
 	var c domain.TGChannel
 	var enabled, pinnedOnly int
 	var lastSync, created, updated string
-	err := rows.Scan(&c.ID, &c.DisplayName, &c.Identifier, &c.Username, &c.PeerID, &c.AccessHash, &enabled, &c.MessageLimit, &pinnedOnly, &lastSync, &c.LastError, &created, &updated)
+	err := rows.Scan(&c.ID, &c.DisplayName, &c.Identifier, &c.Username, &c.PeerID, &c.AccessHash, &c.AvatarURL, &enabled, &c.MessageLimit, &pinnedOnly, &lastSync, &c.LastError, &created, &updated)
 	c.Enabled = boolFromInt(enabled)
 	c.PinnedOnly = boolFromInt(pinnedOnly)
 	c.LastSyncAt, c.CreatedAt, c.UpdatedAt = parseTime(lastSync), parseTime(created), parseTime(updated)
@@ -1015,7 +1020,7 @@ func scanTGChannelRows(rows *sql.Rows) (domain.TGChannel, error) {
 }
 
 func tgChannelSelectSQL() string {
-	return `SELECT id, display_name, identifier, username, peer_id, access_hash, enabled, message_limit, pinned_only, last_sync_at, last_error, created_at, updated_at FROM tg_channels`
+	return `SELECT id, display_name, identifier, username, peer_id, access_hash, avatar_url, enabled, message_limit, pinned_only, last_sync_at, last_error, created_at, updated_at FROM tg_channels`
 }
 
 func (s *Store) SaveTGMessage(ctx context.Context, msg domain.TGMessage) (domain.TGMessage, error) {

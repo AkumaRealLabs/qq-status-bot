@@ -260,7 +260,7 @@ func TestTGMigrateAndCRUD(t *testing.T) {
 		t.Fatalf("session blob was not preserved: %+v", gotSess)
 	}
 
-	ch, err := s.CreateTGChannel(t.Context(), domain.TGChannel{DisplayName: "频道", Identifier: "@demo", Username: "demo", PeerID: 100, AccessHash: 200, Enabled: true, MessageLimit: 10})
+	ch, err := s.CreateTGChannel(t.Context(), domain.TGChannel{DisplayName: "频道", Identifier: "@demo", Username: "demo", PeerID: 100, AccessHash: 200, AvatarURL: "/api/tg/media/avatar_100.jpg", Enabled: true, MessageLimit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestTGMigrateAndCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(channels) != 1 || channels[0].Enabled || channels[0].MessageLimit != 20 || !channels[0].PinnedOnly {
+	if len(channels) != 1 || channels[0].Enabled || channels[0].MessageLimit != 20 || !channels[0].PinnedOnly || channels[0].AvatarURL == "" {
 		t.Fatalf("channels = %+v", channels)
 	}
 	if _, err := s.CreateTGChannel(t.Context(), domain.TGChannel{DisplayName: "频道新名", Identifier: "@demo", Username: "demo", PeerID: 100, AccessHash: 300, Enabled: true, MessageLimit: 10}); err != nil {
@@ -284,7 +284,7 @@ func TestTGMigrateAndCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(channels) != 1 || channels[0].Enabled || channels[0].MessageLimit != 20 || !channels[0].PinnedOnly || channels[0].AccessHash != 300 {
+	if len(channels) != 1 || channels[0].Enabled || channels[0].MessageLimit != 20 || !channels[0].PinnedOnly || channels[0].AccessHash != 300 || channels[0].AvatarURL == "" {
 		t.Fatalf("upsert should preserve user config and refresh peer data: %+v", channels)
 	}
 }

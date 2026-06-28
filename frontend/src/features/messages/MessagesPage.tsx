@@ -330,6 +330,7 @@ function ChannelCard({ channel, selected, onSelectedChange }: { channel: TGChann
 
 function MessageList({ messages, channels, loading }: { messages: TGMessage[]; channels: TGChannel[]; loading: boolean }) {
   const qc = useQueryClient()
+  const [showActions, setShowActions] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const removeSelected = useMutation({
     mutationFn: async (ids: string[]) => {
@@ -347,9 +348,11 @@ function MessageList({ messages, channels, loading }: { messages: TGMessage[]; c
       await qc.invalidateQueries({ queryKey: ['tg', 'messages'] })
     },
   })
-  const grouped = channels
-    .map((channel) => ({ channel, messages: messages.filter((msg) => msg.channel_id === channel.id) }))
-    .filter((group) => group.messages.length > 0)
+  const channelMap = new Map(channels.map((channel) => [channel.id, channel]))
+  const timeline = [...messages].sort((a, b) => {
+    const time = Date.parse(b.published_at || '') - Date.parse(a.published_at || '')
+    return time || b.remote_id - a.remote_id
+  })
   const selectedIds = messages.filter((message) => selected.has(message.id)).map((message) => message.id)
   const allSelected = messages.length > 0 && selectedIds.length === messages.length
   const toggleSelected = (id: string, checked: boolean) => setSelected((value) => {
@@ -363,87 +366,117 @@ function MessageList({ messages, channels, loading }: { messages: TGMessage[]; c
   return (
     <div className="grid gap-4">
       <FormError error={removeSelected.error || clearAll.error} />
-      <Card className="bg-card">
-        <CardContent className="flex flex-wrap items-center justify-between gap-2 py-3">
-          <div className="text-sm text-muted-foreground">当前显示 {messages.length} 条消息</div>
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setSelected(allSelected ? new Set() : new Set(messages.map((message) => message.id)))}>
-              {allSelected ? '取消全选' : '全选消息'}
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => confirmDelete(`选中的 ${selectedIds.length} 条消息`) && removeSelected.mutate(selectedIds)}
-              disabled={removeSelected.isPending || selectedIds.length === 0}
-            >
-              {removeSelected.isPending ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-              删除选中
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => confirmDelete('全部消息缓存') && clearAll.mutate()}
-              disabled={clearAll.isPending}
-            >
-              {clearAll.isPending && <Loader2 className="size-4 animate-spin" />}
-              清空消息
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-      {grouped.map((group) => (
-        <section key={group.channel.id} className="grid gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-sm font-medium text-foreground">{group.channel.display_name}</div>
-            <Badge variant="secondary">{group.messages.length} 条</Badge>
-          </div>
-          <div className="relative grid gap-3 pl-5">
-            <div aria-hidden className="absolute bottom-2 left-1.5 top-2 w-px bg-border" />
-            {group.messages.map((message) => (
-              <MessageItem key={message.id} message={message} selected={selected.has(message.id)} onSelectedChange={(checked) => toggleSelected(message.id, checked)} />
-            ))}
-          </div>
-        </section>
-      ))}
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={() => setShowActions((value) => !value)}>
+          {showActions ? '收起管理' : '管理消息'}
+        </Button>
+      </div>
+      {showActions && (
+        <Card className="bg-card">
+          <CardContent className="flex flex-wrap items-center justify-between gap-2 py-3">
+            <div className="text-sm text-muted-foreground">当前显示 {messages.length} 条消息</div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setSelected(allSelected ? new Set() : new Set(messages.map((message) => message.id)))}>
+                {allSelected ? '取消全选' : '全选消息'}
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => confirmDelete(`选中的 ${selectedIds.length} 条消息`) && removeSelected.mutate(selectedIds)}
+                disabled={removeSelected.isPending || selectedIds.length === 0}
+              >
+                {removeSelected.isPending ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                删除选中
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => confirmDelete('全部消息缓存') && clearAll.mutate()}
+                disabled={clearAll.isPending}
+              >
+                {clearAll.isPending && <Loader2 className="size-4 animate-spin" />}
+                清空消息
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      <div className="relative grid gap-3 pl-5">
+        <div aria-hidden className="absolute bottom-2 left-1.5 top-2 w-px bg-border" />
+        {timeline.map((message) => (
+          <MessageItem
+            key={message.id}
+            message={message}
+            channel={channelMap.get(message.channel_id)}
+            selected={selected.has(message.id)}
+            selectionVisible={showActions}
+            onSelectedChange={(checked) => toggleSelected(message.id, checked)}
+          />
+        ))}
+      </div>
     </div>
   )
 }
 
-function MessageItem({ message, selected, onSelectedChange }: { message: TGMessage; selected: boolean; onSelectedChange: (checked: boolean) => void }) {
+function MessageItem({
+  message,
+  channel,
+  selected,
+  selectionVisible,
+  onSelectedChange,
+}: {
+  message: TGMessage
+  channel?: TGChannel
+  selected: boolean
+  selectionVisible: boolean
+  onSelectedChange: (checked: boolean) => void
+}) {
+  const channelName = message.channel_name || channel?.display_name || 'Telegram'
   return (
     <div className="relative">
-      <div aria-hidden className="absolute -left-5 top-5 size-3 rounded-full border-2 border-background bg-primary" />
-      <Card className={`bg-card ${selected ? 'ring-1 ring-primary' : ''}`}>
-        <CardContent className="grid gap-3 p-3">
+      <div aria-hidden className="absolute -left-5 top-7 size-3 rounded-full border-2 border-background bg-primary" />
+      <Card className={`bg-card transition-colors hover:border-primary/35 ${selected ? 'ring-1 ring-primary' : ''}`}>
+        <CardContent className="grid gap-3 p-3 sm:p-4">
           <div className="flex min-w-0 items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">{displayTime(message.published_at)}</span>
-                {message.media_type && <Badge variant="secondary">{mediaLabel(message.media_type)}</Badge>}
-                {message.media_type && !message.media_cached && <Badge variant="destructive">媒体未缓存</Badge>}
+            <div className="flex min-w-0 items-start gap-3">
+              <ChannelAvatar name={channelName} url={channel?.avatar_url} />
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-foreground">{channelName}</div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span>{displayTime(message.published_at)}</span>
+                  {message.media_type && <Badge variant="secondary">{mediaLabel(message.media_type)}</Badge>}
+                  {message.media_type && !message.media_cached && <Badge variant="destructive">媒体未缓存</Badge>}
+                </div>
               </div>
             </div>
-            <input
-              type="checkbox"
-              className="mt-0.5 size-4 shrink-0 accent-primary"
-              checked={selected}
-              onChange={(event) => onSelectedChange(event.target.checked)}
-              aria-label="选择消息"
-            />
+            {selectionVisible && (
+              <input
+                type="checkbox"
+                className="mt-2 size-4 shrink-0 accent-primary"
+                checked={selected}
+                onChange={(event) => onSelectedChange(event.target.checked)}
+                aria-label="选择消息"
+              />
+            )}
           </div>
-          <HoverText value={message.text || '(无文本)'} className="text-sm leading-[1.6]" alwaysTooltip>
+          <HoverText value={message.text || '(无文本)'} className="text-sm leading-[1.6] text-body" alwaysTooltip>
             <div data-hover-text className="line-clamp-5 whitespace-pre-wrap break-words">{message.text || '(无文本)'}</div>
           </HoverText>
           <MediaPreview message={message} />
-          {message.link && (
-            <div className="flex justify-end">
-              <Button asChild variant="outline" size="sm">
-                <a href={message.link} target="_blank" rel="noreferrer">跳转</a>
-              </Button>
-            </div>
-          )}
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+function ChannelAvatar({ name, url }: { name: string; url?: string }) {
+  const [failed, setFailed] = useState(false)
+  if (url && !failed) {
+    return <img src={url} alt="" className="size-10 shrink-0 rounded-full border border-border bg-background object-cover" onError={() => setFailed(true)} />
+  }
+  return (
+    <div className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-sm font-medium text-primary-foreground">
+      {avatarText(name)}
     </div>
   )
 }
@@ -492,6 +525,10 @@ function mediaLabel(type: string) {
 function displayTime(value?: string) {
   if (!value || value.startsWith('0001-')) return '-'
   return fmtTime(value)
+}
+
+function avatarText(value: string) {
+  return value.trim().replace(/^@/, '').slice(0, 1).toUpperCase() || 'T'
 }
 
 function confirmDelete(name: string) {

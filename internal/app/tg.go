@@ -166,6 +166,7 @@ func (s *Service) SaveTGChannel(ctx context.Context, id string, in domain.TGChan
 				return ch, err
 			}
 			ch.PeerID, ch.AccessHash, ch.Username = resolved.PeerID, resolved.AccessHash, resolved.Username
+			ch.AvatarURL = resolved.AvatarURL
 			if ch.DisplayName == "" {
 				ch.DisplayName = resolved.DisplayName
 			}
@@ -192,6 +193,9 @@ func (s *Service) SaveTGChannel(ctx context.Context, id string, in domain.TGChan
 	if ch.PeerID == 0 {
 		ch.PeerID, ch.AccessHash = old.PeerID, old.AccessHash
 	}
+	if ch.AvatarURL == "" {
+		ch.AvatarURL = old.AvatarURL
+	}
 	ch.ID, ch.LastSyncAt, ch.LastError, ch.CreatedAt = old.ID, old.LastSyncAt, old.LastError, old.CreatedAt
 	ch, err = s.Store.UpdateTGChannel(ctx, ch)
 	if err != nil {
@@ -205,7 +209,7 @@ func (s *Service) SaveTGChannel(ctx context.Context, id string, in domain.TGChan
 
 func (s *Service) SyncTGChannels(ctx context.Context) ([]domain.TGChannel, error) {
 	var out []domain.TGChannel
-	err := s.withAuthorizedTG(ctx, func(ctx context.Context, api *tg.Client, _ *telegram.Client) error {
+	err := s.withAuthorizedTG(ctx, func(ctx context.Context, api *tg.Client, client *telegram.Client) error {
 		dialogs, err := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{OffsetPeer: &tg.InputPeerEmpty{}, Limit: 100})
 		if err != nil {
 			return err
@@ -225,6 +229,7 @@ func (s *Service) SyncTGChannels(ctx context.Context) ([]domain.TGChannel, error
 				Username:     c.Username,
 				PeerID:       c.ID,
 				AccessHash:   c.AccessHash,
+				AvatarURL:    s.cacheTGChannelAvatar(ctx, client, c.ID, c.AccessHash, c.Photo),
 				Enabled:      true,
 				MessageLimit: 10,
 			}
@@ -294,6 +299,9 @@ func (s *Service) refreshTGChannel(ctx context.Context, api *tg.Client, client *
 		limit = 10
 	}
 	peer := &tg.InputPeerChannel{ChannelID: ch.PeerID, AccessHash: ch.AccessHash}
+	if ch.AvatarURL == "" {
+		ch.AvatarURL = s.fetchTGChannelAvatar(ctx, api, client, ch)
+	}
 	messages, err := tgChannelMessages(ctx, api, peer, limit, ch.PinnedOnly)
 	if err != nil {
 		return err
@@ -394,7 +402,7 @@ func (s *Service) resolveTGChannel(ctx context.Context, raw string) (domain.TGCh
 		return domain.TGChannel{}, errors.New("只支持公开频道用户名/链接，私密频道请用同步频道选择")
 	}
 	var out domain.TGChannel
-	err := s.withAuthorizedTG(ctx, func(ctx context.Context, api *tg.Client, _ *telegram.Client) error {
+	err := s.withAuthorizedTG(ctx, func(ctx context.Context, api *tg.Client, client *telegram.Client) error {
 		resolved, err := api.ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{Username: username})
 		if err != nil {
 			return err
@@ -404,7 +412,7 @@ func (s *Service) resolveTGChannel(ctx context.Context, raw string) (domain.TGCh
 			if !ok {
 				continue
 			}
-			out = domain.TGChannel{DisplayName: c.Title, Identifier: "@" + username, Username: username, PeerID: c.ID, AccessHash: c.AccessHash}
+			out = domain.TGChannel{DisplayName: c.Title, Identifier: "@" + username, Username: username, PeerID: c.ID, AccessHash: c.AccessHash, AvatarURL: s.cacheTGChannelAvatar(ctx, client, c.ID, c.AccessHash, c.Photo)}
 			return nil
 		}
 		return errors.New("未找到频道")
@@ -430,6 +438,41 @@ func (s *Service) cacheTGMedia(ctx context.Context, client *telegram.Client, cha
 		return typ, "", "", false
 	}
 	return typ, name, "/api/tg/media/" + name, true
+}
+
+func (s *Service) fetchTGChannelAvatar(ctx context.Context, api *tg.Client, client *telegram.Client, ch domain.TGChannel) string {
+	res, err := api.ChannelsGetChannels(ctx, []tg.InputChannelClass{&tg.InputChannel{ChannelID: ch.PeerID, AccessHash: ch.AccessHash}})
+	if err != nil {
+		return ""
+	}
+	for _, item := range res.GetChats() {
+		c, ok := item.(*tg.Channel)
+		if ok && c.ID == ch.PeerID {
+			return s.cacheTGChannelAvatar(ctx, client, c.ID, ch.AccessHash, c.Photo)
+		}
+	}
+	return ""
+}
+
+func (s *Service) cacheTGChannelAvatar(ctx context.Context, client *telegram.Client, channelID, accessHash int64, photo tg.ChatPhotoClass) string {
+	p, ok := photo.(*tg.ChatPhoto)
+	if !ok || p.PhotoID == 0 || client == nil {
+		return ""
+	}
+	name := fmt.Sprintf("avatar_%d_%d.jpg", channelID, p.PhotoID)
+	if err := os.MkdirAll(s.TGMediaDir, 0o755); err != nil {
+		return ""
+	}
+	path := filepath.Join(s.TGMediaDir, name)
+	if _, err := os.Stat(path); err == nil {
+		return "/api/tg/media/" + name
+	}
+	loc := &tg.InputPeerPhotoFileLocation{Big: false, Peer: &tg.InputPeerChannel{ChannelID: channelID, AccessHash: accessHash}, PhotoID: p.PhotoID}
+	if _, err := client.Download(loc).ToPath(ctx, path); err != nil {
+		_ = os.Remove(path)
+		return ""
+	}
+	return "/api/tg/media/" + name
 }
 
 func tgMediaLocation(msg *tg.Message) (tg.InputFileLocationClass, string, string) {

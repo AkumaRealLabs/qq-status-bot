@@ -609,7 +609,7 @@ func (s *Server) updateTGChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.App.SaveTGChannel(r.Context(), old.ID, domain.TGChannel{
 		DisplayName: body.DisplayName, Identifier: old.Identifier, Username: old.Username, PeerID: old.PeerID, AccessHash: old.AccessHash,
-		Enabled: enabled, MessageLimit: body.MessageLimit, PinnedOnly: pinnedOnly,
+		AvatarURL: old.AvatarURL, Enabled: enabled, MessageLimit: body.MessageLimit, PinnedOnly: pinnedOnly,
 	})
 	writeJSONOrError(w, out, err)
 }

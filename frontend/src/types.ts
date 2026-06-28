@@ -212,6 +212,7 @@ export type TGChannel = {
   username?: string
   peer_id: number
   access_hash?: number
+  avatar_url?: string
   enabled: boolean
   message_limit: number
   pinned_only: boolean

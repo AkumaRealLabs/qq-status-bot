@@ -196,6 +196,7 @@ type TGChannel struct {
 	Username     string    `json:"username,omitempty"`
 	PeerID       int64     `json:"peer_id"`
 	AccessHash   int64     `json:"access_hash,omitempty"`
+	AvatarURL    string    `json:"avatar_url,omitempty"`
 	Enabled      bool      `json:"enabled"`
 	MessageLimit int       `json:"message_limit"`
 	PinnedOnly   bool      `json:"pinned_only"`
