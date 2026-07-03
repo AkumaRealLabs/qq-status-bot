@@ -274,8 +274,14 @@ func (c Client) Probe(ctx context.Context, baseURL, key, model string) ProbeResu
 	start := time.Now()
 	var raw map[string]any
 	err := c.doJSON(ctx, http.MethodPost, joinURL(baseURL, "/v1/responses"), map[string]any{
-		"model":             model,
-		"input":             challenge.Prompt,
+		"model": model,
+		"input": []map[string]any{{
+			"role": "user",
+			"content": []map[string]string{{
+				"type": "input_text",
+				"text": challenge.Prompt,
+			}},
+		}},
 		"max_output_tokens": 16,
 		"stream":            false,
 	}, bearer(key), &raw)

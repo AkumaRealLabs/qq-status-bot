@@ -17,11 +17,29 @@ func TestProbeSendsFixedModelPayload(t *testing.T) {
 		if r.URL.Path != "/v1/responses" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
-		var body map[string]any
+		var body struct {
+			Model string `json:"model"`
+			Input []struct {
+				Role    string `json:"role"`
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"input"`
+			MaxOutputTokens int  `json:"max_output_tokens"`
+			Stream          bool `json:"stream"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		saw = body["model"] == "gpt-5.5" && body["input"] == "Which fruit? banana or car" && body["stream"] == false
+		saw = body.Model == "gpt-5.5" &&
+			len(body.Input) == 1 &&
+			body.Input[0].Role == "user" &&
+			len(body.Input[0].Content) == 1 &&
+			body.Input[0].Content[0].Type == "input_text" &&
+			body.Input[0].Content[0].Text == "Which fruit? banana or car" &&
+			body.MaxOutputTokens == 16 &&
+			!body.Stream
 		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "banana"})
 	}))
 	defer s.Close()
