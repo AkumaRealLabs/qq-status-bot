@@ -370,7 +370,61 @@ func (c Client) doJSON(ctx context.Context, method, rawURL string, body any, hea
 	if out == nil || len(b) == 0 {
 		return nil
 	}
-	return json.Unmarshal(b, out)
+	if strings.HasSuffix(strings.TrimRight(rawURL, "/"), "/v1/responses") && strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		if m, ok := out.(*map[string]any); ok {
+			text := responseTextFromSSE(b)
+			if text == "" {
+				return httpStatusError{Status: resp.StatusCode, Message: strings.TrimSpace(string(b))}
+			}
+			*m = map[string]any{"output_text": text}
+			return nil
+		}
+	}
+	if err := json.Unmarshal(b, out); err != nil {
+		if msg := strings.TrimSpace(string(b)); msg != "" {
+			return httpStatusError{Status: resp.StatusCode, Message: msg}
+		}
+		return err
+	}
+	return nil
+}
+
+func responseTextFromSSE(body []byte) string {
+	var delta strings.Builder
+	final := ""
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(data), &raw); err != nil {
+			continue
+		}
+		if text := str(raw["delta"]); text != "" {
+			delta.WriteString(text)
+		}
+		if text := strings.TrimSpace(str(raw["text"])); text != "" {
+			final = text
+		}
+		if text := strings.TrimSpace(str(obj(raw["part"])["text"])); text != "" {
+			final = text
+		}
+		if text := responseText(obj(raw["item"])); text != "" {
+			final = text
+		}
+		if text := responseText(obj(raw["response"])); text != "" {
+			final = text
+		}
+	}
+	if final != "" {
+		return final
+	}
+	return strings.TrimSpace(delta.String())
 }
 
 type httpStatusError struct {

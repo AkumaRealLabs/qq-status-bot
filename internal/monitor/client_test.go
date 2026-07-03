@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,6 +70,25 @@ func TestProbeExtractsNestedResponseText(t *testing.T) {
 	}
 }
 
+func TestProbeExtractsSSEText(t *testing.T) {
+	old := newChallenge
+	newChallenge = func() challenge { return challenge{Prompt: "Which fruit?", ExpectedAnswer: "banana"} }
+	defer func() { newChallenge = old }()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"banana"}` + "\n\n"))
+		_, _ = w.Write([]byte("event: response.output_text.done\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.output_text.done","text":"banana"}` + "\n\n"))
+	}))
+	defer s.Close()
+
+	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
+	if got.Status != StatusOperational || got.Output != "banana" || !got.Success {
+		t.Fatalf("got=%+v", got)
+	}
+}
+
 func TestProbeClassifiesFailures(t *testing.T) {
 	oldChallenge := newChallenge
 	oldDegraded := degradedAfter
@@ -107,6 +127,18 @@ func TestProbeClassifiesFailures(t *testing.T) {
 		defer s.Close()
 		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
 		if got.Status != StatusFailed || got.HTTPStatus != http.StatusUnauthorized || got.Error == "" {
+			t.Fatalf("got=%+v", got)
+		}
+	})
+
+	t.Run("non json success keeps body", func(t *testing.T) {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("error code: 1010"))
+		}))
+		defer s.Close()
+		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
+		if got.Status != StatusFailed || got.HTTPStatus != http.StatusOK || !strings.Contains(got.Error, "error code: 1010") {
 			t.Fatalf("got=%+v", got)
 		}
 	})
