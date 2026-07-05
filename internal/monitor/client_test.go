@@ -168,6 +168,7 @@ func TestProbeCodexCLIUsesTempConfigAndEnvKey(t *testing.T) {
 	t.Setenv("AUM_FAKE_CODEX_LOG", logPath)
 	fake := fakeCodex(t, `#!/bin/sh
 set -eu
+case " $* " in *" --ask-for-approval "*) echo "bad approval arg" >&2; exit 15;; esac
 config="$CODEX_HOME/config.toml"
 [ "$AUM_CODEX_API_KEY" = "sk-card-secret" ] || { echo "missing card key" >&2; exit 13; }
 grep -q 'base_url = "https://codex.example.test/v1"' "$config" || { cat "$config" >&2; exit 10; }
@@ -199,7 +200,7 @@ printf 'banana\n' > "$out"
 		t.Fatal(err)
 	}
 	logText := string(logBytes)
-	for _, want := range []string{"args:exec", "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "model_provider = \"aum_card\"", "wire_api = \"responses\""} {
+	for _, want := range []string{"args:exec", "approval_policy=\"never\"", "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "model_provider = \"aum_card\"", "wire_api = \"responses\""} {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("fake codex log missing %q:\n%s", want, logText)
 		}

@@ -354,12 +354,12 @@ env_key = %q
 	}
 	cmd := exec.CommandContext(ctx, codex,
 		"exec",
+		"-c", `approval_policy="never"`,
 		"-m", model,
 		"--skip-git-repo-check",
 		"--ephemeral",
 		"--ignore-rules",
 		"--sandbox", "read-only",
-		"--ask-for-approval", "never",
 		"-C", workDir,
 		"-o", answerPath,
 		challenge.Prompt,
