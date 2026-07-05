@@ -61,6 +61,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/cards/{id}", s.auth(s.updateCard))
 	mux.HandleFunc("DELETE /api/cards/{id}", s.auth(s.deleteCard))
 	mux.HandleFunc("POST /api/cards/{id}/check", s.auth(s.checkCard))
+	mux.HandleFunc("GET /api/scheduler/config", s.auth(s.schedulerConfig))
+	mux.HandleFunc("PATCH /api/scheduler/config", s.auth(s.updateSchedulerConfig))
+	mux.HandleFunc("GET /api/scheduler/channels", s.auth(s.schedulerChannels))
 	mux.HandleFunc("GET /api/settings", s.auth(s.settings))
 	mux.HandleFunc("PATCH /api/settings", s.auth(s.updateSettings))
 	mux.HandleFunc("GET /api/settings/export", s.auth(s.exportData))
@@ -99,6 +102,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /merchant-balance", redirectTo("/admin/revenue"))
 	mux.HandleFunc("GET /messages", redirectTo("/admin/messages"))
 	mux.HandleFunc("GET /upstreams", redirectTo("/admin/upstreams"))
+	mux.HandleFunc("GET /scheduler", redirectTo("/admin/scheduler"))
 	mux.HandleFunc("GET /settings", redirectTo("/admin/settings"))
 	mux.Handle("/", s.static())
 	return mux
@@ -253,14 +257,16 @@ func (s *Server) listCards(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name          string `json:"name"`
-		BaseURL       string `json:"base_url"`
-		APIKey        string `json:"api_key"`
-		UpstreamID    string `json:"upstream_id"`
-		KeyID         string `json:"key_id"`
-		DisplayGroup  string `json:"display_group"`
-		Enabled       *bool  `json:"enabled"`
-		PublicEnabled *bool  `json:"public_enabled"`
+		Name                 string `json:"name"`
+		BaseURL              string `json:"base_url"`
+		APIKey               string `json:"api_key"`
+		UpstreamID           string `json:"upstream_id"`
+		KeyID                string `json:"key_id"`
+		DisplayGroup         string `json:"display_group"`
+		SchedulerChannelID   string `json:"scheduler_channel_id"`
+		SchedulerChannelName string `json:"scheduler_channel_name"`
+		Enabled              *bool  `json:"enabled"`
+		PublicEnabled        *bool  `json:"public_enabled"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -275,21 +281,23 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 	}
 	card, err := s.App.SaveCard(r.Context(), "", domain.ModelCard{
 		Name: body.Name, BaseURL: body.BaseURL, APIKey: body.APIKey, UpstreamID: body.UpstreamID, KeyID: body.KeyID,
-		DisplayGroup: body.DisplayGroup, Enabled: enabled, PublicEnabled: publicEnabled,
+		DisplayGroup: body.DisplayGroup, SchedulerChannelID: body.SchedulerChannelID, SchedulerChannelName: body.SchedulerChannelName, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
 	writeJSONOrError(w, card, err)
 }
 
 func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name          string  `json:"name"`
-		BaseURL       string  `json:"base_url"`
-		APIKey        string  `json:"api_key"`
-		UpstreamID    string  `json:"upstream_id"`
-		KeyID         string  `json:"key_id"`
-		DisplayGroup  *string `json:"display_group"`
-		Enabled       *bool   `json:"enabled"`
-		PublicEnabled *bool   `json:"public_enabled"`
+		Name                 string  `json:"name"`
+		BaseURL              string  `json:"base_url"`
+		APIKey               string  `json:"api_key"`
+		UpstreamID           string  `json:"upstream_id"`
+		KeyID                string  `json:"key_id"`
+		DisplayGroup         *string `json:"display_group"`
+		SchedulerChannelID   *string `json:"scheduler_channel_id"`
+		SchedulerChannelName *string `json:"scheduler_channel_name"`
+		Enabled              *bool   `json:"enabled"`
+		PublicEnabled        *bool   `json:"public_enabled"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -315,12 +323,22 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	if body.DisplayGroup != nil {
 		displayGroup = *body.DisplayGroup
 	}
+	schedulerChannelID, schedulerChannelName, schedulerAutoDisabled := old.SchedulerChannelID, old.SchedulerChannelName, old.SchedulerAutoDisabled
+	if body.SchedulerChannelID != nil {
+		schedulerChannelID = *body.SchedulerChannelID
+		if schedulerChannelID == "" {
+			schedulerAutoDisabled = false
+		}
+	}
+	if body.SchedulerChannelName != nil {
+		schedulerChannelName = *body.SchedulerChannelName
+	}
 	if baseURL == "" && apiKey == "" && upstreamID == "" && keyID == "" {
 		baseURL, apiKey, upstreamID, keyID = old.BaseURL, old.APIKey, old.UpstreamID, old.KeyID
 	}
 	card, err := s.App.SaveCard(r.Context(), r.PathValue("id"), domain.ModelCard{
 		Name: name, BaseURL: baseURL, APIKey: apiKey, UpstreamID: upstreamID, KeyID: keyID,
-		DisplayGroup: displayGroup, Enabled: enabled, PublicEnabled: publicEnabled,
+		DisplayGroup: displayGroup, SchedulerChannelID: schedulerChannelID, SchedulerChannelName: schedulerChannelName, SchedulerAutoDisabled: schedulerAutoDisabled, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
 	writeJSONOrError(w, card, err)
 }
@@ -341,6 +359,25 @@ func (s *Server) sortCards(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) checkCard(w http.ResponseWriter, r *http.Request) {
 	writeNoContentOrError(w, s.App.CheckCard(r.Context(), r.PathValue("id")))
+}
+
+func (s *Server) schedulerConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.App.SchedulerConfig(r.Context())
+	writeJSONOrError(w, cfg, err)
+}
+
+func (s *Server) updateSchedulerConfig(w http.ResponseWriter, r *http.Request) {
+	var cfg domain.SchedulerConfig
+	if !decode(w, r, &cfg) {
+		return
+	}
+	cfg, err := s.App.SaveSchedulerConfig(r.Context(), cfg)
+	writeJSONOrError(w, cfg, err)
+}
+
+func (s *Server) schedulerChannels(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.App.SchedulerChannels(r.Context(), r.URL.Query().Get("keyword"))
+	writeJSONOrError(w, rows, err)
 }
 
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {

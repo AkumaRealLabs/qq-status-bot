@@ -97,7 +97,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 			id TEXT PRIMARY KEY, check_interval_minutes INTEGER NOT NULL, telegram_bot_token TEXT NOT NULL DEFAULT '',
 			telegram_chat_id TEXT NOT NULL DEFAULT '', probe_model TEXT NOT NULL DEFAULT 'gpt-5.5',
 			site_name TEXT NOT NULL DEFAULT 'AI 上游监控', site_icon TEXT NOT NULL DEFAULT '',
-			epay_base_url TEXT NOT NULL DEFAULT '', epay_pid TEXT NOT NULL DEFAULT '', epay_key TEXT NOT NULL DEFAULT ''
+			epay_base_url TEXT NOT NULL DEFAULT '', epay_pid TEXT NOT NULL DEFAULT '', epay_key TEXT NOT NULL DEFAULT '',
+			scheduler_base_url TEXT NOT NULL DEFAULT '', scheduler_user_id TEXT NOT NULL DEFAULT '', scheduler_access_token TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS upstreams (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, base_url TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
@@ -116,7 +117,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS model_cards (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '',
 			upstream_id TEXT NOT NULL DEFAULT '', key_id TEXT NOT NULL DEFAULT '', model TEXT NOT NULL,
-			display_group TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, public_enabled INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
+			display_group TEXT NOT NULL DEFAULT '', scheduler_channel_id TEXT NOT NULL DEFAULT '', scheduler_channel_name TEXT NOT NULL DEFAULT '',
+			scheduler_auto_disabled INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, public_enabled INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
 			failure_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS balance_snapshots (
@@ -190,6 +192,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "settings", "epay_key", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	for _, col := range []string{"scheduler_base_url", "scheduler_user_id", "scheduler_access_token"} {
+		if err := s.addColumnIfMissing(ctx, "settings", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
 	if err := s.addColumnIfMissing(ctx, "probe_runs", "status", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -212,6 +219,15 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.addColumnIfMissing(ctx, "model_cards", "sort_order", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "model_cards", "scheduler_channel_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "model_cards", "scheduler_channel_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "model_cards", "scheduler_auto_disabled", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	if err := s.addColumnIfMissing(ctx, "balance_recharge_logs", "raw_status", "TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -435,6 +451,21 @@ func (s *Store) UpdateSettings(ctx context.Context, cfg domain.Settings) (domain
 	return cfg, err
 }
 
+func (s *Store) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, error) {
+	var cfg domain.SchedulerConfig
+	err := s.row(ctx, `SELECT scheduler_base_url, scheduler_user_id, scheduler_access_token FROM settings WHERE id='default'`).
+		Scan(&cfg.BaseURL, &cfg.UserID, &cfg.AccessToken)
+	return cfg, err
+}
+
+func (s *Store) UpdateSchedulerConfig(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerConfig, error) {
+	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	cfg.UserID = strings.TrimSpace(cfg.UserID)
+	cfg.AccessToken = strings.TrimSpace(cfg.AccessToken)
+	_, err := s.exec(ctx, `UPDATE settings SET scheduler_base_url=?, scheduler_user_id=?, scheduler_access_token=? WHERE id='default'`, cfg.BaseURL, cfg.UserID, cfg.AccessToken)
+	return cfg, err
+}
+
 func (s *Store) CreateUpstream(ctx context.Context, u domain.Upstream) (domain.Upstream, error) {
 	if u.ID == "" {
 		u.ID = NewID()
@@ -643,9 +674,9 @@ func (s *Store) CreateCard(ctx context.Context, c domain.ModelCard) (domain.Mode
 	now := time.Now().UTC()
 	c.CreatedAt, c.UpdatedAt = now, now
 	_, err := s.exec(ctx, `INSERT INTO model_cards
-		(id, name, base_url, api_key, upstream_id, key_id, model, display_group, enabled, public_enabled, sort_order, last_error, failure_count, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, c.BaseURL, c.APIKey, c.UpstreamID, c.KeyID, c.Model, c.DisplayGroup, boolInt(c.Enabled), boolInt(c.PublicEnabled),
+		(id, name, base_url, api_key, upstream_id, key_id, model, display_group, scheduler_channel_id, scheduler_channel_name, scheduler_auto_disabled, enabled, public_enabled, sort_order, last_error, failure_count, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.BaseURL, c.APIKey, c.UpstreamID, c.KeyID, c.Model, c.DisplayGroup, c.SchedulerChannelID, c.SchedulerChannelName, boolInt(c.SchedulerAutoDisabled), boolInt(c.Enabled), boolInt(c.PublicEnabled),
 		c.SortOrder, c.LastError, c.FailureCount, c.CreatedAt.Format(time.RFC3339Nano), c.UpdatedAt.Format(time.RFC3339Nano))
 	return c, err
 }
@@ -659,9 +690,9 @@ func (s *Store) nextCardSortOrder(ctx context.Context) (int, error) {
 func (s *Store) UpdateCard(ctx context.Context, c domain.ModelCard) (domain.ModelCard, error) {
 	c.Model = domain.ProbeModel
 	c.UpdatedAt = time.Now().UTC()
-	_, err := s.exec(ctx, `UPDATE model_cards SET name=?, base_url=?, api_key=?, upstream_id=?, key_id=?, model=?, display_group=?, enabled=?,
+	_, err := s.exec(ctx, `UPDATE model_cards SET name=?, base_url=?, api_key=?, upstream_id=?, key_id=?, model=?, display_group=?, scheduler_channel_id=?, scheduler_channel_name=?, scheduler_auto_disabled=?, enabled=?,
 		public_enabled=?, sort_order=?, last_error=?, failure_count=?, updated_at=? WHERE id=?`,
-		c.Name, c.BaseURL, c.APIKey, c.UpstreamID, c.KeyID, c.Model, c.DisplayGroup, boolInt(c.Enabled), boolInt(c.PublicEnabled),
+		c.Name, c.BaseURL, c.APIKey, c.UpstreamID, c.KeyID, c.Model, c.DisplayGroup, c.SchedulerChannelID, c.SchedulerChannelName, boolInt(c.SchedulerAutoDisabled), boolInt(c.Enabled), boolInt(c.PublicEnabled),
 		c.SortOrder, c.LastError, c.FailureCount, c.UpdatedAt.Format(time.RFC3339Nano), c.ID)
 	return c, err
 }
@@ -672,11 +703,11 @@ func (s *Store) DeleteCard(ctx context.Context, id string) error {
 }
 
 func (s *Store) Card(ctx context.Context, id string) (domain.ModelCard, error) {
-	return s.scanCard(s.row(ctx, `SELECT id, name, base_url, api_key, upstream_id, key_id, model, display_group, enabled, public_enabled, sort_order, last_error, failure_count, created_at, updated_at FROM model_cards WHERE id=?`, id))
+	return s.scanCard(s.row(ctx, `SELECT id, name, base_url, api_key, upstream_id, key_id, model, display_group, scheduler_channel_id, scheduler_channel_name, scheduler_auto_disabled, enabled, public_enabled, sort_order, last_error, failure_count, created_at, updated_at FROM model_cards WHERE id=?`, id))
 }
 
 func (s *Store) ListCards(ctx context.Context) ([]domain.ModelCard, error) {
-	rows, err := s.query(ctx, `SELECT id, name, base_url, api_key, upstream_id, key_id, model, display_group, enabled, public_enabled, sort_order, last_error, failure_count, created_at, updated_at FROM model_cards ORDER BY sort_order, name`)
+	rows, err := s.query(ctx, `SELECT id, name, base_url, api_key, upstream_id, key_id, model, display_group, scheduler_channel_id, scheduler_channel_name, scheduler_auto_disabled, enabled, public_enabled, sort_order, last_error, failure_count, created_at, updated_at FROM model_cards ORDER BY sort_order, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -694,9 +725,10 @@ func (s *Store) ListCards(ctx context.Context) ([]domain.ModelCard, error) {
 
 func (s *Store) scanCard(row *sql.Row) (domain.ModelCard, error) {
 	var c domain.ModelCard
-	var enabled, publicEnabled int
+	var autoDisabled, enabled, publicEnabled int
 	var created, updated string
-	err := row.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.UpstreamID, &c.KeyID, &c.Model, &c.DisplayGroup, &enabled, &publicEnabled, &c.SortOrder, &c.LastError, &c.FailureCount, &created, &updated)
+	err := row.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.UpstreamID, &c.KeyID, &c.Model, &c.DisplayGroup, &c.SchedulerChannelID, &c.SchedulerChannelName, &autoDisabled, &enabled, &publicEnabled, &c.SortOrder, &c.LastError, &c.FailureCount, &created, &updated)
+	c.SchedulerAutoDisabled = boolFromInt(autoDisabled)
 	c.Enabled = boolFromInt(enabled)
 	c.PublicEnabled = boolFromInt(publicEnabled)
 	c.CreatedAt, c.UpdatedAt = parseTime(created), parseTime(updated)
@@ -705,9 +737,10 @@ func (s *Store) scanCard(row *sql.Row) (domain.ModelCard, error) {
 
 func scanCardRows(rows *sql.Rows) (domain.ModelCard, error) {
 	var c domain.ModelCard
-	var enabled, publicEnabled int
+	var autoDisabled, enabled, publicEnabled int
 	var created, updated string
-	err := rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.UpstreamID, &c.KeyID, &c.Model, &c.DisplayGroup, &enabled, &publicEnabled, &c.SortOrder, &c.LastError, &c.FailureCount, &created, &updated)
+	err := rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.UpstreamID, &c.KeyID, &c.Model, &c.DisplayGroup, &c.SchedulerChannelID, &c.SchedulerChannelName, &autoDisabled, &enabled, &publicEnabled, &c.SortOrder, &c.LastError, &c.FailureCount, &created, &updated)
+	c.SchedulerAutoDisabled = boolFromInt(autoDisabled)
 	c.Enabled = boolFromInt(enabled)
 	c.PublicEnabled = boolFromInt(publicEnabled)
 	c.CreatedAt, c.UpdatedAt = parseTime(created), parseTime(updated)
@@ -1107,6 +1140,29 @@ func (s *Store) SaveProbe(ctx context.Context, upstreamID, cardID string, p moni
 func (s *Store) UpdateCardProbeState(ctx context.Context, id, lastError string, failureCount int) error {
 	_, err := s.exec(ctx, `UPDATE model_cards SET last_error=?, failure_count=?, updated_at=? WHERE id=?`, lastError, failureCount, nowText(), id)
 	return err
+}
+
+func (s *Store) UpdateCardSchedulerAutoDisabled(ctx context.Context, id string, disabled bool) error {
+	_, err := s.exec(ctx, `UPDATE model_cards SET scheduler_auto_disabled=?, updated_at=? WHERE id=?`, boolInt(disabled), nowText(), id)
+	return err
+}
+
+func (s *Store) RecentProbesForCard(ctx context.Context, cardID string, limit int) ([]domain.ProbeRun, error) {
+	rows, err := s.query(ctx, `SELECT id, upstream_id, card_id, checked_at, model, input, expected_answer, status, output, http_status, latency_ms, success, error
+		FROM probe_runs WHERE card_id=? ORDER BY checked_at DESC LIMIT ?`, cardID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ProbeRun
+	for rows.Next() {
+		p, err := scanProbeRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) ProbesForCardSince(ctx context.Context, cardID string, since time.Time, limit int) ([]domain.ProbeRun, error) {

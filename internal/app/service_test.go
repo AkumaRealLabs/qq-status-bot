@@ -84,6 +84,160 @@ func TestNewDefaultsToCodexCLIProbeWithHTTPFallback(t *testing.T) {
 	}
 }
 
+func TestSchedulerConfigAndChannelsProxy(t *testing.T) {
+	var sawAuth, sawUser, sawQuery string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawAuth, sawUser, sawQuery = r.Header.Get("Authorization"), r.Header.Get("New-Api-User"), r.URL.Query().Get("keyword")
+		if r.URL.Path != "/api/channel/" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{
+			"id": 9, "name": "Claude", "status": 1, "tag": "fast", "type": "openai", "group": "vip", "models": []string{"gpt-5.5"},
+		}}}})
+	}))
+	defer ts.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	cfg, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL + "/", UserID: "42", AccessToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BaseURL != ts.URL {
+		t.Fatalf("base url = %q", cfg.BaseURL)
+	}
+	channels, err := svc.SchedulerChannels(t.Context(), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sawAuth != "token" || sawUser != "42" || sawQuery != "claude" {
+		t.Fatalf("headers/query = auth=%q user=%q keyword=%q", sawAuth, sawUser, sawQuery)
+	}
+	if len(channels) != 1 || channels[0].ID != "9" || channels[0].Name != "Claude" || channels[0].Status != 1 || channels[0].Models[0] != "gpt-5.5" {
+		t.Fatalf("channels = %+v", channels)
+	}
+}
+
+func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
+	var statuses []int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/channel/9/status" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var body map[string]int
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		statuses = append(statuses, body["status"])
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	}))
+	defer ts.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.applySchedulerAutomation(t.Context(), card, false, 1); err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 0 {
+		t.Fatalf("first failure changed scheduler: %+v", statuses)
+	}
+	if err := svc.applySchedulerAutomation(t.Context(), card, false, 2); err != nil {
+		t.Fatal(err)
+	}
+	card, _ = st.Card(t.Context(), card.ID)
+	if len(statuses) != 1 || statuses[0] != 2 || !card.SchedulerAutoDisabled {
+		t.Fatalf("disable statuses=%v card=%+v", statuses, card)
+	}
+	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.applySchedulerAutomation(t.Context(), card, true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("first success restored scheduler: %+v", statuses)
+	}
+	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.applySchedulerAutomation(t.Context(), card, true, 0); err != nil {
+		t.Fatal(err)
+	}
+	card, _ = st.Card(t.Context(), card.ID)
+	if len(statuses) != 2 || statuses[1] != 1 || card.SchedulerAutoDisabled {
+		t.Fatalf("restore statuses=%v card=%+v", statuses, card)
+	}
+}
+
+func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	unconfigured, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "U", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.applySchedulerAutomation(t.Context(), unconfigured, false, 2); err != nil {
+		t.Fatal(err)
+	}
+	unconfigured, _ = st.Card(t.Context(), unconfigured.ID)
+	if unconfigured.SchedulerAutoDisabled {
+		t.Fatalf("unconfigured scheduler marked card disabled: %+v", unconfigured)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "message": "blocked"})
+	}))
+	defer ts.Close()
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.applySchedulerAutomation(t.Context(), card, false, 2); err == nil {
+		t.Fatal("success:false should fail")
+	}
+	got, err := st.Card(t.Context(), card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SchedulerAutoDisabled {
+		t.Fatalf("card was marked auto disabled after remote failure: %+v", got)
+	}
+	if _, err := svc.SchedulerChannels(t.Context(), ""); err == nil {
+		t.Fatal("success:false channel list should fail")
+	}
+}
+
 func TestTodayRevenueMapsEpayBalance(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()

@@ -193,7 +193,7 @@ func TestLegacyAdminPathsRedirect(t *testing.T) {
 	client := ts.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	for path, want := range map[string]string{"/status": "/admin/status", "/balances": "/admin/balances", "/revenue": "/admin/revenue", "/merchant-balance": "/admin/revenue", "/admin/merchant-balance": "/admin/revenue", "/upstreams": "/admin/upstreams", "/settings": "/admin/settings"} {
+	for path, want := range map[string]string{"/status": "/admin/status", "/balances": "/admin/balances", "/revenue": "/admin/revenue", "/merchant-balance": "/admin/revenue", "/admin/merchant-balance": "/admin/revenue", "/upstreams": "/admin/upstreams", "/scheduler": "/admin/scheduler", "/settings": "/admin/settings"} {
 		resp, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -226,6 +226,38 @@ func TestRevenueRoutesRequireAuth(t *testing.T) {
 		{http.MethodGet, "/api/revenue/cards/card-id/orders"},
 		{http.MethodPost, "/api/revenue/cards"},
 		{http.MethodPost, "/api/revenue/cards/order"},
+	} {
+		req, _ := http.NewRequest(tc.method, ts.URL+tc.path, strings.NewReader(`{}`))
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s %s status = %d", tc.method, tc.path, resp.StatusCode)
+		}
+	}
+}
+
+func TestSchedulerRoutesRequireAuth(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
+	defer ts.Close()
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/scheduler/config"},
+		{http.MethodPatch, "/api/scheduler/config"},
+		{http.MethodGet, "/api/scheduler/channels"},
 	} {
 		req, _ := http.NewRequest(tc.method, ts.URL+tc.path, strings.NewReader(`{}`))
 		resp, err := ts.Client().Do(req)

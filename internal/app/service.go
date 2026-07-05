@@ -384,16 +384,19 @@ func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) 
 
 func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domain.ModelCard, error) {
 	card := domain.ModelCard{
-		Name:          strings.TrimSpace(in.Name),
-		BaseURL:       strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"),
-		APIKey:        strings.TrimSpace(in.APIKey),
-		UpstreamID:    strings.TrimSpace(in.UpstreamID),
-		KeyID:         strings.TrimSpace(in.KeyID),
-		Model:         domain.ProbeModel,
-		DisplayGroup:  strings.TrimSpace(in.DisplayGroup),
-		Enabled:       in.Enabled,
-		PublicEnabled: in.PublicEnabled,
-		SortOrder:     in.SortOrder,
+		Name:                  strings.TrimSpace(in.Name),
+		BaseURL:               strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"),
+		APIKey:                strings.TrimSpace(in.APIKey),
+		UpstreamID:            strings.TrimSpace(in.UpstreamID),
+		KeyID:                 strings.TrimSpace(in.KeyID),
+		Model:                 domain.ProbeModel,
+		DisplayGroup:          strings.TrimSpace(in.DisplayGroup),
+		SchedulerChannelID:    strings.TrimSpace(in.SchedulerChannelID),
+		SchedulerChannelName:  strings.TrimSpace(in.SchedulerChannelName),
+		SchedulerAutoDisabled: in.SchedulerAutoDisabled,
+		Enabled:               in.Enabled,
+		PublicEnabled:         in.PublicEnabled,
+		SortOrder:             in.SortOrder,
 	}
 	custom := card.BaseURL != "" || card.APIKey != ""
 	if custom {
@@ -458,7 +461,11 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 		if _, err := s.Store.SaveProbe(ctx, u.ID, card.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
 			return err
 		}
-		return s.Store.UpdateCardProbeState(ctx, card.ID, msg, card.FailureCount+1)
+		failures := card.FailureCount + 1
+		if err := s.Store.UpdateCardProbeState(ctx, card.ID, msg, failures); err != nil {
+			return err
+		}
+		return s.applySchedulerAutomation(ctx, card, false, failures)
 	}
 	key, err := s.Store.Key(ctx, card.KeyID)
 	if err != nil {
@@ -477,6 +484,7 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 	if err := s.Store.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
 		return err
 	}
+	_ = s.applySchedulerAutomation(ctx, card, probe.Success, failures)
 	return s.alert(ctx, u, "ping:"+card.ID, !probe.Success && failures >= 2, card.Name+" 探测失败: "+probe.Error)
 }
 
@@ -486,7 +494,11 @@ func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) er
 		if _, err := s.Store.SaveProbe(ctx, "", card.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
 			return err
 		}
-		return s.Store.UpdateCardProbeState(ctx, card.ID, msg, card.FailureCount+1)
+		failures := card.FailureCount + 1
+		if err := s.Store.UpdateCardProbeState(ctx, card.ID, msg, failures); err != nil {
+			return err
+		}
+		return s.applySchedulerAutomation(ctx, card, false, failures)
 	}
 	probe := s.Client.Probe(ctx, card.BaseURL, card.APIKey, domain.ProbeModel)
 	if _, err := s.Store.SaveProbe(ctx, "", card.ID, probe); err != nil {
@@ -498,7 +510,10 @@ func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) er
 		failures = card.FailureCount + 1
 		lastErr = probe.Error
 	}
-	return s.Store.UpdateCardProbeState(ctx, card.ID, lastErr, failures)
+	if err := s.Store.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
+		return err
+	}
+	return s.applySchedulerAutomation(ctx, card, probe.Success, failures)
 }
 
 func rechargeStatus(err error, out monitor.RechargeOrderResult) (string, string) {

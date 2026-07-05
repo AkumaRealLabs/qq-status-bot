@@ -44,28 +44,31 @@ type APIKey struct {
 }
 
 type ModelCard struct {
-	ID             string     `json:"id"`
-	Name           string     `json:"name"`
-	BaseURL        string     `json:"base_url,omitempty"`
-	APIKey         string     `json:"api_key,omitempty"`
-	UpstreamID     string     `json:"upstream_id,omitempty"`
-	UpstreamName   string     `json:"upstream_name,omitempty"`
-	Type           string     `json:"type,omitempty"`
-	KeyID          string     `json:"key_id,omitempty"`
-	KeyName        string     `json:"key_name,omitempty"`
-	KeyGroup       string     `json:"key_group,omitempty"`
-	KeyRatio       string     `json:"key_group_ratio,omitempty"`
-	EffectiveRatio string     `json:"effective_ratio,omitempty"`
-	Model          string     `json:"model"`
-	DisplayGroup   string     `json:"display_group"`
-	Enabled        bool       `json:"enabled"`
-	PublicEnabled  bool       `json:"public_enabled"`
-	SortOrder      int        `json:"sort_order"`
-	LastError      string     `json:"last_error"`
-	FailureCount   int        `json:"failure_count"`
-	History        []ProbeRun `json:"history,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID                    string     `json:"id"`
+	Name                  string     `json:"name"`
+	BaseURL               string     `json:"base_url,omitempty"`
+	APIKey                string     `json:"api_key,omitempty"`
+	UpstreamID            string     `json:"upstream_id,omitempty"`
+	UpstreamName          string     `json:"upstream_name,omitempty"`
+	Type                  string     `json:"type,omitempty"`
+	KeyID                 string     `json:"key_id,omitempty"`
+	KeyName               string     `json:"key_name,omitempty"`
+	KeyGroup              string     `json:"key_group,omitempty"`
+	KeyRatio              string     `json:"key_group_ratio,omitempty"`
+	EffectiveRatio        string     `json:"effective_ratio,omitempty"`
+	Model                 string     `json:"model"`
+	DisplayGroup          string     `json:"display_group"`
+	SchedulerChannelID    string     `json:"scheduler_channel_id,omitempty"`
+	SchedulerChannelName  string     `json:"scheduler_channel_name,omitempty"`
+	SchedulerAutoDisabled bool       `json:"scheduler_auto_disabled"`
+	Enabled               bool       `json:"enabled"`
+	PublicEnabled         bool       `json:"public_enabled"`
+	SortOrder             int        `json:"sort_order"`
+	LastError             string     `json:"last_error"`
+	FailureCount          int        `json:"failure_count"`
+	History               []ProbeRun `json:"history,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 type PublicModelCard struct {
@@ -148,6 +151,22 @@ type Settings struct {
 	EpayBaseURL          string `json:"epay_base_url"`
 	EpayPID              string `json:"epay_pid"`
 	EpayKey              string `json:"epay_key"`
+}
+
+type SchedulerConfig struct {
+	BaseURL     string `json:"scheduler_base_url"`
+	UserID      string `json:"scheduler_user_id"`
+	AccessToken string `json:"scheduler_access_token"`
+}
+
+type SchedulerChannel struct {
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	Status int      `json:"status"`
+	Tag    string   `json:"tag,omitempty"`
+	Type   string   `json:"type,omitempty"`
+	Group  string   `json:"group,omitempty"`
+	Models []string `json:"models,omitempty"`
 }
 
 type RevenueCard struct {

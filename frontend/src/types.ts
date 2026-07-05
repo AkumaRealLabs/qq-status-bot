@@ -50,6 +50,9 @@ export type ModelCard = {
   key_group_ratio?: string
   effective_ratio?: string
   display_group: string
+  scheduler_channel_id?: string
+  scheduler_channel_name?: string
+  scheduler_auto_disabled: boolean
   enabled: boolean
   public_enabled: boolean
   sort_order: number
@@ -150,7 +153,7 @@ export type SettingsData = {
 
 export type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>
 
-export type TabID = 'status' | 'balances' | 'revenue' | 'messages' | 'upstreams' | 'settings'
+export type TabID = 'status' | 'balances' | 'revenue' | 'messages' | 'upstreams' | 'scheduler' | 'settings'
 
 export type NavTab = { id: TabID; label: string; short: string; icon: ElementType }
 
@@ -251,4 +254,20 @@ export type CardForm = {
   display_group: string
   enabled: boolean
   public_enabled: boolean
+}
+
+export type SchedulerConfig = {
+  scheduler_base_url: string
+  scheduler_user_id: string
+  scheduler_access_token: string
+}
+
+export type SchedulerChannel = {
+  id: string
+  name: string
+  status: number
+  tag?: string
+  type?: string
+  group?: string
+  models?: string[]
 }
