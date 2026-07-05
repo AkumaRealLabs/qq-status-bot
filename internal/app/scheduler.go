@@ -56,6 +56,30 @@ func (s *Service) SchedulerLogs(ctx context.Context, limit int) ([]domain.Schedu
 	return s.Store.SchedulerLogs(ctx, limit)
 }
 
+func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID string, status int) (domain.ModelCard, error) {
+	if status != 1 && status != 2 {
+		return domain.ModelCard{}, errors.New("status must be 1 or 2")
+	}
+	card, err := s.Store.Card(ctx, cardID)
+	if err != nil {
+		return domain.ModelCard{}, err
+	}
+	if card.SchedulerChannelID == "" {
+		return domain.ModelCard{}, errors.New("scheduler channel required")
+	}
+	if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, status); err != nil {
+		s.logSchedulerAction(ctx, card, schedulerAction(status), "error", err.Error())
+		return domain.ModelCard{}, err
+	}
+	if err := s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, false); err != nil {
+		s.logSchedulerAction(ctx, card, schedulerAction(status), "error", err.Error())
+		return domain.ModelCard{}, err
+	}
+	card.SchedulerAutoDisabled = false
+	s.logSchedulerAction(ctx, card, schedulerAction(status), "success", schedulerManualMessage(status))
+	return card, nil
+}
+
 func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {
 	if card.SchedulerChannelID == "" {
 		return nil
@@ -93,6 +117,20 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 		return nil
 	}
 	return nil
+}
+
+func schedulerAction(status int) string {
+	if status == 1 {
+		return "restore"
+	}
+	return "disable"
+}
+
+func schedulerManualMessage(status int) string {
+	if status == 1 {
+		return "手动启用调度器渠道"
+	}
+	return "手动关闭调度器渠道"
 }
 
 func (s *Service) logSchedulerAction(ctx context.Context, card domain.ModelCard, action, status, message string) {

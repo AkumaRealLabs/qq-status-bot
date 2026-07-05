@@ -197,6 +197,56 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	}
 }
 
+func TestSetCardSchedulerChannelStatus(t *testing.T) {
+	var statuses []int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/channel/9/status" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var body map[string]int
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		statuses = append(statuses, body["status"])
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	}))
+	defer ts.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", SchedulerAutoDisabled: true, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetCardSchedulerChannelStatus(t.Context(), card.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	card, _ = st.Card(t.Context(), card.ID)
+	if len(statuses) != 1 || statuses[0] != 1 || card.SchedulerAutoDisabled {
+		t.Fatalf("enable statuses=%v card=%+v", statuses, card)
+	}
+	if _, err := svc.SetCardSchedulerChannelStatus(t.Context(), card.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := svc.SchedulerLogs(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 2 || statuses[1] != 2 || len(logs) != 2 || logs[0].Message != "手动关闭调度器渠道" {
+		t.Fatalf("statuses=%v logs=%+v", statuses, logs)
+	}
+}
+
 func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
 	if err != nil {

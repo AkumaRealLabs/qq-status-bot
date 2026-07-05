@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, RefreshCcw, Save, Settings2 } from 'lucide-react'
+import { Loader2, Power, PowerOff, RefreshCcw, Save, Settings2 } from 'lucide-react'
 import { EmptyPanel, Field, FormError, StatusBadge } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Button } from '@/components/ui/button'
@@ -53,6 +53,19 @@ export function SchedulerPage() {
     },
     onError: (error) => window.alert(errorMessage(error)),
   })
+  const setStatus = useMutation({
+    mutationFn: ({ card, status }: { card: ModelCard; status: number }) =>
+      api(`/api/cards/${card.id}/scheduler/status`, { method: 'POST', body: JSON.stringify({ status }) }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['cards'] }),
+        qc.invalidateQueries({ queryKey: ['status'] }),
+        qc.invalidateQueries({ queryKey: ['scheduler', 'logs'] }),
+      ])
+      void channels.refetch()
+    },
+    onError: (error) => window.alert(errorMessage(error)),
+  })
   if (!form) return <ShellLoading />
   const rows = cards.data ?? []
   const list = channels.data ?? []
@@ -99,42 +112,56 @@ export function SchedulerPage() {
       {!cards.isLoading && rows.length === 0 && <EmptyPanel text="暂无状态卡片" />}
       {!cards.isLoading && rows.length > 0 && (
         <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {rows.map((card) => (
-            <Card key={card.id} className="min-w-0 bg-card">
-              <CardHeader className="gap-2">
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <CardTitle className="truncate">{card.name}</CardTitle>
-                    <CardDescription>{card.scheduler_channel_name || '未绑定渠道'}</CardDescription>
+          {rows.map((card) => {
+            const options = channelsForCard(list, card, rows)
+            const channel = options.find((item) => item.id === card.scheduler_channel_id)
+            const nextStatus = channel?.status === 1 ? 2 : 1
+            return (
+              <Card key={card.id} className="min-w-0 bg-card">
+                <CardHeader className="gap-2">
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <CardTitle className="truncate">{card.name}</CardTitle>
+                      <CardDescription>{card.scheduler_channel_name || '未绑定渠道'}</CardDescription>
+                    </div>
+                    <StatusBadge ok={!card.scheduler_auto_disabled} okText={card.scheduler_channel_id ? '可自动控制' : '未绑定'} failText="已自动关闭" />
                   </div>
-                  <StatusBadge ok={!card.scheduler_auto_disabled} okText={card.scheduler_channel_id ? '可自动控制' : '未绑定'} failText="已自动关闭" />
-                </div>
-              </CardHeader>
-              <CardContent className="grid gap-3">
-                <Field label="调度器渠道">
-                  <Select
-                    value={card.scheduler_channel_id || none}
-                    onValueChange={(value) => bind.mutate({ card, channel: value === none ? undefined : list.find((item) => item.id === value) })}
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  <Field label="调度器渠道">
+                    <Select
+                      value={card.scheduler_channel_id || none}
+                      onValueChange={(value) => bind.mutate({ card, channel: value === none ? undefined : list.find((item) => item.id === value) })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="选择渠道" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={none}>不绑定</SelectItem>
+                        {options.map((channel) => (
+                          <SelectItem key={channel.id} value={channel.id}>
+                            {channel.name || channel.id}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <div className="text-xs leading-relaxed text-muted-foreground">
+                    {channelDetail(channel)}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!card.scheduler_channel_id || setStatus.isPending}
+                    onClick={() => setStatus.mutate({ card, status: nextStatus })}
                   >
-                    <SelectTrigger>
-                      <SelectValue placeholder="选择渠道" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={none}>不绑定</SelectItem>
-                      {channelsForCard(list, card, rows).map((channel) => (
-                        <SelectItem key={channel.id} value={channel.id}>
-                          {channel.name || channel.id}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <div className="text-xs leading-relaxed text-muted-foreground">
-                  {channelDetail(channelsForCard(list, card, rows).find((item) => item.id === card.scheduler_channel_id))}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                    {setStatus.isPending ? <Loader2 className="size-4 animate-spin" /> : nextStatus === 1 ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                    {nextStatus === 1 ? '启用渠道' : '关闭渠道'}
+                  </Button>
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       )}
 

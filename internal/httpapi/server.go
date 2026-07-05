@@ -61,6 +61,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/cards/{id}", s.auth(s.updateCard))
 	mux.HandleFunc("DELETE /api/cards/{id}", s.auth(s.deleteCard))
 	mux.HandleFunc("POST /api/cards/{id}/check", s.auth(s.checkCard))
+	mux.HandleFunc("POST /api/cards/{id}/scheduler/status", s.auth(s.setCardSchedulerStatus))
 	mux.HandleFunc("GET /api/scheduler/config", s.auth(s.schedulerConfig))
 	mux.HandleFunc("PATCH /api/scheduler/config", s.auth(s.updateSchedulerConfig))
 	mux.HandleFunc("GET /api/scheduler/channels", s.auth(s.schedulerChannels))
@@ -385,6 +386,17 @@ func (s *Server) schedulerLogs(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	rows, err := s.App.SchedulerLogs(r.Context(), limit)
 	writeJSONOrError(w, rows, err)
+}
+
+func (s *Server) setCardSchedulerStatus(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Status int `json:"status"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	card, err := s.App.SetCardSchedulerChannelStatus(r.Context(), r.PathValue("id"), body.Status)
+	writeJSONOrError(w, card, err)
 }
 
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
