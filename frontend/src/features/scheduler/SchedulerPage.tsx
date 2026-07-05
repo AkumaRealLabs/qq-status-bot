@@ -117,6 +117,7 @@ export function SchedulerPage() {
             const channel = options.find((item) => item.id === card.scheduler_channel_id)
             const canToggle = channel?.status === 1 || channel?.status === 2
             const nextStatus = channel?.status === 2 ? 1 : 2
+            const detail = channelDetail(channel)
             return (
               <Card key={card.id} className="min-w-0 bg-card">
                 <CardHeader className="gap-2">
@@ -148,11 +149,19 @@ export function SchedulerPage() {
                     </Select>
                   </Field>
                   <div className="text-xs leading-relaxed text-muted-foreground">
-                    {channelDetail(channel)}
+                    {channel ? (
+                      <>
+                        <span className={cn('font-medium', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
+                          {schedulerStatus(channel.status)}
+                        </span>
+                        {detail && ` · ${detail}`}
+                      </>
+                    ) : '先刷新渠道，再选择要绑定的渠道'}
                   </div>
                   <Button
-                    variant="outline"
+                    variant={!canToggle ? 'outline' : nextStatus === 1 ? 'default' : 'danger'}
                     size="sm"
+                    className={cn(canToggle && nextStatus === 1 && 'bg-success text-primary-foreground hover:bg-success/90 focus-visible:ring-success/20')}
                     disabled={!card.scheduler_channel_id || !canToggle || setStatus.isPending}
                     onClick={() => setStatus.mutate({ card, status: nextStatus })}
                   >
@@ -251,7 +260,7 @@ function SchedulerConfigDialog({
 
 function channelDetail(channel?: SchedulerChannel) {
   if (!channel) return '先刷新渠道，再选择要绑定的渠道'
-  return [`状态 ${schedulerStatus(channel.status)}`, channel.type, channel.group, channel.tag, channel.models?.join(', ')].filter(Boolean).join(' · ')
+  return [channel.type, channel.group, channel.tag, channel.models?.join(', ')].filter(Boolean).join(' · ')
 }
 
 function channelsForCard(channels: SchedulerChannel[], card: ModelCard, cards: ModelCard[]) {
