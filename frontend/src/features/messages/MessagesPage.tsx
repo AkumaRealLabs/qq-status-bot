@@ -17,7 +17,6 @@ const emptyLogin: TGLoginForm = { api_id: '', api_hash: '', phone: '', code: '',
 
 export function MessagesPage() {
   const qc = useQueryClient()
-  const [showChannels, setShowChannels] = useState(false)
   const status = useQuery({ queryKey: ['tg', 'session'], queryFn: () => api<TGSessionStatus>('/api/tg/session/status') })
   const channels = useQuery({ queryKey: ['tg', 'channels'], queryFn: () => api<TGChannel[]>('/api/tg/channels'), enabled: status.data?.authorized })
   const messages = useQuery({ queryKey: ['tg', 'messages'], queryFn: () => api<TGMessage[]>('/api/tg/messages?limit=100'), enabled: status.data?.authorized, refetchInterval: 60000 })
@@ -35,9 +34,7 @@ export function MessagesPage() {
       actions={
         authed && (
           <div className="flex flex-wrap justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowChannels((value) => !value)}>
-              {showChannels ? '收起频道管理' : '频道管理'}
-            </Button>
+            <ChannelDialog channels={channels.data ?? []} loading={channels.isLoading} />
             <Button variant="outline" size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
               {refresh.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
               刷新消息
@@ -51,10 +48,23 @@ export function MessagesPage() {
       {!authed ? <LoginWizard status={status.data} /> : (
         <>
           <MessageList messages={messages.data ?? []} channels={channels.data ?? []} loading={messages.isLoading} />
-          {showChannels && <ChannelPanel channels={channels.data ?? []} loading={channels.isLoading} />}
         </>
       )}
     </Page>
+  )
+}
+
+function ChannelDialog({ channels, loading }: { channels: TGChannel[]; loading: boolean }) {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">频道管理</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-[960px]">
+        <DialogTitle>频道管理</DialogTitle>
+        <ChannelPanel channels={channels} loading={loading} />
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -191,11 +201,10 @@ function ChannelPanel({ channels, loading }: { channels: TGChannel[]; loading: b
   })
   const setAllSelected = (checked: boolean) => setSelected(checked ? new Set(channels.map((channel) => channel.id)) : new Set())
   return (
-    <Card className="bg-card">
-      <CardHeader>
+    <div className="grid gap-4">
+      <div>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <CardTitle>频道管理</CardTitle>
             <CardDescription>公开频道可手动添加，私密频道用同步频道导入</CardDescription>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -226,8 +235,8 @@ function ChannelPanel({ channels, loading }: { channels: TGChannel[]; loading: b
             )}
           </div>
         </div>
-      </CardHeader>
-      <CardContent className="grid gap-4">
+      </div>
+      <div className="grid gap-4">
         <FormError error={create.error || sync.error} />
         <div className="grid gap-2 md:grid-cols-[1fr_auto]">
           <Input value={identifier} placeholder="@channel 或 https://t.me/channel" onChange={(e) => setIdentifier(e.target.value)} />
@@ -254,8 +263,8 @@ function ChannelPanel({ channels, loading }: { channels: TGChannel[]; loading: b
             ))}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
 

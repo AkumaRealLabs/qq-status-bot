@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, RefreshCcw, Save } from 'lucide-react'
+import { Loader2, RefreshCcw, Save, Settings2 } from 'lucide-react'
 import { EmptyPanel, Field, FormError, StatusBadge } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
@@ -62,6 +63,14 @@ export function SchedulerPage() {
       actions={
         <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
           {(cfg.isFetching || cards.isFetching || channels.isFetching || logs.isFetching) && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          <SchedulerConfigDialog
+            form={form}
+            message={message}
+            saveError={saveConfig.isError}
+            saving={saveConfig.isPending}
+            onChange={(patch) => setCfgDraft({ ...form, ...patch })}
+            onSave={() => saveConfig.mutate()}
+          />
           <Button variant="outline" size="sm" onClick={() => void channels.refetch()} disabled={channels.isFetching}>
             <RefreshCcw className={cn('size-4', channels.isFetching && 'animate-spin')} />
             刷新渠道
@@ -70,32 +79,15 @@ export function SchedulerPage() {
       }
     >
       <Card className="w-full max-w-3xl bg-card">
-        <CardHeader>
-          <CardTitle>连接配置</CardTitle>
-          <CardDescription>保存后刷新渠道列表</CardDescription>
-        </CardHeader>
-        <CardContent className="grid min-w-0 gap-4 md:grid-cols-2">
-          <Field label="Base URL">
-            <Input value={form.scheduler_base_url} onChange={(e) => setCfgDraft({ ...form, scheduler_base_url: e.target.value })} />
-          </Field>
-          <Field label="用户 ID">
-            <Input value={form.scheduler_user_id} onChange={(e) => setCfgDraft({ ...form, scheduler_user_id: e.target.value })} />
-          </Field>
-          <Field label="Access Token">
-            <Input type="password" value={form.scheduler_access_token} onChange={(e) => setCfgDraft({ ...form, scheduler_access_token: e.target.value })} />
-          </Field>
+        <CardContent className="grid min-w-0 gap-4 md:grid-cols-[1fr_auto]">
           <Field label="渠道搜索">
             <Input value={keyword} placeholder="名称、模型或分组" onChange={(e) => setKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void channels.refetch() }} />
           </Field>
-          <div className="flex flex-wrap items-center gap-2 md:col-span-2">
-            <Button onClick={() => saveConfig.mutate()} disabled={saveConfig.isPending}>
-              {saveConfig.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-              保存配置
-            </Button>
+          <div className="flex items-end">
             <Button variant="outline" onClick={() => void channels.refetch()} disabled={channels.isFetching}>
+              {channels.isFetching ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
               测试连接
             </Button>
-            {message && <span className={cn('text-sm', saveConfig.isError ? 'text-destructive' : 'text-muted-foreground')}>{message}</span>}
           </div>
           <div className="md:col-span-2">
             <FormError error={channels.error} />
@@ -178,6 +170,54 @@ export function SchedulerPage() {
         </CardContent>
       </Card>
     </Page>
+  )
+}
+
+function SchedulerConfigDialog({
+  form,
+  message,
+  saveError,
+  saving,
+  onChange,
+  onSave,
+}: {
+  form: SchedulerConfig
+  message: string
+  saveError: boolean
+  saving: boolean
+  onChange: (patch: Partial<SchedulerConfig>) => void
+  onSave: () => void
+}) {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <Settings2 className="size-4" />
+          连接配置
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogTitle>连接配置</DialogTitle>
+        <div className="grid min-w-0 gap-4 md:grid-cols-2">
+          <Field label="Base URL">
+            <Input value={form.scheduler_base_url} onChange={(e) => onChange({ scheduler_base_url: e.target.value })} />
+          </Field>
+          <Field label="用户 ID">
+            <Input value={form.scheduler_user_id} onChange={(e) => onChange({ scheduler_user_id: e.target.value })} />
+          </Field>
+          <Field label="Access Token">
+            <Input type="password" value={form.scheduler_access_token} onChange={(e) => onChange({ scheduler_access_token: e.target.value })} />
+          </Field>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {message && <span className={cn('text-sm', saveError ? 'text-destructive' : 'text-muted-foreground')}>{message}</span>}
+          <Button onClick={onSave} disabled={saving}>
+            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            保存配置
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
