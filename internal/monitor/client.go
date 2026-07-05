@@ -373,23 +373,38 @@ env_key = %q
 	output, err := cmd.CombinedOutput()
 	latency := time.Since(start)
 	if err != nil {
-		msg := strings.TrimSpace(string(output))
-		if msg == "" {
-			msg = err.Error()
-		} else {
-			msg = err.Error() + ": " + msg
-		}
-		msg = strings.ReplaceAll(msg, key, "[redacted]")
-		if len(msg) > 2000 {
-			msg = msg[:2000] + "..."
-		}
-		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: msg}
+		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: codexCLIError(err, output, key)}
 	}
 	answer, err := os.ReadFile(answerPath)
 	if err != nil {
 		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
 	}
 	return probeResultFromOutput(challenge, strings.TrimSpace(string(answer)), 0, latency)
+}
+
+func codexCLIError(err error, output []byte, key string) string {
+	var lines []string
+	for _, line := range strings.Split(strings.ReplaceAll(string(output), "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(strings.ReplaceAll(line, key, "[redacted]"))
+		lower := strings.ToLower(line)
+		if line == "" || strings.HasPrefix(lower, "warning:") || strings.HasPrefix(lower, "tip:") || strings.HasPrefix(lower, "usage:") || strings.HasPrefix(lower, "for more information") {
+			continue
+		}
+		if strings.Contains(lower, "error") && (len(lines) == 0 || lines[len(lines)-1] != line) {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) > 0 {
+		return limitText(err.Error()+": "+lines[len(lines)-1], 2000)
+	}
+	return err.Error()
+}
+
+func limitText(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
 }
 
 func probeResultFromOutput(challenge challenge, output string, httpStatus int, latency time.Duration) ProbeResult {

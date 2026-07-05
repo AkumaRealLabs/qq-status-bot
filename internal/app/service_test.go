@@ -424,7 +424,7 @@ func TestCheckCardStoresCodexCLIFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho cli unavailable >&2\nexit 9\n"), 0700); err != nil {
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho 'ERROR: cli unavailable' >&2\nexit 9\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	svc := New(st)

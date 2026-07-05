@@ -213,11 +213,15 @@ func TestProbeCodexCLIFailureIsRecordedAndRedacted(t *testing.T) {
 	defer func() { newChallenge = old }()
 
 	fake := fakeCodex(t, `#!/bin/sh
-echo "cli failed with sk-card-secret" >&2
+echo "user" >&2
+echo "Which fruit? banana or car" >&2
+echo "warning: Codex could not find bubblewrap on PATH." >&2
+echo "ERROR: exceeded retry limit, last status: 429 Too Many Requests, request id: req-1 sk-card-secret" >&2
+echo "ERROR: exceeded retry limit, last status: 429 Too Many Requests, request id: req-1 sk-card-secret" >&2
 exit 42
 `)
 	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.5")
-	if got.Success || got.Status != StatusError || !strings.Contains(got.Error, "[redacted]") || strings.Contains(got.Error, "sk-card-secret") {
+	if got.Success || got.Status != StatusError || !strings.Contains(got.Error, "429 Too Many Requests") || !strings.Contains(got.Error, "[redacted]") || strings.Contains(got.Error, "sk-card-secret") || strings.Contains(got.Error, "Which fruit") || strings.Contains(got.Error, "bubblewrap") {
 		t.Fatalf("got=%+v", got)
 	}
 }
