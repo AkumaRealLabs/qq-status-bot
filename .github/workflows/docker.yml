@@ -86,20 +86,18 @@ jobs:
             fi
             echo "EOF"
           } >> "$GITHUB_ENV"
-      - uses: docker/build-push-action@v6
+      - name: Build and push app image
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ github.event_name == 'push' }}
           tags: ${{ env.APP_TAGS }}
           build-args: |
             VITE_BUILD_VERSION=${{ env.BUILD_VERSION }}
-          cache-from: type=gha,scope=app
-          cache-to: type=gha,mode=max,scope=app
-      - uses: docker/build-push-action@v6
+      - name: Build and push browser image
+        uses: docker/build-push-action@v6
         if: steps.changes.outputs.browser == 'true'
         with:
           context: browser
           push: ${{ github.event_name == 'push' }}
           tags: ${{ env.BROWSER_TAGS }}
-          cache-from: type=gha,scope=browser
-          cache-to: type=gha,mode=max,scope=browser
