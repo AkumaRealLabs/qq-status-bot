@@ -26,7 +26,7 @@ export function SchedulerPage() {
   const channels = useQuery({
     queryKey: ['scheduler', 'channels', keyword],
     queryFn: () => api<SchedulerChannel[]>(`/api/scheduler/channels?keyword=${encodeURIComponent(keyword)}`),
-    enabled: false,
+    enabled: Boolean(cfg.data?.scheduler_base_url && cfg.data.scheduler_user_id && cfg.data.scheduler_access_token),
   })
   const form = cfgDraft ?? cfg.data
   const saveConfig = useMutation({
@@ -115,7 +115,8 @@ export function SchedulerPage() {
           {rows.map((card) => {
             const options = channelsForCard(list, card, rows)
             const channel = options.find((item) => item.id === card.scheduler_channel_id)
-            const nextStatus = channel?.status === 1 ? 2 : 1
+            const canToggle = channel?.status === 1 || channel?.status === 2
+            const nextStatus = channel?.status === 2 ? 1 : 2
             return (
               <Card key={card.id} className="min-w-0 bg-card">
                 <CardHeader className="gap-2">
@@ -152,11 +153,11 @@ export function SchedulerPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={!card.scheduler_channel_id || setStatus.isPending}
+                    disabled={!card.scheduler_channel_id || !canToggle || setStatus.isPending}
                     onClick={() => setStatus.mutate({ card, status: nextStatus })}
                   >
                     {setStatus.isPending ? <Loader2 className="size-4 animate-spin" /> : nextStatus === 1 ? <Power className="size-4" /> : <PowerOff className="size-4" />}
-                    {nextStatus === 1 ? '启用渠道' : '关闭渠道'}
+                    {!canToggle ? '刷新渠道' : nextStatus === 1 ? '启用渠道' : '关闭渠道'}
                   </Button>
                 </CardContent>
               </Card>
@@ -250,14 +251,20 @@ function SchedulerConfigDialog({
 
 function channelDetail(channel?: SchedulerChannel) {
   if (!channel) return '先刷新渠道，再选择要绑定的渠道'
-  return [`状态 ${channel.status}`, channel.type, channel.group, channel.tag, channel.models?.join(', ')].filter(Boolean).join(' · ')
+  return [`状态 ${schedulerStatus(channel.status)}`, channel.type, channel.group, channel.tag, channel.models?.join(', ')].filter(Boolean).join(' · ')
 }
 
 function channelsForCard(channels: SchedulerChannel[], card: ModelCard, cards: ModelCard[]) {
   const used = new Set(cards.filter((item) => item.id !== card.id).map((item) => item.scheduler_channel_id).filter(Boolean))
   const available = channels.filter((channel) => !used.has(channel.id))
   if (!card.scheduler_channel_id || available.some((item) => item.id === card.scheduler_channel_id)) return available
-  return [{ id: card.scheduler_channel_id, name: card.scheduler_channel_name || card.scheduler_channel_id, status: 0 }, ...available]
+  return [{ id: card.scheduler_channel_id, name: card.scheduler_channel_name || card.scheduler_channel_id, status: -1 }, ...available]
+}
+
+function schedulerStatus(status: number) {
+  if (status === 1) return '已启用'
+  if (status === 2) return '已关闭'
+  return '未知'
 }
 
 function logAction(action: SchedulerLog['action']) {

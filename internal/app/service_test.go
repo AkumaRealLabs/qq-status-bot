@@ -85,9 +85,10 @@ func TestNewDefaultsToCodexCLIProbeWithHTTPFallback(t *testing.T) {
 }
 
 func TestSchedulerConfigAndChannelsProxy(t *testing.T) {
-	var sawAuth, sawUser, sawQuery string
+	var sawAuth, sawUser, sawQuery, sawPageSize string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawAuth, sawUser, sawQuery = r.Header.Get("Authorization"), r.Header.Get("New-Api-User"), r.URL.Query().Get("keyword")
+		sawPageSize = r.URL.Query().Get("page_size")
 		if r.URL.Path != "/api/channel/" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
@@ -117,8 +118,8 @@ func TestSchedulerConfigAndChannelsProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sawAuth != "token" || sawUser != "42" || sawQuery != "claude" {
-		t.Fatalf("headers/query = auth=%q user=%q keyword=%q", sawAuth, sawUser, sawQuery)
+	if sawAuth != "token" || sawUser != "42" || sawQuery != "claude" || sawPageSize != "1000" {
+		t.Fatalf("headers/query = auth=%q user=%q keyword=%q page_size=%q", sawAuth, sawUser, sawQuery, sawPageSize)
 	}
 	if len(channels) != 1 || channels[0].ID != "9" || channels[0].Name != "Claude" || channels[0].Status != 1 || channels[0].Models[0] != "gpt-5.5" {
 		t.Fatalf("channels = %+v", channels)

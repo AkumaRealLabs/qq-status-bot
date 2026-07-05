@@ -35,6 +35,7 @@ func (s *Service) SchedulerChannels(ctx context.Context, keyword string) ([]doma
 		return nil, errors.New("请先配置调度器连接")
 	}
 	values := url.Values{}
+	values.Set("page_size", "1000")
 	if strings.TrimSpace(keyword) != "" {
 		values.Set("keyword", strings.TrimSpace(keyword))
 	}
