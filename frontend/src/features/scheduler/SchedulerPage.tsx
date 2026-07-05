@@ -111,67 +111,74 @@ export function SchedulerPage() {
       {cards.isLoading && <EmptyPanel text="加载中..." />}
       {!cards.isLoading && rows.length === 0 && <EmptyPanel text="暂无状态卡片" />}
       {!cards.isLoading && rows.length > 0 && (
-        <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {rows.map((card) => {
-            const options = channelsForCard(list, card, rows)
-            const channel = options.find((item) => item.id === card.scheduler_channel_id)
-            const canToggle = channel?.status === 1 || channel?.status === 2
-            const nextStatus = channel?.status === 2 ? 1 : 2
-            const detail = channelDetail(channel)
-            return (
-              <Card key={card.id} className="min-w-0 bg-card">
-                <CardHeader className="gap-2">
-                  <div className="flex min-w-0 items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <CardTitle className="truncate">{card.name}</CardTitle>
-                      <CardDescription>{card.scheduler_channel_name || '未绑定渠道'}</CardDescription>
-                    </div>
-                    <StatusBadge ok={!card.scheduler_auto_disabled} okText={card.scheduler_channel_id ? '可自动控制' : '未绑定'} failText="已自动关闭" />
-                  </div>
-                </CardHeader>
-                <CardContent className="grid gap-3">
-                  <Field label="调度器渠道">
-                    <Select
-                      value={card.scheduler_channel_id || none}
-                      onValueChange={(value) => bind.mutate({ card, channel: value === none ? undefined : list.find((item) => item.id === value) })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="选择渠道" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={none}>不绑定</SelectItem>
-                        {options.map((channel) => (
-                          <SelectItem key={channel.id} value={channel.id}>
-                            {channel.name || channel.id}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <div className="text-xs leading-relaxed text-muted-foreground">
-                    {channel ? (
-                      <>
-                        <span className={cn('font-medium', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
-                          {schedulerStatus(channel.status)}
-                        </span>
-                        {detail && ` · ${detail}`}
-                      </>
-                    ) : '先刷新渠道，再选择要绑定的渠道'}
-                  </div>
-                  <Button
-                    variant={!canToggle ? 'outline' : nextStatus === 1 ? 'default' : 'danger'}
-                    size="sm"
-                    className={cn(canToggle && nextStatus === 1 && 'bg-success text-primary-foreground hover:bg-success/90 focus-visible:ring-success/20')}
-                    disabled={!card.scheduler_channel_id || !canToggle || setStatus.isPending}
-                    onClick={() => setStatus.mutate({ card, status: nextStatus })}
-                  >
-                    {setStatus.isPending ? <Loader2 className="size-4 animate-spin" /> : nextStatus === 1 ? <Power className="size-4" /> : <PowerOff className="size-4" />}
-                    {!canToggle ? '刷新渠道' : nextStatus === 1 ? '启用渠道' : '关闭渠道'}
-                  </Button>
-                </CardContent>
-              </Card>
-            )
-          })}
+        <div className="grid min-w-0 gap-5">
+          {groupCards(rows).map((group) => (
+            <section key={group.name} className="grid min-w-0 gap-2">
+              <div className="text-sm font-medium text-foreground">{group.name}</div>
+              <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {group.cards.map((card) => {
+                  const options = channelsForCard(list, card, rows)
+                  const channel = options.find((item) => item.id === card.scheduler_channel_id)
+                  const canToggle = channel?.status === 1 || channel?.status === 2
+                  const nextStatus = channel?.status === 2 ? 1 : 2
+                  const detail = channelDetail(channel)
+                  return (
+                    <Card key={card.id} className="min-w-0 bg-card">
+                      <CardHeader className="gap-2">
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <CardTitle className="truncate">{card.name}</CardTitle>
+                            <CardDescription>{card.scheduler_channel_name || '未绑定渠道'}</CardDescription>
+                          </div>
+                          <StatusBadge ok={!card.scheduler_auto_disabled} okText={card.scheduler_channel_id ? '可自动控制' : '未绑定'} failText="已自动关闭" />
+                        </div>
+                      </CardHeader>
+                      <CardContent className="grid gap-3">
+                        <Field label="调度器渠道">
+                          <Select
+                            value={card.scheduler_channel_id || none}
+                            onValueChange={(value) => bind.mutate({ card, channel: value === none ? undefined : list.find((item) => item.id === value) })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="选择渠道" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={none}>不绑定</SelectItem>
+                              {options.map((channel) => (
+                                <SelectItem key={channel.id} value={channel.id}>
+                                  {channel.name || channel.id}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
+                        <div className="text-xs leading-relaxed text-muted-foreground">
+                          {channel ? (
+                            <>
+                              <span className={cn('font-medium', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
+                                {schedulerStatus(channel.status)}
+                              </span>
+                              {detail && ` · ${detail}`}
+                            </>
+                          ) : '先刷新渠道，再选择要绑定的渠道'}
+                        </div>
+                        <Button
+                          variant={!canToggle ? 'outline' : nextStatus === 1 ? 'default' : 'danger'}
+                          size="sm"
+                          className={cn(canToggle && nextStatus === 1 && 'bg-success text-primary-foreground hover:bg-success/90 focus-visible:ring-success/20')}
+                          disabled={!card.scheduler_channel_id || !canToggle || setStatus.isPending}
+                          onClick={() => setStatus.mutate({ card, status: nextStatus })}
+                        >
+                          {setStatus.isPending ? <Loader2 className="size-4 animate-spin" /> : nextStatus === 1 ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                          {!canToggle ? '刷新渠道' : nextStatus === 1 ? '启用渠道' : '关闭渠道'}
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
         </div>
       )}
 
@@ -268,6 +275,20 @@ function channelsForCard(channels: SchedulerChannel[], card: ModelCard, cards: M
   const available = channels.filter((channel) => !used.has(channel.id))
   if (!card.scheduler_channel_id || available.some((item) => item.id === card.scheduler_channel_id)) return available
   return [{ id: card.scheduler_channel_id, name: card.scheduler_channel_name || card.scheduler_channel_id, status: -1 }, ...available]
+}
+
+function groupCards(cards: ModelCard[]) {
+  const groups: { name: string; cards: ModelCard[] }[] = []
+  for (const card of cards) {
+    const name = card.display_group?.trim() || '其他'
+    let group = groups.find((item) => item.name === name)
+    if (!group) {
+      group = { name, cards: [] }
+      groups.push(group)
+    }
+    group.cards.push(card)
+  }
+  return groups
 }
 
 function schedulerStatus(status: number) {
