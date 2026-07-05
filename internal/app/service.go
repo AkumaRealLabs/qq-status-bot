@@ -367,6 +367,17 @@ func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) 
 	if err != nil {
 		return domain.ModelCard{}, err
 	}
+	if card.SchedulerChannelID != "" {
+		cards, err := s.Store.ListCards(ctx)
+		if err != nil {
+			return domain.ModelCard{}, err
+		}
+		for _, item := range cards {
+			if item.ID != id && item.SchedulerChannelID == card.SchedulerChannelID {
+				return domain.ModelCard{}, errors.New("scheduler channel already bound to another card")
+			}
+		}
+	}
 	if id == "" {
 		return s.Store.CreateCard(ctx, card)
 	}

@@ -121,7 +121,7 @@ export function SchedulerPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={none}>不绑定</SelectItem>
-                      {channelsForCard(list, card).map((channel) => (
+                      {channelsForCard(list, card, rows).map((channel) => (
                         <SelectItem key={channel.id} value={channel.id}>
                           {channel.name || channel.id}
                         </SelectItem>
@@ -130,7 +130,7 @@ export function SchedulerPage() {
                   </Select>
                 </Field>
                 <div className="text-xs leading-relaxed text-muted-foreground">
-                  {channelDetail(channelsForCard(list, card).find((item) => item.id === card.scheduler_channel_id))}
+                  {channelDetail(channelsForCard(list, card, rows).find((item) => item.id === card.scheduler_channel_id))}
                 </div>
               </CardContent>
             </Card>
@@ -226,9 +226,11 @@ function channelDetail(channel?: SchedulerChannel) {
   return [`状态 ${channel.status}`, channel.type, channel.group, channel.tag, channel.models?.join(', ')].filter(Boolean).join(' · ')
 }
 
-function channelsForCard(channels: SchedulerChannel[], card: ModelCard) {
-  if (!card.scheduler_channel_id || channels.some((item) => item.id === card.scheduler_channel_id)) return channels
-  return [{ id: card.scheduler_channel_id, name: card.scheduler_channel_name || card.scheduler_channel_id, status: 0 }, ...channels]
+function channelsForCard(channels: SchedulerChannel[], card: ModelCard, cards: ModelCard[]) {
+  const used = new Set(cards.filter((item) => item.id !== card.id).map((item) => item.scheduler_channel_id).filter(Boolean))
+  const available = channels.filter((channel) => !used.has(channel.id))
+  if (!card.scheduler_channel_id || available.some((item) => item.id === card.scheduler_channel_id)) return available
+  return [{ id: card.scheduler_channel_id, name: card.scheduler_channel_name || card.scheduler_channel_id, status: 0 }, ...available]
 }
 
 function logAction(action: SchedulerLog['action']) {

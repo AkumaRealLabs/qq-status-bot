@@ -554,6 +554,28 @@ func TestSaveCardSupportsCustomAndUpstreamKey(t *testing.T) {
 	}
 }
 
+func TestSaveCardRejectsDuplicateSchedulerChannel(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	first, err := svc.SaveCard(t.Context(), "", domain.ModelCard{Name: "A", BaseURL: "https://api-a.example.test", APIKey: "sk-a", SchedulerChannelID: "ch-1", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SaveCard(t.Context(), "", domain.ModelCard{Name: "B", BaseURL: "https://api-b.example.test", APIKey: "sk-b", SchedulerChannelID: "ch-1", Enabled: true}); err == nil {
+		t.Fatal("expected duplicate scheduler channel error")
+	}
+	if _, err := svc.SaveCard(t.Context(), first.ID, domain.ModelCard{Name: "A", BaseURL: "https://api-a.example.test", APIKey: "sk-a", SchedulerChannelID: "ch-1", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCheckCustomCardUsesOwnURLKeyAndFixedModel(t *testing.T) {
 	var auth, model string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
