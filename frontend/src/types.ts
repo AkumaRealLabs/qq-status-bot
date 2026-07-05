@@ -271,3 +271,15 @@ export type SchedulerChannel = {
   group?: string
   models?: string[]
 }
+
+export type SchedulerLog = {
+  id: string
+  card_id: string
+  card_name: string
+  channel_id: string
+  channel_name: string
+  action: 'disable' | 'restore'
+  status: 'success' | 'error' | 'skipped'
+  message: string
+  created_at: string
+}

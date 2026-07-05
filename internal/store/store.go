@@ -42,6 +42,7 @@ var exportTables = []string{
 	"probe_runs",
 	"alert_events",
 	"balance_recharge_logs",
+	"scheduler_logs",
 	"revenue_cards",
 	"tg_session",
 	"tg_channels",
@@ -141,6 +142,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 			payment_type TEXT NOT NULL DEFAULT '', remote_order_id TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', raw_status TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS scheduler_logs (
+			id TEXT PRIMARY KEY, card_id TEXT NOT NULL DEFAULT '', card_name TEXT NOT NULL DEFAULT '',
+			channel_id TEXT NOT NULL DEFAULT '', channel_name TEXT NOT NULL DEFAULT '',
+			action TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS revenue_cards (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, source_type TEXT NOT NULL, upstream_id TEXT NOT NULL DEFAULT '',
 			base_url TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', access_token TEXT NOT NULL DEFAULT '',
@@ -169,6 +175,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_balance_upstream_time ON balance_snapshots(upstream_id, checked_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_state ON alert_events(upstream_id, type, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_recharge_upstream_time ON balance_recharge_logs(upstream_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_scheduler_logs_time ON scheduler_logs(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_revenue_cards_upstream ON revenue_cards(upstream_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_tg_messages_channel_time ON tg_messages(channel_id, published_at)`,
 	}
@@ -464,6 +471,40 @@ func (s *Store) UpdateSchedulerConfig(ctx context.Context, cfg domain.SchedulerC
 	cfg.AccessToken = strings.TrimSpace(cfg.AccessToken)
 	_, err := s.exec(ctx, `UPDATE settings SET scheduler_base_url=?, scheduler_user_id=?, scheduler_access_token=? WHERE id='default'`, cfg.BaseURL, cfg.UserID, cfg.AccessToken)
 	return cfg, err
+}
+
+func (s *Store) CreateSchedulerLog(ctx context.Context, log domain.SchedulerLog) error {
+	if log.ID == "" {
+		log.ID = NewID()
+	}
+	if log.CreatedAt.IsZero() {
+		log.CreatedAt = time.Now().UTC()
+	}
+	_, err := s.exec(ctx, `INSERT INTO scheduler_logs (id, card_id, card_name, channel_id, channel_name, action, status, message, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, log.ID, log.CardID, log.CardName, log.ChannelID, log.ChannelName, log.Action, log.Status, log.Message, log.CreatedAt.Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) SchedulerLogs(ctx context.Context, limit int) ([]domain.SchedulerLog, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.query(ctx, `SELECT id, card_id, card_name, channel_id, channel_name, action, status, message, created_at FROM scheduler_logs ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.SchedulerLog{}
+	for rows.Next() {
+		var log domain.SchedulerLog
+		var created string
+		if err := rows.Scan(&log.ID, &log.CardID, &log.CardName, &log.ChannelID, &log.ChannelName, &log.Action, &log.Status, &log.Message, &created); err != nil {
+			return nil, err
+		}
+		log.CreatedAt = parseTime(created)
+		out = append(out, log)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) CreateUpstream(ctx context.Context, u domain.Upstream) (domain.Upstream, error) {

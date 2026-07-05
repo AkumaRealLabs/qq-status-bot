@@ -188,6 +188,13 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	if len(statuses) != 2 || statuses[1] != 1 || card.SchedulerAutoDisabled {
 		t.Fatalf("restore statuses=%v card=%+v", statuses, card)
 	}
+	logs, err := svc.SchedulerLogs(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 2 || logs[0].Action != "restore" || logs[1].Action != "disable" || logs[0].Status != "success" {
+		t.Fatalf("logs = %+v", logs)
+	}
 }
 
 func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
@@ -211,6 +218,13 @@ func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	if unconfigured.SchedulerAutoDisabled {
 		t.Fatalf("unconfigured scheduler marked card disabled: %+v", unconfigured)
 	}
+	logs, err := svc.SchedulerLogs(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].Status != "skipped" {
+		t.Fatalf("unconfigured logs = %+v", logs)
+	}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "message": "blocked"})
 	}))
@@ -232,6 +246,13 @@ func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	}
 	if got.SchedulerAutoDisabled {
 		t.Fatalf("card was marked auto disabled after remote failure: %+v", got)
+	}
+	logs, err = svc.SchedulerLogs(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 2 || logs[0].Status != "error" {
+		t.Fatalf("remote failure logs = %+v", logs)
 	}
 	if _, err := svc.SchedulerChannels(t.Context(), ""); err == nil {
 		t.Fatal("success:false channel list should fail")

@@ -52,6 +52,10 @@ func (s *Service) SchedulerChannels(ctx context.Context, keyword string) ([]doma
 	return schedulerChannels(raw), nil
 }
 
+func (s *Service) SchedulerLogs(ctx context.Context, limit int) ([]domain.SchedulerLog, error) {
+	return s.Store.SchedulerLogs(ctx, limit)
+}
+
 func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {
 	if card.SchedulerChannelID == "" {
 		return nil
@@ -59,22 +63,48 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 	if !success && failures >= 2 && !card.SchedulerAutoDisabled {
 		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 2); err != nil {
 			if errors.Is(err, errSchedulerNotConfigured) {
+				s.logSchedulerAction(ctx, card, "disable", "skipped", "调度器未配置")
 				return nil
 			}
+			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
 			return err
 		}
-		return s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true)
+		if err := s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true); err != nil {
+			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
+			return err
+		}
+		s.logSchedulerAction(ctx, card, "disable", "success", "连续失败 2 次，已关闭调度器渠道")
+		return nil
 	}
 	if success && card.SchedulerAutoDisabled && s.lastTwoProbesSucceeded(ctx, card.ID) {
 		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 1); err != nil {
 			if errors.Is(err, errSchedulerNotConfigured) {
+				s.logSchedulerAction(ctx, card, "restore", "skipped", "调度器未配置")
 				return nil
 			}
+			s.logSchedulerAction(ctx, card, "restore", "error", err.Error())
 			return err
 		}
-		return s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, false)
+		if err := s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, false); err != nil {
+			s.logSchedulerAction(ctx, card, "restore", "error", err.Error())
+			return err
+		}
+		s.logSchedulerAction(ctx, card, "restore", "success", "连续成功 2 次，已恢复调度器渠道")
+		return nil
 	}
 	return nil
+}
+
+func (s *Service) logSchedulerAction(ctx context.Context, card domain.ModelCard, action, status, message string) {
+	_ = s.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
+		CardID:      card.ID,
+		CardName:    card.Name,
+		ChannelID:   card.SchedulerChannelID,
+		ChannelName: card.SchedulerChannelName,
+		Action:      action,
+		Status:      status,
+		Message:     message,
+	})
 }
 
 func (s *Service) lastTwoProbesSucceeded(ctx context.Context, cardID string) bool {

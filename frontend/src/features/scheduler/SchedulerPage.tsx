@@ -8,9 +8,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
-import { errorMessage } from '@/lib/format'
+import { errorMessage, fmtTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { ModelCard, SchedulerChannel, SchedulerConfig } from '@/types'
+import type { ModelCard, SchedulerChannel, SchedulerConfig, SchedulerLog } from '@/types'
 
 const none = '__none__'
 
@@ -21,6 +21,7 @@ export function SchedulerPage() {
   const [message, setMessage] = useState('')
   const cfg = useQuery({ queryKey: ['scheduler', 'config'], queryFn: () => api<SchedulerConfig>('/api/scheduler/config') })
   const cards = useQuery({ queryKey: ['cards'], queryFn: () => api<ModelCard[]>('/api/cards') })
+  const logs = useQuery({ queryKey: ['scheduler', 'logs'], queryFn: () => api<SchedulerLog[]>('/api/scheduler/logs?limit=50') })
   const channels = useQuery({
     queryKey: ['scheduler', 'channels', keyword],
     queryFn: () => api<SchedulerChannel[]>(`/api/scheduler/channels?keyword=${encodeURIComponent(keyword)}`),
@@ -60,7 +61,7 @@ export function SchedulerPage() {
       description="连接 new-api 调度器并绑定状态卡片"
       actions={
         <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-          {(cfg.isFetching || cards.isFetching || channels.isFetching) && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          {(cfg.isFetching || cards.isFetching || channels.isFetching || logs.isFetching) && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
           <Button variant="outline" size="sm" onClick={() => void channels.refetch()} disabled={channels.isFetching}>
             <RefreshCcw className={cn('size-4', channels.isFetching && 'animate-spin')} />
             刷新渠道
@@ -144,6 +145,38 @@ export function SchedulerPage() {
           ))}
         </div>
       )}
+
+      <Card className="min-w-0 bg-card">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <CardTitle>调度日志</CardTitle>
+              <CardDescription>自动关闭和恢复渠道的执行记录</CardDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => void logs.refetch()} disabled={logs.isFetching}>
+              <RefreshCcw className={cn('size-4', logs.isFetching && 'animate-spin')} />
+              刷新
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-2">
+          {logs.isLoading && <EmptyPanel text="加载中..." />}
+          <FormError error={logs.error} />
+          {!logs.isLoading && !logs.error && (logs.data ?? []).length === 0 && <EmptyPanel text="暂无调度日志" />}
+          {(logs.data ?? []).map((log) => (
+            <div key={log.id} className="grid min-w-0 gap-1 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm md:grid-cols-[140px_1fr_auto] md:items-center">
+              <span className="text-xs text-muted-foreground">{fmtTime(log.created_at)}</span>
+              <div className="min-w-0">
+                <div className="truncate font-medium">{log.card_name || log.card_id || '未知卡片'} · {log.channel_name || log.channel_id || '未知渠道'}</div>
+                <div className="truncate text-xs text-muted-foreground">{log.message}</div>
+              </div>
+              <span className={cn('text-xs font-medium', log.status === 'success' ? 'text-emerald-600' : log.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+                {logAction(log.action)} · {logStatus(log.status)}
+              </span>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
     </Page>
   )
 }
@@ -156,4 +189,14 @@ function channelDetail(channel?: SchedulerChannel) {
 function channelsForCard(channels: SchedulerChannel[], card: ModelCard) {
   if (!card.scheduler_channel_id || channels.some((item) => item.id === card.scheduler_channel_id)) return channels
   return [{ id: card.scheduler_channel_id, name: card.scheduler_channel_name || card.scheduler_channel_id, status: 0 }, ...channels]
+}
+
+function logAction(action: SchedulerLog['action']) {
+  return action === 'restore' ? '恢复' : '关闭'
+}
+
+function logStatus(status: SchedulerLog['status']) {
+  if (status === 'success') return '成功'
+  if (status === 'error') return '失败'
+  return '跳过'
 }

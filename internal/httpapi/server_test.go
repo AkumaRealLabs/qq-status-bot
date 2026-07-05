@@ -258,6 +258,7 @@ func TestSchedulerRoutesRequireAuth(t *testing.T) {
 		{http.MethodGet, "/api/scheduler/config"},
 		{http.MethodPatch, "/api/scheduler/config"},
 		{http.MethodGet, "/api/scheduler/channels"},
+		{http.MethodGet, "/api/scheduler/logs"},
 	} {
 		req, _ := http.NewRequest(tc.method, ts.URL+tc.path, strings.NewReader(`{}`))
 		resp, err := ts.Client().Do(req)

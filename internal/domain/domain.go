@@ -169,6 +169,18 @@ type SchedulerChannel struct {
 	Models []string `json:"models,omitempty"`
 }
 
+type SchedulerLog struct {
+	ID          string    `json:"id"`
+	CardID      string    `json:"card_id"`
+	CardName    string    `json:"card_name"`
+	ChannelID   string    `json:"channel_id"`
+	ChannelName string    `json:"channel_name"`
+	Action      string    `json:"action"`
+	Status      string    `json:"status"`
+	Message     string    `json:"message"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type RevenueCard struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
