@@ -1,9 +1,12 @@
 package monitor
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -154,4 +157,91 @@ func TestProbeClassifiesFailures(t *testing.T) {
 			t.Fatalf("got=%+v", got)
 		}
 	})
+}
+
+func TestProbeCodexCLIUsesTempConfigAndEnvKey(t *testing.T) {
+	old := newChallenge
+	newChallenge = func() challenge { return challenge{Prompt: "Which fruit? banana or car", ExpectedAnswer: "banana"} }
+	defer func() { newChallenge = old }()
+
+	logPath := filepath.Join(t.TempDir(), "fake.log")
+	t.Setenv("AUM_FAKE_CODEX_LOG", logPath)
+	fake := fakeCodex(t, `#!/bin/sh
+set -eu
+config="$CODEX_HOME/config.toml"
+[ "$AUM_CODEX_API_KEY" = "sk-card-secret" ] || { echo "missing card key" >&2; exit 13; }
+grep -q 'base_url = "https://codex.example.test/v1"' "$config" || { cat "$config" >&2; exit 10; }
+grep -q 'env_key = "AUM_CODEX_API_KEY"' "$config" || exit 11
+! grep -q 'sk-card-secret' "$config" || { echo "key leaked" >&2; exit 12; }
+{
+  printf 'args:%s\n' "$*"
+  cat "$config"
+} > "$AUM_FAKE_CODEX_LOG"
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+    break
+  fi
+  shift
+done
+[ -n "$out" ] || exit 14
+printf 'banana\n' > "$out"
+`)
+
+	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.5")
+	if !got.Success || got.Status != StatusOperational || got.HTTPStatus != 0 || got.Output != "banana" {
+		t.Fatalf("got=%+v", got)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(logBytes)
+	for _, want := range []string{"args:exec", "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "model_provider = \"aum_card\"", "wire_api = \"responses\""} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("fake codex log missing %q:\n%s", want, logText)
+		}
+	}
+}
+
+func TestProbeCodexCLIFailureIsRecordedAndRedacted(t *testing.T) {
+	old := newChallenge
+	newChallenge = func() challenge { return challenge{Prompt: "Which fruit? banana or car", ExpectedAnswer: "banana"} }
+	defer func() { newChallenge = old }()
+
+	fake := fakeCodex(t, `#!/bin/sh
+echo "cli failed with sk-card-secret" >&2
+exit 42
+`)
+	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.5")
+	if got.Success || got.Status != StatusError || !strings.Contains(got.Error, "[redacted]") || strings.Contains(got.Error, "sk-card-secret") {
+		t.Fatalf("got=%+v", got)
+	}
+}
+
+func TestProbeCodexCLIRealOptIn(t *testing.T) {
+	if os.Getenv("AUM_REAL_CODEX_CLI_TEST") != "1" {
+		t.Skip("set AUM_REAL_CODEX_CLI_TEST=1 with AUM_REAL_CODEX_BASE_URL and AUM_REAL_CODEX_API_KEY")
+	}
+	baseURL, key := os.Getenv("AUM_REAL_CODEX_BASE_URL"), os.Getenv("AUM_REAL_CODEX_API_KEY")
+	if baseURL == "" || key == "" {
+		t.Skip("AUM_REAL_CODEX_BASE_URL and AUM_REAL_CODEX_API_KEY are required")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	got := (Client{ProbeMode: ProbeModeCLI}).Probe(ctx, baseURL, key, "gpt-5.5")
+	if !got.Success {
+		t.Fatalf("got=%+v", got)
+	}
+}
+
+func fakeCodex(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

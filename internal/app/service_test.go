@@ -73,6 +73,17 @@ func TestEffectiveRatioUsesBalanceRate(t *testing.T) {
 	}
 }
 
+func TestNewDefaultsToCodexCLIProbeWithHTTPFallback(t *testing.T) {
+	t.Setenv("AUM_PROBE_MODE", "")
+	if got := New(nil).Client.ProbeMode; got != monitor.ProbeModeCLI {
+		t.Fatalf("default probe mode = %q", got)
+	}
+	t.Setenv("AUM_PROBE_MODE", "http")
+	if got := New(nil).Client.ProbeMode; got != monitor.ProbeModeHTTP {
+		t.Fatalf("fallback probe mode = %q", got)
+	}
+}
+
 func TestTodayRevenueMapsEpayBalance(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -400,6 +411,44 @@ func TestCheckCustomCardUsesOwnURLKeyAndFixedModel(t *testing.T) {
 	}
 	if auth != "Bearer sk-custom" || model != domain.ProbeModel {
 		t.Fatalf("auth=%q model=%q", auth, model)
+	}
+}
+
+func TestCheckCardStoresCodexCLIFailure(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho cli unavailable >&2\nexit 9\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{ProbeMode: monitor.ProbeModeCLI, CodexPath: fake}
+	card, err := svc.SaveCard(t.Context(), "", domain.ModelCard{Name: "自定义", BaseURL: "https://api.example.test", APIKey: "sk-custom", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	card, err = st.Card(t.Context(), card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.FailureCount != 1 || !strings.Contains(card.LastError, "cli unavailable") {
+		t.Fatalf("card = %+v", card)
+	}
+	runs, err := st.ProbesForCardSince(t.Context(), card.ID, time.Now().Add(-time.Hour), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Status != monitor.StatusError || !strings.Contains(runs[0].Error, "cli unavailable") {
+		t.Fatalf("runs = %+v", runs)
 	}
 }
 

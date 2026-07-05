@@ -9,21 +9,31 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type Client struct {
-	HTTP *http.Client
+	HTTP      *http.Client
+	ProbeMode string
+	CodexPath string
 }
 
 const (
+	ProbeModeHTTP = "http"
+	ProbeModeCLI  = "cli"
+
 	StatusOperational      = "operational"
 	StatusDegraded         = "degraded"
 	StatusValidationFailed = "validation_failed"
 	StatusFailed           = "failed"
 	StatusError            = "error"
+
+	codexAPIKeyEnv = "AUM_CODEX_API_KEY"
 )
 
 var degradedAfter = 6 * time.Second
@@ -271,6 +281,13 @@ func (c Client) sub2apiGroups(ctx context.Context, u *Upstream) map[string]upstr
 
 func (c Client) Probe(ctx context.Context, baseURL, key, model string) ProbeResult {
 	challenge := newChallenge()
+	if strings.EqualFold(c.ProbeMode, ProbeModeCLI) {
+		return c.probeCodexCLI(ctx, baseURL, key, model, challenge)
+	}
+	return c.probeHTTP(ctx, baseURL, key, model, challenge)
+}
+
+func (c Client) probeHTTP(ctx context.Context, baseURL, key, model string, challenge challenge) ProbeResult {
 	start := time.Now()
 	var raw map[string]any
 	err := c.doJSON(ctx, http.MethodPost, joinURL(baseURL, "/v1/responses"), map[string]any{
@@ -293,14 +310,96 @@ func (c Client) Probe(ctx context.Context, baseURL, key, model string) ProbeResu
 		}
 		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
 	}
-	output := responseText(raw)
+	return probeResultFromOutput(challenge, responseText(raw), http.StatusOK, latency)
+}
+
+func (c Client) probeCodexCLI(ctx context.Context, baseURL, key, model string, challenge challenge) ProbeResult {
+	start := time.Now()
+	dir, err := os.MkdirTemp("", "aum-codex-probe-*")
+	if err != nil {
+		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
+	}
+	defer os.RemoveAll(dir)
+
+	codexHome := filepath.Join(dir, "codex-home")
+	workDir := filepath.Join(dir, "work")
+	homeDir := filepath.Join(dir, "home")
+	for _, path := range []string{codexHome, workDir, homeDir} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
+		}
+	}
+
+	config := fmt.Sprintf(`model_provider = "aum_card"
+model = %q
+disable_response_storage = true
+
+[shell_environment_policy]
+inherit = "none"
+
+[model_providers.aum_card]
+name = "AUM Card"
+base_url = %q
+wire_api = "responses"
+env_key = %q
+`, model, codexProviderBaseURL(baseURL), codexAPIKeyEnv)
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(config), 0600); err != nil {
+		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
+	}
+
+	answerPath := filepath.Join(dir, "answer.txt")
+	codex := c.CodexPath
+	if codex == "" {
+		codex = "codex"
+	}
+	cmd := exec.CommandContext(ctx, codex,
+		"exec",
+		"-m", model,
+		"--skip-git-repo-check",
+		"--ephemeral",
+		"--ignore-rules",
+		"--sandbox", "read-only",
+		"--ask-for-approval", "never",
+		"-C", workDir,
+		"-o", answerPath,
+		challenge.Prompt,
+	)
+	cmd.Dir = workDir
+	cmd.Env = append(os.Environ(),
+		"CODEX_HOME="+codexHome,
+		"HOME="+homeDir,
+		codexAPIKeyEnv+"="+key,
+	)
+	output, err := cmd.CombinedOutput()
+	latency := time.Since(start)
+	if err != nil {
+		msg := strings.TrimSpace(string(output))
+		if msg == "" {
+			msg = err.Error()
+		} else {
+			msg = err.Error() + ": " + msg
+		}
+		msg = strings.ReplaceAll(msg, key, "[redacted]")
+		if len(msg) > 2000 {
+			msg = msg[:2000] + "..."
+		}
+		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: msg}
+	}
+	answer, err := os.ReadFile(answerPath)
+	if err != nil {
+		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
+	}
+	return probeResultFromOutput(challenge, strings.TrimSpace(string(answer)), 0, latency)
+}
+
+func probeResultFromOutput(challenge challenge, output string, httpStatus int, latency time.Duration) ProbeResult {
 	if output == "" {
-		return ProbeResult{HTTPStatus: http.StatusOK, Latency: latency, Status: StatusFailed, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: "回复为空"}
+		return ProbeResult{HTTPStatus: httpStatus, Latency: latency, Status: StatusFailed, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: "回复为空"}
 	}
 	validation := validateResponse(output, challenge.ExpectedAnswer)
 	if !validation.Valid {
 		return ProbeResult{
-			HTTPStatus:     http.StatusOK,
+			HTTPStatus:     httpStatus,
 			Latency:        latency,
 			Status:         StatusValidationFailed,
 			Input:          challenge.Prompt,
@@ -313,7 +412,15 @@ func (c Client) Probe(ctx context.Context, baseURL, key, model string) ProbeResu
 	if latency > degradedAfter {
 		status = StatusDegraded
 	}
-	return ProbeResult{HTTPStatus: http.StatusOK, Latency: latency, Status: status, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Output: output, Success: true}
+	return ProbeResult{HTTPStatus: httpStatus, Latency: latency, Status: status, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Output: output, Success: true}
+}
+
+func codexProviderBaseURL(baseURL string) string {
+	baseURL = strings.TrimRight(baseURL, "/")
+	if strings.HasSuffix(baseURL, "/v1") {
+		return baseURL
+	}
+	return joinURL(baseURL, "/v1")
 }
 
 func responseText(raw map[string]any) string {

@@ -297,7 +297,7 @@ function StatusMonitorCard({
       <CardContent className="grid gap-2.5 pt-2.5">
         <div className="grid min-w-0 grid-cols-2 gap-2">
           <MiniStat label="对话延迟" value={latest ? `${latest.latency_ms} ms` : '-'} />
-          <MiniStat label="端点 PING" value={latest?.http_status ? String(latest.http_status) : '-'} />
+          <MiniStat label="调用状态" value={latest ? (latest.http_status ? String(latest.http_status) : probeStatusLabel(probeStatus(latest))) : '-'} />
         </div>
         <div className="min-w-0 border-t border-border pt-2.5">
           <div className="mb-2 flex items-end justify-between gap-2">

@@ -20,7 +20,11 @@ RUN CGO_ENABLED=0 go build -buildvcs=false -o /out/ai-upstream-monitor .
 
 FROM alpine:3.22
 
-RUN adduser -D -H app
+ARG CODEX_CLI_VERSION=0.142.5
+RUN apk add --no-cache nodejs npm \
+	&& npm install -g @openai/codex@${CODEX_CLI_VERSION} \
+	&& npm cache clean --force \
+	&& adduser -D -H app
 WORKDIR /app
 COPY --from=builder /out/ai-upstream-monitor /app/ai-upstream-monitor
 RUN mkdir -p /app/data /app/pb_data && chown -R app:app /app

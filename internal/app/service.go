@@ -38,7 +38,11 @@ func New(st *store.Store) *Service {
 	if mediaDir == "" {
 		mediaDir = "/app/data/tg_media"
 	}
-	return &Service{Store: st, Client: monitor.Client{HTTP: &http.Client{Timeout: 45 * time.Second}}, TGMediaDir: mediaDir}
+	probeMode := monitor.ProbeModeCLI
+	if strings.EqualFold(os.Getenv("AUM_PROBE_MODE"), monitor.ProbeModeHTTP) {
+		probeMode = monitor.ProbeModeHTTP
+	}
+	return &Service{Store: st, Client: monitor.Client{HTTP: &http.Client{Timeout: 45 * time.Second}, ProbeMode: probeMode}, TGMediaDir: mediaDir}
 }
 
 func (s *Service) StartScheduler(ctx context.Context) {
