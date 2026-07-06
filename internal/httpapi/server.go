@@ -66,6 +66,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/scheduler/config", s.auth(s.updateSchedulerConfig))
 	mux.HandleFunc("GET /api/scheduler/channels", s.auth(s.schedulerChannels))
 	mux.HandleFunc("GET /api/scheduler/logs", s.auth(s.schedulerLogs))
+	mux.HandleFunc("POST /api/scheduler/groups/apply", s.auth(s.applySchedulerGroups))
 	mux.HandleFunc("GET /api/settings", s.auth(s.settings))
 	mux.HandleFunc("PATCH /api/settings", s.auth(s.updateSettings))
 	mux.HandleFunc("GET /api/settings/export", s.auth(s.exportData))
@@ -386,6 +387,11 @@ func (s *Server) schedulerLogs(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	rows, err := s.App.SchedulerLogs(r.Context(), limit)
 	writeJSONOrError(w, rows, err)
+}
+
+func (s *Server) applySchedulerGroups(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.ApplySchedulerGroups(r.Context())
+	writeJSONOrError(w, out, err)
 }
 
 func (s *Server) setCardSchedulerStatus(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -99,7 +100,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 			telegram_chat_id TEXT NOT NULL DEFAULT '', probe_model TEXT NOT NULL DEFAULT 'gpt-5.5',
 			site_name TEXT NOT NULL DEFAULT 'AI 上游监控', site_icon TEXT NOT NULL DEFAULT '',
 			epay_base_url TEXT NOT NULL DEFAULT '', epay_pid TEXT NOT NULL DEFAULT '', epay_key TEXT NOT NULL DEFAULT '',
-			scheduler_base_url TEXT NOT NULL DEFAULT '', scheduler_user_id TEXT NOT NULL DEFAULT '', scheduler_access_token TEXT NOT NULL DEFAULT ''
+			scheduler_base_url TEXT NOT NULL DEFAULT '', scheduler_user_id TEXT NOT NULL DEFAULT '', scheduler_access_token TEXT NOT NULL DEFAULT '',
+			scheduler_tiers TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS upstreams (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, base_url TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
@@ -203,6 +205,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err := s.addColumnIfMissing(ctx, "settings", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
+	}
+	if err := s.addColumnIfMissing(ctx, "settings", "scheduler_tiers", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
 	}
 	if err := s.addColumnIfMissing(ctx, "probe_runs", "status", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
@@ -460,8 +465,10 @@ func (s *Store) UpdateSettings(ctx context.Context, cfg domain.Settings) (domain
 
 func (s *Store) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, error) {
 	var cfg domain.SchedulerConfig
-	err := s.row(ctx, `SELECT scheduler_base_url, scheduler_user_id, scheduler_access_token FROM settings WHERE id='default'`).
-		Scan(&cfg.BaseURL, &cfg.UserID, &cfg.AccessToken)
+	var tiers string
+	err := s.row(ctx, `SELECT scheduler_base_url, scheduler_user_id, scheduler_access_token, scheduler_tiers FROM settings WHERE id='default'`).
+		Scan(&cfg.BaseURL, &cfg.UserID, &cfg.AccessToken, &tiers)
+	cfg.Tiers = schedulerTiers(tiers)
 	return cfg, err
 }
 
@@ -469,8 +476,19 @@ func (s *Store) UpdateSchedulerConfig(ctx context.Context, cfg domain.SchedulerC
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	cfg.UserID = strings.TrimSpace(cfg.UserID)
 	cfg.AccessToken = strings.TrimSpace(cfg.AccessToken)
-	_, err := s.exec(ctx, `UPDATE settings SET scheduler_base_url=?, scheduler_user_id=?, scheduler_access_token=? WHERE id='default'`, cfg.BaseURL, cfg.UserID, cfg.AccessToken)
+	cfg.Tiers = domain.NormalizeSchedulerTiers(cfg.Tiers)
+	b, err := json.Marshal(cfg.Tiers)
+	if err != nil {
+		return cfg, err
+	}
+	_, err = s.exec(ctx, `UPDATE settings SET scheduler_base_url=?, scheduler_user_id=?, scheduler_access_token=?, scheduler_tiers=? WHERE id='default'`, cfg.BaseURL, cfg.UserID, cfg.AccessToken, string(b))
 	return cfg, err
+}
+
+func schedulerTiers(raw string) []domain.SchedulerTier {
+	var tiers []domain.SchedulerTier
+	_ = json.Unmarshal([]byte(raw), &tiers)
+	return domain.NormalizeSchedulerTiers(tiers)
 }
 
 func (s *Store) CreateSchedulerLog(ctx context.Context, log domain.SchedulerLog) error {
