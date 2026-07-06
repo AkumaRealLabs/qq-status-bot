@@ -260,6 +260,14 @@ export type SchedulerConfig = {
   scheduler_base_url: string
   scheduler_user_id: string
   scheduler_access_token: string
+  scheduler_tiers: SchedulerTier[]
+}
+
+export type SchedulerTier = {
+  tag: 'gpt_low' | 'gpt_stable'
+  group: string
+  price_min: number
+  price_max: number
 }
 
 export type SchedulerChannel = {
@@ -282,4 +290,9 @@ export type SchedulerLog = {
   status: 'success' | 'error' | 'skipped'
   message: string
   created_at: string
+}
+
+export type SchedulerApplyResult = {
+  updated: number
+  skipped: number
 }

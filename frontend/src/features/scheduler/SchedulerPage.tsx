@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Power, PowerOff, RefreshCcw, Save, Settings2 } from 'lucide-react'
+import { Loader2, Power, PowerOff, RefreshCcw, Save, Settings2, Tags } from 'lucide-react'
 import { EmptyPanel, Field, FormError, StatusBadge } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Button } from '@/components/ui/button'
@@ -11,9 +11,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api } from '@/lib/api'
 import { errorMessage, fmtTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { ModelCard, SchedulerChannel, SchedulerConfig, SchedulerLog } from '@/types'
+import type { ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig, SchedulerLog, SchedulerTier } from '@/types'
 
 const none = '__none__'
+const defaultTiers: SchedulerTier[] = [
+  { tag: 'gpt_low', group: 'gpt_low', price_min: 0, price_max: 0.1 },
+  { tag: 'gpt_stable', group: 'gpt_stable', price_min: 0, price_max: 0.15 },
+]
 
 export function SchedulerPage() {
   const qc = useQueryClient()
@@ -66,9 +70,27 @@ export function SchedulerPage() {
     },
     onError: (error) => window.alert(errorMessage(error)),
   })
+  const applyGroups = useMutation({
+    mutationFn: async () => {
+      if (!form) throw new Error('scheduler config missing')
+      const saved = await api<SchedulerConfig>('/api/scheduler/config', { method: 'PATCH', body: JSON.stringify({ ...form, scheduler_tiers: schedulerTiers(form) }) })
+      await qc.setQueryData(['scheduler', 'config'], saved)
+      return api<SchedulerApplyResult>('/api/scheduler/groups/apply', { method: 'POST', body: JSON.stringify({}) })
+    },
+    onSuccess: (data) => {
+      setCfgDraft(null)
+      setMessage(`已更新 ${data.updated} 个渠道，跳过 ${data.skipped} 个`)
+      void channels.refetch()
+    },
+    onError: (error) => setMessage(errorMessage(error)),
+  })
   if (!form) return <ShellLoading />
   const rows = cards.data ?? []
   const list = channels.data ?? []
+  const tiers = schedulerTiers(form)
+  const groupOptions = schedulerGroups(list)
+  const updateTier = (tag: SchedulerTier['tag'], patch: Partial<SchedulerTier>) =>
+    setCfgDraft({ ...form, scheduler_tiers: tiers.map((tier) => tier.tag === tag ? { ...tier, ...patch } : tier) })
   return (
     <Page
       title="调度器"
@@ -105,6 +127,45 @@ export function SchedulerPage() {
           <div className="md:col-span-2">
             <FormError error={channels.error} />
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="min-w-0 bg-card">
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle>价格分组</CardTitle>
+              <CardDescription>gpt_low / gpt_stable</CardDescription>
+            </div>
+            <Button onClick={() => applyGroups.mutate()} disabled={applyGroups.isPending || saveConfig.isPending}>
+              {applyGroups.isPending ? <Loader2 className="size-4 animate-spin" /> : <Tags className="size-4" />}
+              应用分组
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <datalist id="scheduler-group-options">
+            {groupOptions.map((group) => <option key={group} value={group} />)}
+          </datalist>
+          <div className="grid gap-3 md:grid-cols-2">
+            {tiers.map((tier) => (
+              <div key={tier.tag} className="grid min-w-0 gap-3 rounded-sm border border-border bg-background p-3">
+                <div className="text-sm font-medium text-foreground">{tier.tag}</div>
+                <Field label="调度器分组">
+                  <Input list="scheduler-group-options" value={tier.group} onChange={(e) => updateTier(tier.tag, { group: e.target.value })} />
+                </Field>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="最低价格">
+                    <Input type="number" step="0.01" min="0" value={tier.price_min} onChange={(e) => updateTier(tier.tag, { price_min: Number(e.target.value || 0) })} />
+                  </Field>
+                  <Field label="最高价格">
+                    <Input type="number" step="0.01" min="0" value={tier.price_max} onChange={(e) => updateTier(tier.tag, { price_max: Number(e.target.value || 0) })} />
+                  </Field>
+                </div>
+              </div>
+            ))}
+          </div>
+          {message && <div className={cn('text-sm', saveConfig.isError || applyGroups.isError ? 'text-destructive' : 'text-muted-foreground')}>{message}</div>}
         </CardContent>
       </Card>
 
@@ -275,6 +336,14 @@ function channelsForCard(channels: SchedulerChannel[], card: ModelCard, cards: M
   const available = channels.filter((channel) => !used.has(channel.id))
   if (!card.scheduler_channel_id || available.some((item) => item.id === card.scheduler_channel_id)) return available
   return [{ id: card.scheduler_channel_id, name: card.scheduler_channel_name || card.scheduler_channel_id, status: -1 }, ...available]
+}
+
+function schedulerTiers(cfg: SchedulerConfig) {
+  return defaultTiers.map((fallback) => cfg.scheduler_tiers?.find((tier) => tier.tag === fallback.tag) ?? fallback)
+}
+
+function schedulerGroups(channels: SchedulerChannel[]) {
+  return Array.from(new Set(channels.flatMap((channel) => (channel.group || '').split(',').map((group) => group.trim()).filter(Boolean)))).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
 }
 
 function groupCards(cards: ModelCard[]) {

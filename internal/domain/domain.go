@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"strings"
 	"time"
 )
@@ -154,9 +155,56 @@ type Settings struct {
 }
 
 type SchedulerConfig struct {
-	BaseURL     string `json:"scheduler_base_url"`
-	UserID      string `json:"scheduler_user_id"`
-	AccessToken string `json:"scheduler_access_token"`
+	BaseURL     string          `json:"scheduler_base_url"`
+	UserID      string          `json:"scheduler_user_id"`
+	AccessToken string          `json:"scheduler_access_token"`
+	Tiers       []SchedulerTier `json:"scheduler_tiers"`
+}
+
+type SchedulerTier struct {
+	Tag      string  `json:"tag"`
+	Group    string  `json:"group"`
+	PriceMin float64 `json:"price_min"`
+	PriceMax float64 `json:"price_max"`
+}
+
+type SchedulerApplyResult struct {
+	Updated int `json:"updated"`
+	Skipped int `json:"skipped"`
+}
+
+func DefaultSchedulerTiers() []SchedulerTier {
+	return []SchedulerTier{
+		{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1},
+		{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.15},
+	}
+}
+
+func NormalizeSchedulerTiers(in []SchedulerTier) []SchedulerTier {
+	out := DefaultSchedulerTiers()
+	for i := range out {
+		for _, tier := range in {
+			if strings.EqualFold(strings.TrimSpace(tier.Tag), out[i].Tag) {
+				out[i].Group = strings.TrimSpace(tier.Group)
+				out[i].PriceMin = tier.PriceMin
+				out[i].PriceMax = tier.PriceMax
+				break
+			}
+		}
+	}
+	return out
+}
+
+func ValidateSchedulerTiers(tiers []SchedulerTier) error {
+	for _, tier := range NormalizeSchedulerTiers(tiers) {
+		if tier.Group == "" {
+			return errors.New("调度器分组不能为空")
+		}
+		if tier.PriceMin < 0 || tier.PriceMax < 0 || tier.PriceMax < tier.PriceMin {
+			return errors.New("调度器价格区间无效")
+		}
+	}
+	return nil
 }
 
 type SchedulerChannel struct {

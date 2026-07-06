@@ -23,6 +23,9 @@ func (s *Service) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, 
 }
 
 func (s *Service) SaveSchedulerConfig(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerConfig, error) {
+	if err := domain.ValidateSchedulerTiers(cfg.Tiers); err != nil {
+		return domain.SchedulerConfig{}, err
+	}
 	return s.Store.UpdateSchedulerConfig(ctx, cfg)
 }
 
@@ -55,6 +58,36 @@ func (s *Service) SchedulerChannels(ctx context.Context, keyword string) ([]doma
 
 func (s *Service) SchedulerLogs(ctx context.Context, limit int) ([]domain.SchedulerLog, error) {
 	return s.Store.SchedulerLogs(ctx, limit)
+}
+
+func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApplyResult, error) {
+	cfg, err := s.Store.SchedulerConfig(ctx)
+	if err != nil {
+		return domain.SchedulerApplyResult{}, err
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
+		return domain.SchedulerApplyResult{}, errSchedulerNotConfigured
+	}
+	tiers := domain.NormalizeSchedulerTiers(cfg.Tiers)
+	cards, err := s.Store.ListCards(ctx)
+	if err != nil {
+		return domain.SchedulerApplyResult{}, err
+	}
+	var out domain.SchedulerApplyResult
+	for _, card := range cards {
+		price, ok := s.cardPrice(ctx, card)
+		groups := schedulerGroupsForPrice(tiers, price)
+		if !ok || card.SchedulerChannelID == "" || len(groups) == 0 {
+			out.Skipped++
+			continue
+		}
+		group := strings.Join(groups, ",")
+		if err := s.setSchedulerChannelGroup(ctx, cfg, card.SchedulerChannelID, group); err != nil {
+			return out, err
+		}
+		out.Updated++
+	}
+	return out, nil
 }
 
 func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID string, status int) (domain.ModelCard, error) {
@@ -154,6 +187,40 @@ func (s *Service) lastTwoProbesSucceeded(ctx context.Context, cardID string) boo
 	return probes[0].Success && probes[1].Success
 }
 
+func (s *Service) cardPrice(ctx context.Context, card domain.ModelCard) (float64, bool) {
+	if card.KeyID == "" {
+		return 0, false
+	}
+	key, err := s.Store.Key(ctx, card.KeyID)
+	if err != nil {
+		return 0, false
+	}
+	price, err := strconv.ParseFloat(strings.TrimSpace(key.GroupRatio), 64)
+	if err != nil {
+		return 0, false
+	}
+	if card.UpstreamID != "" {
+		if u, err := s.Store.Upstream(ctx, card.UpstreamID); err == nil {
+			price *= domain.BalanceRate(u)
+		}
+	}
+	return price, true
+}
+
+func schedulerGroupsForPrice(tiers []domain.SchedulerTier, price float64) []string {
+	groups := []string{}
+	seen := map[string]bool{}
+	for _, tier := range tiers {
+		group := strings.TrimSpace(tier.Group)
+		if group == "" || price < tier.PriceMin || price > tier.PriceMax || seen[group] {
+			continue
+		}
+		seen[group] = true
+		groups = append(groups, group)
+	}
+	return groups
+}
+
 func (s *Service) setSchedulerChannelStatus(ctx context.Context, channelID string, status int) error {
 	cfg, err := s.Store.SchedulerConfig(ctx)
 	if err != nil {
@@ -164,6 +231,21 @@ func (s *Service) setSchedulerChannelStatus(ctx context.Context, channelID strin
 	}
 	var raw map[string]any
 	if err := s.schedulerJSON(ctx, cfg, http.MethodPost, "/api/channel/"+url.PathEscape(channelID)+"/status", map[string]int{"status": status}, &raw); err != nil {
+		return err
+	}
+	if ok, exists := raw["success"].(bool); exists && !ok {
+		return errors.New(schedulerMessage(raw))
+	}
+	return nil
+}
+
+func (s *Service) setSchedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID, group string) error {
+	id, err := strconv.Atoi(strings.TrimSpace(channelID))
+	if err != nil || id <= 0 {
+		return fmt.Errorf("invalid scheduler channel id: %s", channelID)
+	}
+	var raw map[string]any
+	if err := s.schedulerJSON(ctx, cfg, http.MethodPut, "/api/channel/", map[string]any{"id": id, "group": group}, &raw); err != nil {
 		return err
 	}
 	if ok, exists := raw["success"].(bool); exists && !ok {
