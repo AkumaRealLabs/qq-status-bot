@@ -17,13 +17,14 @@ import (
 
 func TestCLIProxyAuthFilesFlow(t *testing.T) {
 	var sawAuth, sawKey, uploadedName, uploadedContent, deletedName, resetAuthIndex string
+	var apiCallAuthIndex string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawAuth, sawKey = r.Header.Get("Authorization"), r.Header.Get("X-Management-Key")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files":
 			_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{{
 				"name": "acc.json", "provider": "codex", "status": "ready", "email": "a@example.test",
-				"account_type": "team", "auth_index": "7", "size": 12, "success": 2, "failed": 1,
+				"account_type": "team", "account_id": "acct_1", "auth_index": "7", "size": 12, "success": 2, "failed": 1,
 			}}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v0/management/auth-files":
 			uploadedName = r.URL.Query().Get("name")
@@ -51,6 +52,30 @@ func TestCLIProxyAuthFilesFlow(t *testing.T) {
 			}
 			resetAuthIndex = body["auth_index"]
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "models": []string{"gpt-5.5"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v0/management/api-call":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			apiCallAuthIndex = fmt.Sprint(body["authIndex"])
+			header, _ := body["header"].(map[string]any)
+			if body["method"] != http.MethodGet || body["url"] != cliproxyCodexUsageURL || header["Chatgpt-Account-Id"] != "acct_1" {
+				t.Fatalf("api-call body = %+v", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status_code": 200,
+				"body": map[string]any{
+					"plan_type":                "team",
+					"rate_limit_reset_credits": map[string]any{"available_count": 1},
+					"rate_limit": map[string]any{
+						"secondary_window": map[string]any{
+							"used_percent":         71,
+							"limit_window_seconds": 2592000,
+							"reset_at":             1786045440,
+						},
+					},
+				},
+			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
@@ -98,6 +123,16 @@ func TestCLIProxyAuthFilesFlow(t *testing.T) {
 	}
 	if resetAuthIndex != "7" || out.AuthIndex != "7" || len(out.Models) != 1 {
 		t.Fatalf("resetAuthIndex=%q out=%+v", resetAuthIndex, out)
+	}
+	quota, err := svc.CLIProxyAccountQuota(t.Context(), "acc.json", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if apiCallAuthIndex != "7" || quota.PlanType != "team" || quota.RateLimitResetCreditsAvailable == nil || *quota.RateLimitResetCreditsAvailable != 1 {
+		t.Fatalf("apiCallAuthIndex=%q quota=%+v", apiCallAuthIndex, quota)
+	}
+	if len(quota.Windows) != 1 || quota.Windows[0].Label != "月限额" || quota.Windows[0].RemainingPercent == nil || *quota.Windows[0].RemainingPercent != 29 {
+		t.Fatalf("quota windows = %+v", quota.Windows)
 	}
 }
 

@@ -38,6 +38,21 @@ type CLIProxyAuthFile struct {
 	Unavailable    bool   `json:"unavailable,omitempty"`
 }
 
+type CLIProxyQuota struct {
+	PlanType                       string                `json:"plan_type,omitempty"`
+	SubscriptionActiveUntil        string                `json:"subscription_active_until,omitempty"`
+	RateLimitResetCreditsAvailable *int64                `json:"rate_limit_reset_credits_available,omitempty"`
+	Windows                        []CLIProxyQuotaWindow `json:"windows"`
+}
+
+type CLIProxyQuotaWindow struct {
+	ID               string   `json:"id"`
+	Label            string   `json:"label"`
+	UsedPercent      *float64 `json:"used_percent,omitempty"`
+	RemainingPercent *float64 `json:"remaining_percent,omitempty"`
+	ResetAt          string   `json:"reset_at,omitempty"`
+}
+
 type CLIProxyResetQuotaResult struct {
 	Status    string   `json:"status,omitempty"`
 	AuthIndex string   `json:"auth_index,omitempty"`

@@ -80,6 +80,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/pools/cliproxy/config", s.auth(s.updateCLIProxyConfig))
 	mux.HandleFunc("GET /api/pools/cliproxy/accounts", s.auth(s.cliProxyAccounts))
 	mux.HandleFunc("POST /api/pools/cliproxy/accounts", s.auth(s.uploadCLIProxyAccount))
+	mux.HandleFunc("GET /api/pools/cliproxy/accounts/{name}/quota", s.auth(s.cliProxyAccountQuota))
 	mux.HandleFunc("GET /api/pools/cliproxy/accounts/{name}/download", s.auth(s.downloadCLIProxyAccount))
 	mux.HandleFunc("DELETE /api/pools/cliproxy/accounts/{name}", s.auth(s.deleteCLIProxyAccount))
 	mux.HandleFunc("POST /api/pools/cliproxy/accounts/{name}/reset-quota", s.auth(s.resetCLIProxyQuota))
@@ -544,6 +545,12 @@ func (s *Server) updateCLIProxyConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cliProxyAccounts(w http.ResponseWriter, r *http.Request) {
 	out, err := s.App.CLIProxyAccounts(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) cliProxyAccountQuota(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	out, err := s.App.CLIProxyAccountQuota(r.Context(), r.PathValue("name"), q.Get("auth_index"), q.Get("account"), q.Get("account_type"))
 	writeJSONOrError(w, out, err)
 }
 

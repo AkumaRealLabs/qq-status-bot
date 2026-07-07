@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api, ApiError } from '@/lib/api'
 import { errorMessage, fmtTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { CLIProxyAccount, CLIProxyConfig } from '@/types'
+import type { CLIProxyAccount, CLIProxyConfig, CLIProxyQuota, CLIProxyQuotaWindow } from '@/types'
 
 const emptyConfig: CLIProxyConfig = { name: 'CLIProxyAPI', base_url: '', management_key: '', management_key_set: false, enabled: true }
 
@@ -80,13 +80,14 @@ export function CLIProxyPoolPage() {
         <Card className="min-w-0 bg-card">
           <CardContent>
             <div className="overflow-x-auto rounded-sm border border-border">
-              <table className="w-full min-w-[920px] text-left text-sm">
+              <table className="w-full min-w-[1100px] text-left text-sm">
                 <thead className="bg-secondary text-xs text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2 font-medium">文件</th>
                     <th className="px-3 py-2 font-medium">状态</th>
                     <th className="px-3 py-2 font-medium">账号</th>
                     <th className="px-3 py-2 font-medium">类型</th>
+                    <th className="px-3 py-2 font-medium">额度</th>
                     <th className="px-3 py-2 font-medium">成功/失败</th>
                     <th className="px-3 py-2 font-medium">更新时间</th>
                     <th className="px-3 py-2 text-right font-medium">操作</th>
@@ -110,6 +111,9 @@ export function CLIProxyPoolPage() {
                       <td className="px-3 py-2">
                         <div>{account.provider || account.type || '-'}</div>
                         <div className="text-xs text-muted-foreground">{account.account_type || '-'}</div>
+                      </td>
+                      <td className="w-64 px-3 py-2">
+                        <AccountQuota account={account} />
                       </td>
                       <td className="px-3 py-2">
                         <span className="text-success">{account.success ?? 0}</span>
@@ -304,6 +308,94 @@ function AccountBadge({ account }: { account: CLIProxyAccount }) {
   const disabled = account.disabled || /disabled|停用/i.test(account.status || '')
   const text = disabled ? '停用' : bad ? '异常' : account.status || '正常'
   return <Badge variant={disabled ? 'amber' : bad ? 'destructive' : 'success'}>{text}</Badge>
+}
+
+function AccountQuota({ account }: { account: CLIProxyAccount }) {
+  const canLoad = Boolean(account.auth_index && isCodexAccount(account))
+  const quota = useQuery({
+    queryKey: ['cliproxy', 'quota', account.name],
+    queryFn: () => api<CLIProxyQuota>(quotaURL(account)),
+    enabled: canLoad,
+    staleTime: 60_000,
+    retry: false,
+  })
+  if (!canLoad) return <span className="text-muted-foreground">-</span>
+  if (quota.isLoading) return <Loader2 className="size-4 animate-spin text-muted-foreground" />
+  if (quota.error) return <span className="text-xs text-destructive" title={errorMessage(quota.error)}>读取失败</span>
+
+  const data = quota.data
+  const plan = planText(data?.plan_type || account.account_type)
+  return (
+    <div className="grid min-w-0 gap-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+        {plan && (
+          <span>
+            套餐 <span className="font-medium text-foreground">{plan}</span>
+          </span>
+        )}
+        <span>主动重置次数 {data?.rate_limit_reset_credits_available ?? '未记录'}</span>
+      </div>
+      {(data?.windows ?? []).slice(0, 2).map((window) => (
+        <QuotaWindow key={window.id} window={window} />
+      ))}
+      {data && data.windows.length === 0 && <span className="text-xs text-muted-foreground">未返回额度窗口</span>}
+    </div>
+  )
+}
+
+function quotaURL(account: CLIProxyAccount) {
+  const params = new URLSearchParams()
+  if (account.auth_index) params.set('auth_index', account.auth_index)
+  if (account.account) params.set('account', account.account)
+  if (account.account_type) params.set('account_type', account.account_type)
+  return `/api/pools/cliproxy/accounts/${encodeURIComponent(account.name)}/quota?${params}`
+}
+
+function QuotaWindow({ window }: { window: CLIProxyQuotaWindow }) {
+  const percent = window.remaining_percent
+  const safePercent = typeof percent === 'number' && Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : undefined
+  return (
+    <div className="grid min-w-0 gap-1">
+      <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
+        <span className="truncate text-muted-foreground">{window.label}</span>
+        <span className="shrink-0 font-medium">{safePercent === undefined ? '--' : `${Math.round(safePercent)}%`}</span>
+        {window.reset_at && <span className="shrink-0 text-muted-foreground">{fmtShortTime(window.reset_at)}</span>}
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+        <div className={cn('h-full rounded-full', quotaBarColor(safePercent))} style={{ width: `${safePercent ?? 0}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function isCodexAccount(account: CLIProxyAccount) {
+  return `${account.provider || ''} ${account.type || ''} ${account.name || ''}`.toLowerCase().includes('codex')
+}
+
+function planText(plan?: string) {
+  const value = plan?.trim()
+  if (!value) return ''
+  const key = value.toLowerCase().replace(/[_-]/g, '')
+  if (key === 'team') return 'Team'
+  if (key === 'plus') return 'Plus'
+  if (key === 'pro') return 'Pro'
+  if (key === 'prolite') return 'Pro Lite'
+  if (key === 'free') return 'Free'
+  return value
+}
+
+function fmtShortTime(value?: string) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+function quotaBarColor(percent?: number) {
+  if (percent === undefined) return 'bg-muted-foreground/40'
+  if (percent < 30) return 'bg-destructive'
+  if (percent < 70) return 'bg-warning'
+  return 'bg-success'
 }
 
 function connectionStatus(config?: CLIProxyConfig, error?: unknown, configured?: boolean) {

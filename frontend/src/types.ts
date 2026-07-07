@@ -335,3 +335,18 @@ export type CLIProxyAccount = {
   disabled?: boolean
   unavailable?: boolean
 }
+
+export type CLIProxyQuotaWindow = {
+  id: string
+  label: string
+  used_percent?: number
+  remaining_percent?: number
+  reset_at?: string
+}
+
+export type CLIProxyQuota = {
+  plan_type?: string
+  subscription_active_until?: string
+  rate_limit_reset_credits_available?: number
+  windows: CLIProxyQuotaWindow[]
+}

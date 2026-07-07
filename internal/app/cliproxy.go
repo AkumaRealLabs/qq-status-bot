@@ -22,6 +22,8 @@ import (
 
 var errCLIProxyNotConfigured = errors.New("请先配置 CLIProxyAPI 管理地址和管理密钥")
 
+const cliproxyCodexUsageURL = "https://chatgpt.com/backend-api/wham/usage"
+
 type cliProxyAuthUpload struct {
 	Name    string
 	Content string
@@ -415,6 +417,79 @@ func (s *Service) ResetCLIProxyQuota(ctx context.Context, name string) (domain.C
 	return domain.CLIProxyResetQuotaResult{Status: cliproxyString(firstCLIProxy(raw, "status", "message")), AuthIndex: authIndex, Models: cliproxyStrings(firstCLIProxy(raw, "models"))}, nil
 }
 
+func (s *Service) CLIProxyAccountQuota(ctx context.Context, name, authIndex, accountID, accountType string) (domain.CLIProxyQuota, error) {
+	name = strings.TrimSpace(name)
+	if err := domain.ValidateCLIProxyAuthFileName(name); err != nil {
+		return domain.CLIProxyQuota{}, BadRequest(err)
+	}
+	cfg, err := s.cliProxyConfig(ctx)
+	if err != nil {
+		return domain.CLIProxyQuota{}, err
+	}
+	account := domain.CLIProxyAuthFile{
+		Name:        name,
+		AuthIndex:   strings.TrimSpace(authIndex),
+		Account:     strings.TrimSpace(accountID),
+		AccountType: strings.TrimSpace(accountType),
+	}
+	if account.AuthIndex == "" {
+		accounts, err := s.CLIProxyAccounts(ctx)
+		if err != nil {
+			return domain.CLIProxyQuota{}, err
+		}
+		account = domain.CLIProxyAuthFile{}
+		for _, item := range accounts {
+			if item.Name == name {
+				account = item
+				break
+			}
+		}
+		if account.Name == "" {
+			return domain.CLIProxyQuota{}, ErrBadRequest("认证文件不存在")
+		}
+	}
+	if strings.TrimSpace(account.AuthIndex) == "" {
+		return domain.CLIProxyQuota{}, ErrBadRequest("认证文件缺少 auth_index")
+	}
+
+	header := map[string]string{
+		"Authorization": "Bearer $TOKEN$",
+		"Content-Type":  "application/json",
+		"User-Agent":    "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
+	}
+	if account.Account != "" {
+		header["Chatgpt-Account-Id"] = account.Account
+	}
+	var raw map[string]any
+	if err := s.cliProxyJSON(ctx, cfg, http.MethodPost, "/api-call", map[string]any{
+		"authIndex": account.AuthIndex,
+		"method":    http.MethodGet,
+		"url":       cliproxyCodexUsageURL,
+		"header":    header,
+	}, &raw); err != nil {
+		return domain.CLIProxyQuota{}, err
+	}
+	status := cliproxyInt(firstCLIProxy(raw, "status_code", "statusCode", "status"))
+	if status < 200 || status >= 300 {
+		if status == 0 {
+			status = http.StatusBadGateway
+		}
+		msg := cliproxyAPICallMessage(raw)
+		if msg == "" {
+			msg = http.StatusText(int(status))
+		}
+		return domain.CLIProxyQuota{}, ErrStatus(http.StatusBadGateway, fmt.Sprintf("CLIProxyAPI 额度查询 HTTP %d: %s", status, msg))
+	}
+	payload := cliproxyMap(firstCLIProxy(raw, "body"))
+	if payload == nil {
+		payload = cliproxyMap(firstCLIProxy(raw, "bodyText"))
+	}
+	if payload == nil {
+		return domain.CLIProxyQuota{}, ErrBadRequest("CLIProxyAPI 额度响应为空")
+	}
+	return cliproxyCodexQuota(account, payload), nil
+}
+
 func (s *Service) cliProxyConfig(ctx context.Context) (domain.CLIProxyConfig, error) {
 	cfg, err := s.Store.CLIProxyConfig(ctx)
 	if err != nil {
@@ -549,6 +624,114 @@ func cliproxyAuthFiles(raw any) []domain.CLIProxyAuthFile {
 	return out
 }
 
+func cliproxyCodexQuota(account domain.CLIProxyAuthFile, raw map[string]any) domain.CLIProxyQuota {
+	resetCredits := cliproxyIntPtr(firstCLIProxy(cliproxyMap(firstCLIProxy(raw, "rate_limit_reset_credits", "rateLimitResetCredits")), "available_count", "availableCount"))
+	quota := domain.CLIProxyQuota{
+		PlanType:                       firstNonEmpty(cliproxyString(firstCLIProxy(raw, "plan_type", "planType")), account.AccountType),
+		SubscriptionActiveUntil:        cliproxyTime(firstCLIProxy(raw, "subscription_active_until", "subscriptionActiveUntil")),
+		RateLimitResetCreditsAvailable: resetCredits,
+		Windows:                        cliproxyCodexQuotaWindows(raw),
+	}
+	if quota.Windows == nil {
+		quota.Windows = []domain.CLIProxyQuotaWindow{}
+	}
+	return quota
+}
+
+func cliproxyCodexQuotaWindows(raw map[string]any) []domain.CLIProxyQuotaWindow {
+	out := make([]domain.CLIProxyQuotaWindow, 0, 4)
+	out = append(out, cliproxyCodexLimitWindows("code", "限额", cliproxyMap(firstCLIProxy(raw, "rate_limit", "rateLimit")))...)
+	out = append(out, cliproxyCodexLimitWindows("review", "Review 限额", cliproxyMap(firstCLIProxy(raw, "code_review_rate_limit", "codeReviewRateLimit")))...)
+	return out
+}
+
+func cliproxyCodexLimitWindows(prefix, labelPrefix string, limit map[string]any) []domain.CLIProxyQuotaWindow {
+	if limit == nil {
+		return nil
+	}
+	items := []struct {
+		id     string
+		window map[string]any
+	}{
+		{"primary", cliproxyMap(firstCLIProxy(limit, "primary_window", "primaryWindow"))},
+		{"secondary", cliproxyMap(firstCLIProxy(limit, "secondary_window", "secondaryWindow"))},
+	}
+	out := make([]domain.CLIProxyQuotaWindow, 0, len(items))
+	for _, item := range items {
+		if item.window == nil {
+			continue
+		}
+		label := cliproxyCodexWindowLabel(labelPrefix, item.id, item.window)
+		used, ok := cliproxyFloatPtr(firstCLIProxy(item.window, "used_percent", "usedPercent"))
+		if !ok && (cliproxyBool(firstCLIProxy(limit, "limit_reached", "limitReached")) || firstCLIProxy(limit, "allowed") == false) {
+			used = floatPtr(100)
+			ok = true
+		}
+		var remaining *float64
+		if ok {
+			remaining = floatPtr(clampFloat(100-*used, 0, 100))
+			*used = clampFloat(*used, 0, 100)
+		}
+		out = append(out, domain.CLIProxyQuotaWindow{
+			ID:               prefix + "-" + item.id,
+			Label:            label,
+			UsedPercent:      used,
+			RemainingPercent: remaining,
+			ResetAt:          cliproxyQuotaResetAt(item.window),
+		})
+	}
+	return out
+}
+
+func cliproxyCodexWindowLabel(prefix, fallback string, window map[string]any) string {
+	seconds, ok := cliproxyFloat(firstCLIProxy(window, "limit_window_seconds", "limitWindowSeconds"))
+	withPrefix := func(name string) string {
+		base := strings.TrimSpace(strings.TrimSuffix(prefix, "限额"))
+		if base == "" {
+			return name + "限额"
+		}
+		return base + " " + name + "限额"
+	}
+	switch {
+	case ok && int64(seconds) == 18000:
+		return withPrefix("5小时")
+	case ok && int64(seconds) == 604800:
+		return withPrefix("周")
+	case ok && seconds >= 28*24*60*60 && seconds <= 31*24*60*60:
+		return withPrefix("月")
+	default:
+		return strings.TrimSpace(prefix + " " + fallback)
+	}
+}
+
+func cliproxyQuotaResetAt(window map[string]any) string {
+	if resetAt, ok := cliproxyFloat(firstCLIProxy(window, "reset_at", "resetAt")); ok && resetAt > 0 {
+		return time.Unix(int64(resetAt), 0).UTC().Format(time.RFC3339)
+	}
+	if resetAfter, ok := cliproxyFloat(firstCLIProxy(window, "reset_after_seconds", "resetAfterSeconds")); ok && resetAfter > 0 {
+		return time.Now().Add(time.Duration(resetAfter) * time.Second).UTC().Format(time.RFC3339)
+	}
+	return ""
+}
+
+func cliproxyAPICallMessage(raw map[string]any) string {
+	body := cliproxyMap(firstCLIProxy(raw, "body"))
+	if body == nil {
+		body = cliproxyMap(firstCLIProxy(raw, "bodyText"))
+	}
+	if body != nil {
+		if nested := cliproxyMap(body["error"]); nested != nil {
+			if msg := cliproxyString(firstCLIProxy(nested, "message", "error", "msg")); msg != "" {
+				return msg
+			}
+		}
+		if msg := cliproxyString(firstCLIProxy(body, "error", "message", "msg")); msg != "" {
+			return msg
+		}
+	}
+	return cliproxyString(firstCLIProxy(raw, "bodyText", "error", "message"))
+}
+
 func cliproxyArray(v any) []any {
 	if a, ok := v.([]any); ok {
 		return a
@@ -565,6 +748,19 @@ func cliproxyArray(v any) []any {
 			if a := cliproxyArray(x); len(a) > 0 {
 				return a
 			}
+		}
+	}
+	return nil
+}
+
+func cliproxyMap(v any) map[string]any {
+	switch x := v.(type) {
+	case map[string]any:
+		return x
+	case string:
+		var out map[string]any
+		if json.Unmarshal([]byte(strings.TrimSpace(x)), &out) == nil {
+			return out
 		}
 	}
 	return nil
@@ -619,6 +815,55 @@ func cliproxyInt(v any) int64 {
 	default:
 		return 0
 	}
+}
+
+func cliproxyIntPtr(v any) *int64 {
+	if v == nil {
+		return nil
+	}
+	n := cliproxyInt(v)
+	return &n
+}
+
+func cliproxyFloat(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case int:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case json.Number:
+		n, err := x.Float64()
+		return n, err == nil
+	case string:
+		n, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(x), "%"), 64)
+		return n, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func cliproxyFloatPtr(v any) (*float64, bool) {
+	n, ok := cliproxyFloat(v)
+	if !ok {
+		return nil, false
+	}
+	return &n, true
+}
+
+func floatPtr(v float64) *float64 {
+	return &v
+}
+
+func clampFloat(v, min, max float64) float64 {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
 }
 
 func cliproxyBool(v any) bool {
