@@ -21,8 +21,7 @@ services:
   browser:
     image: ${BROWSER_IMAGE:-ghcr.io/akumareallabs/ai-upstream-monitor-browser:latest}
     build:
-      context: .
-      dockerfile: browser/Dockerfile
+      context: browser
     shm_size: 1gb
     volumes:
       - browser_profile:/profile
