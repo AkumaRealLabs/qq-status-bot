@@ -72,6 +72,149 @@ func TestAuthSessionFlow(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestDecodeRejectsLargeJSONBody(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
+	defer ts.Close()
+
+	body := `{"username":"` + strings.Repeat("a", defaultJSONBodyLimit) + `","password":"secret"}`
+	resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
+func TestLoginRateLimit(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{App: app.New(st)}
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	if resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(`{"username":"admin","password":"secret"}`)); err != nil {
+		t.Fatal(err)
+	} else {
+		resp.Body.Close()
+	}
+	for i := 0; i < loginFailLimit; i++ {
+		resp, err := ts.Client().Post(ts.URL+"/api/auth/login", "application/json", strings.NewReader(`{"username":"admin","password":"bad"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d", i, resp.StatusCode)
+		}
+	}
+	resp, err := ts.Client().Post(ts.URL+"/api/auth/login", "application/json", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
+func TestSecureCookieBehindHTTPSProxy(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
+	defer ts.Close()
+	if resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(`{"username":"admin","password":"secret"}`)); err != nil {
+		t.Fatal(err)
+	} else {
+		resp.Body.Close()
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || len(resp.Cookies()) == 0 || !resp.Cookies()[0].Secure {
+		t.Fatalf("status=%d cookies=%v", resp.StatusCode, resp.Cookies())
+	}
+}
+
+func TestUnsafeMethodRejectsBadOrigin(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/setup", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://evil.example")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
+func TestExportMarksBackupSensitive(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	user, err := st.CreateUser(t.Context(), "admin", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := st.CreateSession(t.Context(), user.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/export", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	rr := httptest.NewRecorder()
+	srv := &Server{App: app.New(st)}
+	srv.auth(srv.exportData)(rr, req)
+	if rr.Code != http.StatusOK || rr.Header().Get("X-Backup-Contains-Secrets") != "true" || !strings.Contains(rr.Header().Get("Content-Disposition"), "sensitive") {
+		t.Fatalf("status=%d disposition=%q sensitive=%q", rr.Code, rr.Header().Get("Content-Disposition"), rr.Header().Get("X-Backup-Contains-Secrets"))
+	}
+}
+
 func TestPublicSettingsDoesNotRequireAuth(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
 	if err != nil {

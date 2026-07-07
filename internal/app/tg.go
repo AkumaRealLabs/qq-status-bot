@@ -44,7 +44,7 @@ func (s *Service) TGSessionStatus(ctx context.Context) (TGSessionStatus, error) 
 func (s *Service) StartTGSession(ctx context.Context, apiID int, apiHash, phone string) (TGSessionStatus, error) {
 	apiHash, phone = strings.TrimSpace(apiHash), strings.TrimSpace(phone)
 	if apiID <= 0 || apiHash == "" || phone == "" {
-		return TGSessionStatus{}, errors.New("api_id, api_hash and phone are required")
+		return TGSessionStatus{}, ErrBadRequest("api_id, api_hash and phone are required")
 	}
 	sess := domain.TGSession{ID: "default", APIID: apiID, APIHash: apiHash, Phone: phone}
 	if _, err := s.Store.SaveTGSession(ctx, sess); err != nil {
@@ -78,14 +78,14 @@ func (s *Service) StartTGSession(ctx context.Context, apiID int, apiHash, phone 
 func (s *Service) VerifyTGSession(ctx context.Context, code string) (TGSessionStatus, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return TGSessionStatus{}, errors.New("code is required")
+		return TGSessionStatus{}, ErrBadRequest("code is required")
 	}
 	sess, err := s.Store.TGSession(ctx)
 	if err != nil {
 		return TGSessionStatus{}, err
 	}
 	if sess.CodeHash == "" {
-		return TGSessionStatus{}, errors.New("请先发送登录验证码")
+		return TGSessionStatus{}, ErrBadRequest("请先发送登录验证码")
 	}
 	err = s.withTGClient(ctx, sess, func(ctx context.Context, client *telegram.Client) error {
 		_, err := client.Auth().SignIn(ctx, sess.Phone, code, sess.CodeHash)
@@ -114,7 +114,7 @@ func (s *Service) VerifyTGSession(ctx context.Context, code string) (TGSessionSt
 func (s *Service) TGSessionPassword(ctx context.Context, password string) (TGSessionStatus, error) {
 	password = strings.TrimSpace(password)
 	if password == "" {
-		return TGSessionStatus{}, errors.New("password is required")
+		return TGSessionStatus{}, ErrBadRequest("password is required")
 	}
 	sess, err := s.Store.TGSession(ctx)
 	if err != nil {
@@ -154,11 +154,11 @@ func (s *Service) SaveTGChannel(ctx context.Context, id string, in domain.TGChan
 		ch.MessageLimit = 10
 	}
 	if ch.MessageLimit > 100 {
-		return ch, errors.New("message_limit must be <= 100")
+		return ch, ErrBadRequest("message_limit must be <= 100")
 	}
 	if id == "" {
 		if ch.Identifier == "" && ch.PeerID == 0 {
-			return ch, errors.New("identifier is required")
+			return ch, ErrBadRequest("identifier is required")
 		}
 		if ch.PeerID == 0 {
 			resolved, err := s.resolveTGChannel(ctx, ch.Identifier)
@@ -287,7 +287,7 @@ func (s *Service) RefreshTGMessages(ctx context.Context, channelID string) error
 			}
 		}
 		if channelID != "" && !matched {
-			return errors.New("频道不存在或未启用")
+			return ErrBadRequest("频道不存在或未启用")
 		}
 		return firstErr
 	})
@@ -359,7 +359,7 @@ func (s *Service) withAuthorizedTG(ctx context.Context, fn func(context.Context,
 		return err
 	}
 	if !sess.Authorized {
-		return errors.New("Telegram 未登录")
+		return ErrBadRequest("Telegram 未登录")
 	}
 	return s.withTGClient(ctx, sess, func(ctx context.Context, client *telegram.Client) error {
 		status, err := client.Auth().Status(ctx)
@@ -370,7 +370,7 @@ func (s *Service) withAuthorizedTG(ctx context.Context, fn func(context.Context,
 			sess.Authorized = false
 			sess.LastError = "Telegram session expired"
 			_, _ = s.Store.SaveTGSession(ctx, sess)
-			return errors.New("Telegram 登录已失效")
+			return ErrBadRequest("Telegram 登录已失效")
 		}
 		return fn(ctx, client.API(), client)
 	})
@@ -378,7 +378,7 @@ func (s *Service) withAuthorizedTG(ctx context.Context, fn func(context.Context,
 
 func (s *Service) withTGClient(ctx context.Context, sess domain.TGSession, fn func(context.Context, *telegram.Client) error) error {
 	if sess.APIID <= 0 || strings.TrimSpace(sess.APIHash) == "" {
-		return errors.New("Telegram API 配置不完整")
+		return ErrBadRequest("Telegram API 配置不完整")
 	}
 	client := telegram.NewClient(sess.APIID, sess.APIHash, telegram.Options{
 		SessionStorage: tgDBSession{store: s.Store},
@@ -399,7 +399,7 @@ func (s *Service) withTGClient(ctx context.Context, sess domain.TGSession, fn fu
 func (s *Service) resolveTGChannel(ctx context.Context, raw string) (domain.TGChannel, error) {
 	username := tgUsername(raw)
 	if username == "" {
-		return domain.TGChannel{}, errors.New("只支持公开频道用户名/链接，私密频道请用同步频道选择")
+		return domain.TGChannel{}, ErrBadRequest("只支持公开频道用户名/链接，私密频道请用同步频道选择")
 	}
 	var out domain.TGChannel
 	err := s.withAuthorizedTG(ctx, func(ctx context.Context, api *tg.Client, client *telegram.Client) error {
@@ -415,7 +415,7 @@ func (s *Service) resolveTGChannel(ctx context.Context, raw string) (domain.TGCh
 			out = domain.TGChannel{DisplayName: c.Title, Identifier: "@" + username, Username: username, PeerID: c.ID, AccessHash: c.AccessHash, AvatarURL: s.cacheTGChannelAvatar(ctx, client, c.ID, c.AccessHash, c.Photo)}
 			return nil
 		}
-		return errors.New("未找到频道")
+		return ErrBadRequest("未找到频道")
 	})
 	return out, err
 }

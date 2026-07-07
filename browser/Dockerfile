@@ -23,6 +23,9 @@ RUN rm -f /etc/apt/sources.list.d/* && \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /profile
+RUN adduser --system --uid 10001 --ingroup nogroup --home /profile --no-create-home app && \
+    chown -R app:nogroup /profile
+USER app
 
 EXPOSE 6080 9222
 CMD rm -f /tmp/.X99-lock /profile/SingletonLock /profile/SingletonSocket /profile/SingletonCookie /profile/DevToolsActivePort && \

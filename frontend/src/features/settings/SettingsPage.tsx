@@ -55,7 +55,7 @@ export function SettingsPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `ai-upstream-monitor-${new Date().toISOString().slice(0, 10)}.json`
+      a.download = `ai-upstream-monitor-sensitive-${new Date().toISOString().slice(0, 10)}.json`
       a.click()
       URL.revokeObjectURL(url)
       setBackupMessage('已导出')
@@ -113,7 +113,7 @@ export function SettingsPage() {
       <Card className="w-full max-w-2xl bg-card">
         <CardHeader>
           <CardTitle>数据备份</CardTitle>
-          <CardDescription>导出和导入上游、Key、卡片、余额、检查记录和告警记录</CardDescription>
+          <CardDescription>导出文件包含密钥、Token 和 Telegram 会话，请按敏感备份保存</CardDescription>
         </CardHeader>
         <CardContent className="grid min-w-0 gap-4">
           {backupMessage && (
@@ -122,7 +122,7 @@ export function SettingsPage() {
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => void exportData()}>
               <Download className="size-4" />
-              导出 JSON
+              导出敏感备份
             </Button>
             <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={importData.isPending}>
               {importData.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}

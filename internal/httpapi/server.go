@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ai-upstream-monitor/internal/app"
@@ -25,11 +26,18 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-const sessionCookie = "monitor_session"
+const (
+	sessionCookie        = "monitor_session"
+	defaultJSONBodyLimit = 1 << 20
+	loginFailLimit       = 5
+	loginFailWindow      = 15 * time.Minute
+)
 
 type Server struct {
-	App    *app.Service
-	Static embed.FS
+	App        *app.Service
+	Static     embed.FS
+	loginMu    sync.Mutex
+	loginFails map[string][]time.Time
 }
 
 func (s *Server) Routes() http.Handler {
@@ -109,7 +117,22 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /scheduler", redirectTo("/admin/scheduler"))
 	mux.HandleFunc("GET /settings", redirectTo("/admin/settings"))
 	mux.Handle("/", s.static())
-	return mux
+	return s.checkOrigin(mux)
+}
+
+func (s *Server) checkOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		origin := r.Header.Get("Origin")
+		if origin == "" || sameOrigin(origin, r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeError(w, http.StatusForbidden, "bad origin")
+	})
 }
 
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
@@ -125,6 +148,76 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func sameOrigin(origin string, r *http.Request) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	for _, host := range []string{r.Host, firstHeader(r.Header.Get("X-Forwarded-Host"))} {
+		if host != "" && strings.EqualFold(u.Host, host) {
+			return true
+		}
+	}
+	return false
+}
+
+func secureCookie(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(firstHeader(r.Header.Get("X-Forwarded-Proto")), "https") || strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on")
+}
+
+func firstHeader(v string) string {
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
+}
+
+func loginKey(r *http.Request, username string) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || host == "" {
+		host = r.RemoteAddr
+	}
+	return host + "|" + strings.ToLower(strings.TrimSpace(username))
+}
+
+func (s *Server) loginLimited(key string) bool {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	now := time.Now()
+	fails := pruneLoginFailures(s.loginFails[key], now)
+	if s.loginFails != nil {
+		s.loginFails[key] = fails
+	}
+	return len(fails) >= loginFailLimit
+}
+
+func (s *Server) recordLoginFailure(key string) {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	now := time.Now()
+	if s.loginFails == nil {
+		s.loginFails = map[string][]time.Time{}
+	}
+	s.loginFails[key] = append(pruneLoginFailures(s.loginFails[key], now), now)
+}
+
+func (s *Server) clearLoginFailures(key string) {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	delete(s.loginFails, key)
+}
+
+func pruneLoginFailures(fails []time.Time, now time.Time) []time.Time {
+	cutoff := now.Add(-loginFailWindow)
+	i := 0
+	for ; i < len(fails); i++ {
+		if fails[i].After(cutoff) {
+			break
+		}
+	}
+	return fails[i:]
 }
 
 func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
@@ -152,14 +245,21 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
+	key := loginKey(r, body.Username)
+	if s.loginLimited(key) {
+		writeError(w, http.StatusTooManyRequests, "too many login attempts")
+		return
+	}
 	token, u, err := s.App.Login(r.Context(), body.Username, body.Password)
 	if err != nil {
+		s.recordLoginFailure(key)
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
+	s.clearLoginFailures(key)
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
-		Expires: time.Now().Add(30 * 24 * time.Hour),
+		Secure: secureCookie(r), Expires: time.Now().Add(30 * 24 * time.Hour),
 	})
 	writeJSON(w, map[string]any{"user": u})
 }
@@ -168,7 +268,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		_ = s.App.Logout(r.Context(), c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secureCookie(r)})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -450,14 +550,15 @@ func (s *Server) exportData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="ai-upstream-monitor-export.json"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="ai-upstream-monitor-sensitive-export.json"`)
+	w.Header().Set("X-Backup-Contains-Secrets", "true")
 	_ = json.NewEncoder(w).Encode(out)
 }
 
 func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
 	var in store.ExportData
-	if !decode(w, r, &in) {
+	if !decodeJSON(w, r, &in, 0) {
 		return
 	}
 	writeNoContentOrError(w, s.App.Store.ImportData(r.Context(), in))
@@ -777,7 +878,19 @@ func (s *Server) browserCapture(w http.ResponseWriter, r *http.Request) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, out any) bool {
+	return decodeJSON(w, r, out, defaultJSONBodyLimit)
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, out any, limit int64) bool {
+	if limit > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+	}
 	if err := json.NewDecoder(r.Body).Decode(out); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusBadRequest, "JSON 请求体过大")
+			return false
+		}
 		writeError(w, http.StatusBadRequest, "JSON 格式错误")
 		return false
 	}
@@ -791,18 +904,11 @@ func writeJSONOrError(w http.ResponseWriter, out any, err error) {
 			status = http.StatusBadRequest
 		} else if errors.Is(err, sql.ErrNoRows) {
 			status = http.StatusNotFound
-		} else if statusError(err) {
-			status = http.StatusBadRequest
 		}
 		writeError(w, status, err.Error())
 		return
 	}
 	writeJSON(w, out)
-}
-
-func statusError(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "required") || strings.Contains(msg, "already") || strings.Contains(msg, "must") || strings.Contains(msg, "belong") || strings.Contains(msg, "match")
 }
 
 func writeNoContentOrError(w http.ResponseWriter, err error) {
