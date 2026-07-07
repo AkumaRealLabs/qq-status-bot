@@ -129,7 +129,7 @@ export function CLIProxyPoolPage() {
                         <div className="flex justify-end gap-1.5">
                           <IconAction title="下载" icon={Download} pending={false} onClick={() => void downloadAccount(account.name).catch((error) => window.alert(errorMessage(error)))} />
                           <IconAction
-                            title="恢复配额"
+                            title="重置额度"
                             icon={RotateCcw}
                             pending={reset.isPending}
                             disabled={!account.auth_index}

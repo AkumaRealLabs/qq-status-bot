@@ -206,6 +206,20 @@ func (s *Service) logSchedulerAction(ctx context.Context, card domain.ModelCard,
 		Status:      status,
 		Message:     message,
 	})
+	if status == "success" {
+		severity := "warning"
+		if action == "restore" {
+			severity = "success"
+		}
+		actions := []string{}
+		if action == "disable" {
+			actions = []string{"scheduler_restore"}
+		}
+		_, _ = s.Store.CreateOpsEvent(ctx, domain.OpsEvent{
+			Type: "scheduler_changed", Severity: severity, Title: "调度器状态变更", Message: card.Name + " " + message,
+			TargetType: "card", TargetID: card.ID, Actions: actions,
+		})
+	}
 }
 
 func (s *Service) lastTwoProbesSucceeded(ctx context.Context, cardID string) bool {

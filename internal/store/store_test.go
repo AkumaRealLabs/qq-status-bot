@@ -231,6 +231,50 @@ func TestMigrateCreatesDefaultRevenueCard(t *testing.T) {
 	}
 }
 
+func TestOpsStoreCRUD(t *testing.T) {
+	s := testStore(t)
+	rules, err := s.NotificationRules(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rules.Enabled || rules.FailureThreshold != 2 || !rules.Recovery || !rules.EventTypes["probe_failed"] {
+		t.Fatalf("default rules = %+v", rules)
+	}
+	rules.Enabled = false
+	if _, err := s.UpdateNotificationRules(t.Context(), rules); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.NotificationRules(t.Context()); err != nil || got.Enabled {
+		t.Fatalf("rules=%+v err=%v", got, err)
+	}
+	if _, err := s.CreateOpsEvent(t.Context(), domain.OpsEvent{Type: "probe_failed", Title: "探测失败", Actions: []string{"check_card"}}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.OpsEvents(t.Context(), "probe_failed", "unacked", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Actions[0] != "check_card" {
+		t.Fatalf("events = %+v", events)
+	}
+	if err := s.AckOpsEvent(t.Context(), events[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateAudit(t.Context(), domain.AuditLog{Actor: "admin", Action: "PATCH /api/settings", Fields: []string{"telegram_bot_token"}}); err != nil {
+		t.Fatal(err)
+	}
+	audit, err := s.AuditLogs(t.Context(), "settings", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit) != 1 || audit[0].Fields[0] != "telegram_bot_token" {
+		t.Fatalf("audit = %+v", audit)
+	}
+	if err := s.CheckWritable(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTGMigrateAndCRUD(t *testing.T) {
 	s := testStore(t)
 	if err := s.Migrate(t.Context()); err != nil {

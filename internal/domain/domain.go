@@ -144,15 +144,16 @@ type BalanceRechargeLog struct {
 }
 
 type Settings struct {
-	CheckIntervalMinutes int    `json:"check_interval_minutes"`
-	TelegramBotToken     string `json:"telegram_bot_token,omitempty"`
-	TelegramChatID       string `json:"telegram_chat_id,omitempty"`
-	ProbeModel           string `json:"probe_model"`
-	SiteName             string `json:"site_name"`
-	SiteIcon             string `json:"site_icon"`
-	EpayBaseURL          string `json:"epay_base_url"`
-	EpayPID              string `json:"epay_pid"`
-	EpayKey              string `json:"epay_key"`
+	CheckIntervalMinutes int               `json:"check_interval_minutes"`
+	TelegramBotToken     string            `json:"telegram_bot_token,omitempty"`
+	TelegramChatID       string            `json:"telegram_chat_id,omitempty"`
+	ProbeModel           string            `json:"probe_model"`
+	SiteName             string            `json:"site_name"`
+	SiteIcon             string            `json:"site_icon"`
+	EpayBaseURL          string            `json:"epay_base_url"`
+	EpayPID              string            `json:"epay_pid"`
+	EpayKey              string            `json:"epay_key"`
+	NotificationRules    NotificationRules `json:"notification_rules"`
 }
 
 type SchedulerConfig struct {

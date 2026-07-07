@@ -215,6 +215,50 @@ func TestExportMarksBackupSensitive(t *testing.T) {
 	}
 }
 
+func TestAuthAuditsJSONFieldsWithoutValues(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	user, err := st.CreateUser(t.Context(), "admin", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := st.CreateSession(t.Context(), user.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/settings", strings.NewReader(`{"site_name":"Ops","telegram_bot_token":"secret-token","telegram_chat_id":"100"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	rr := httptest.NewRecorder()
+	srv := &Server{App: app.New(st)}
+	srv.auth(srv.updateSettings)(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	rows, err := st.AuditLogs(t.Context(), "settings", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || !contains(rows[0].Fields, "telegram_bot_token") || strings.Contains(rows[0].Summary, "secret-token") {
+		t.Fatalf("audit = %+v", rows)
+	}
+}
+
+func contains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestPublicSettingsDoesNotRequireAuth(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
 	if err != nil {

@@ -417,7 +417,9 @@ func (s *Service) ResetCLIProxyQuota(ctx context.Context, name string) (domain.C
 	return domain.CLIProxyResetQuotaResult{Status: cliproxyString(firstCLIProxy(raw, "status", "message")), AuthIndex: authIndex, Models: cliproxyStrings(firstCLIProxy(raw, "models"))}, nil
 }
 
-func (s *Service) CLIProxyAccountQuota(ctx context.Context, name, authIndex, accountID, accountType string) (domain.CLIProxyQuota, error) {
+func (s *Service) CLIProxyAccountQuota(ctx context.Context, name, authIndex, accountID, accountType string) (quota domain.CLIProxyQuota, err error) {
+	account := domain.CLIProxyAuthFile{Name: strings.TrimSpace(name), AuthIndex: strings.TrimSpace(authIndex)}
+	defer func() { s.saveCLIProxyQuotaSnapshot(ctx, account, quota, err) }()
 	name = strings.TrimSpace(name)
 	if err := domain.ValidateCLIProxyAuthFileName(name); err != nil {
 		return domain.CLIProxyQuota{}, BadRequest(err)
@@ -426,7 +428,7 @@ func (s *Service) CLIProxyAccountQuota(ctx context.Context, name, authIndex, acc
 	if err != nil {
 		return domain.CLIProxyQuota{}, err
 	}
-	account := domain.CLIProxyAuthFile{
+	account = domain.CLIProxyAuthFile{
 		Name:        name,
 		AuthIndex:   strings.TrimSpace(authIndex),
 		Account:     strings.TrimSpace(accountID),
@@ -488,6 +490,37 @@ func (s *Service) CLIProxyAccountQuota(ctx context.Context, name, authIndex, acc
 		return domain.CLIProxyQuota{}, ErrBadRequest("CLIProxyAPI 额度响应为空")
 	}
 	return cliproxyCodexQuota(account, payload), nil
+}
+
+func (s *Service) saveCLIProxyQuotaSnapshot(ctx context.Context, account domain.CLIProxyAuthFile, quota domain.CLIProxyQuota, err error) {
+	if strings.TrimSpace(account.Name) == "" {
+		return
+	}
+	snap := domain.CLIProxyQuotaSnapshot{
+		AccountName: account.Name,
+		AuthIndex:   account.AuthIndex,
+		OK:          err == nil,
+		PlanType:    quota.PlanType,
+		Summary:     cliproxyQuotaSummary(quota),
+	}
+	if err != nil {
+		snap.Error = err.Error()
+		_, _ = s.Store.CreateOpsEvent(ctx, domain.OpsEvent{
+			Type: "cliproxy_error", Severity: "warning", Title: "CLIProxyAPI 额度异常", Message: account.Name + ": " + err.Error(),
+			TargetType: "cliproxy_account", TargetID: account.Name, Actions: []string{"refresh_cliproxy_accounts"},
+		})
+	}
+	_ = s.Store.SaveCLIProxyQuotaSnapshot(ctx, snap)
+}
+
+func cliproxyQuotaSummary(quota domain.CLIProxyQuota) string {
+	parts := []string{}
+	for _, window := range quota.Windows {
+		if window.RemainingPercent != nil {
+			parts = append(parts, fmt.Sprintf("%s 剩余 %.1f%%", window.Label, *window.RemainingPercent))
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (s *Service) cliProxyConfig(ctx context.Context) (domain.CLIProxyConfig, error) {

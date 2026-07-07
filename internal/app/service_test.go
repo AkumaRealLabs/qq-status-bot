@@ -112,6 +112,37 @@ func TestEffectiveRatioUsesBalanceRate(t *testing.T) {
 	}
 }
 
+func TestProfitUsesBalanceDropsOnly(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "A", Type: "sub2api", BaseURL: "https://example.test", BalanceRate: 1, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, remain := range []float64{100, 90, 120, 110} {
+		if _, err := st.SaveBalance(t.Context(), u.ID, monitor.Balance{Remain: remain}, "", 0); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := st.SaveRevenueSnapshot(t.Context(), domain.RevenueSnapshot{SourceID: "r1", SourceName: "收入", SourceType: "epay_total", Revenue: 50}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := New(st).Profit(t.Context(), "24h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Revenue != 50 || out.Cost != 20 || out.Profit != 30 {
+		t.Fatalf("profit = %+v", out)
+	}
+}
+
 func TestNewDefaultsToCodexCLIProbeWithHTTPFallback(t *testing.T) {
 	t.Setenv("AUM_PROBE_MODE", "")
 	if got := New(nil).Client.ProbeMode; got != monitor.ProbeModeCLI {

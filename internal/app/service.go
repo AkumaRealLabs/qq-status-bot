@@ -350,9 +350,13 @@ func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
 	mu := toMonitorUpstream(u)
 	result, err := s.Client.Check(ctx, &mu, "", "")
 	if err != nil {
-		_ = s.Store.SaveUpstreamError(ctx, u.ID, err.Error(), u.FailureCount+1)
+		failures := u.FailureCount + 1
+		_ = s.Store.SaveUpstreamError(ctx, u.ID, err.Error(), failures)
+		failing := failures >= s.alertFailureThreshold(ctx)
 		if monitor.IsAuthError(err) {
-			_ = s.alert(ctx, u, "credential", true, u.Name+" 凭据失效: "+err.Error())
+			_ = s.alert(ctx, u, "credential", failing, u.Name+" 凭据失效: "+err.Error())
+		} else {
+			_ = s.alert(ctx, u, "balance_query", failing, u.Name+" 额度查询失败: "+err.Error())
 		}
 		return err
 	}
@@ -368,6 +372,7 @@ func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
 	}
 	_ = s.Store.SaveUpstreamError(ctx, u.ID, "", 0)
 	_ = s.alert(ctx, u, "credential", false, u.Name+" 凭据已恢复")
+	_ = s.alert(ctx, u, "balance_query", false, u.Name+" 额度查询已恢复")
 	return s.alert(ctx, u, "balance", domain.LowBalance(u, snap), fmt.Sprintf("%s 余额低于阈值", u.Name))
 }
 
@@ -506,7 +511,7 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 		return err
 	}
 	_ = s.applySchedulerAutomation(ctx, card, probe.Success, failures)
-	return s.alert(ctx, u, "ping:"+card.ID, !probe.Success && failures >= 2, card.Name+" 探测失败: "+probe.Error)
+	return s.alert(ctx, u, "ping:"+card.ID, !probe.Success && failures >= s.alertFailureThreshold(ctx), card.Name+" 探测失败: "+probe.Error)
 }
 
 func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) error {
@@ -533,6 +538,12 @@ func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) er
 	}
 	if err := s.Store.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
 		return err
+	}
+	if !probe.Success && failures >= s.alertFailureThreshold(ctx) {
+		_, _ = s.Store.CreateOpsEvent(ctx, domain.OpsEvent{
+			Type: "probe_failed", Severity: "warning", Title: "探测失败", Message: card.Name + " 探测失败: " + probe.Error,
+			TargetType: "card", TargetID: card.ID, Actions: []string{"check_card"},
+		})
 	}
 	return s.applySchedulerAutomation(ctx, card, probe.Success, failures)
 }
@@ -898,6 +909,10 @@ func (s *Service) TodayRevenue(ctx context.Context) ([]domain.RevenueRow, error)
 		default:
 			row.Error = "unsupported revenue card type"
 		}
+		_ = s.Store.SaveRevenueSnapshot(ctx, domain.RevenueSnapshot{
+			SourceID: card.ID, SourceName: card.Name, SourceType: card.SourceType,
+			CheckedAt: row.CheckedAt, Revenue: row.Revenue, Error: row.Error,
+		})
 		out = append(out, row)
 	}
 	return out, nil
@@ -1061,9 +1076,28 @@ func (s *Service) alert(ctx context.Context, u domain.Upstream, kind string, fai
 	if dec.Recover {
 		dec.Message = u.Name + " " + kind + " 已恢复"
 	}
-	sent := s.sendTelegram(ctx, dec.Message) == nil
+	s.createAlertOpsEvent(ctx, u, kind, dec.Recover, dec.Message)
+	rules, err := s.Store.NotificationRules(ctx)
+	if err != nil {
+		return err
+	}
+	eventType, _, _ := alertOpsType(kind, dec.Recover)
+	shouldSend := rules.Enabled && rules.EventTypes[eventType] && (!dec.Recover || rules.Recovery)
+	sent := false
+	if shouldSend {
+		sent = s.sendTelegram(ctx, dec.Message) == nil
+	}
 	return s.Store.SaveAlert(ctx, u.ID, dec, sent)
 }
+
+func (s *Service) alertFailureThreshold(ctx context.Context) int {
+	rules, err := s.Store.NotificationRules(ctx)
+	if err != nil || rules.FailureThreshold <= 0 {
+		return 2
+	}
+	return rules.FailureThreshold
+}
+
 func (s *Service) sendTelegram(ctx context.Context, message string) error {
 	cfg, err := s.Store.Settings(ctx)
 	if err != nil {
@@ -1078,7 +1112,11 @@ func (s *Service) sendTelegram(ctx context.Context, message string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	hc := s.Client.HTTP
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
 		return err
 	}

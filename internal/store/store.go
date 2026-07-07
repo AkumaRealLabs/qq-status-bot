@@ -84,7 +84,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 			scheduler_base_url TEXT NOT NULL DEFAULT '', scheduler_user_id TEXT NOT NULL DEFAULT '', scheduler_access_token TEXT NOT NULL DEFAULT '',
 			scheduler_tiers TEXT NOT NULL DEFAULT '',
 			cliproxy_name TEXT NOT NULL DEFAULT 'CLIProxyAPI', cliproxy_base_url TEXT NOT NULL DEFAULT '',
-			cliproxy_management_key TEXT NOT NULL DEFAULT '', cliproxy_enabled INTEGER NOT NULL DEFAULT 1
+			cliproxy_management_key TEXT NOT NULL DEFAULT '', cliproxy_enabled INTEGER NOT NULL DEFAULT 1,
+			notification_rules TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS upstreams (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, base_url TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
@@ -121,6 +122,27 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS alert_events (
 			id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, type TEXT NOT NULL, recover INTEGER NOT NULL DEFAULT 0,
 			sent INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS ops_events (
+			id TEXT PRIMARY KEY, type TEXT NOT NULL, severity TEXT NOT NULL DEFAULT 'info', title TEXT NOT NULL DEFAULT '',
+			message TEXT NOT NULL DEFAULT '', target_type TEXT NOT NULL DEFAULT '', target_id TEXT NOT NULL DEFAULT '',
+			actions TEXT NOT NULL DEFAULT '[]', read INTEGER NOT NULL DEFAULT 0, acked INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS audit_logs (
+			id TEXT PRIMARY KEY, actor TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, target_type TEXT NOT NULL DEFAULT '',
+			target_id TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', fields TEXT NOT NULL DEFAULT '[]',
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS revenue_snapshots (
+			id TEXT PRIMARY KEY, source_id TEXT NOT NULL DEFAULT '', source_name TEXT NOT NULL DEFAULT '',
+			source_type TEXT NOT NULL DEFAULT '', checked_at TEXT NOT NULL, revenue REAL NOT NULL DEFAULT 0,
+			error TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS cliproxy_quota_snapshots (
+			id TEXT PRIMARY KEY, account_name TEXT NOT NULL DEFAULT '', auth_index TEXT NOT NULL DEFAULT '',
+			checked_at TEXT NOT NULL, ok INTEGER NOT NULL DEFAULT 0, plan_type TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS balance_recharge_logs (
 			id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, method TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0,
@@ -159,6 +181,10 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_probe_card_time ON probe_runs(card_id, checked_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_balance_upstream_time ON balance_snapshots(upstream_id, checked_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_state ON alert_events(upstream_id, type, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_ops_events_time ON ops_events(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_time ON audit_logs(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_revenue_snapshots_time ON revenue_snapshots(checked_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_cliproxy_quota_snapshots_time ON cliproxy_quota_snapshots(checked_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_recharge_upstream_time ON balance_recharge_logs(upstream_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_logs_time ON scheduler_logs(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_revenue_cards_upstream ON revenue_cards(upstream_id)`,
@@ -197,6 +223,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"cliproxy_base_url", "TEXT NOT NULL DEFAULT ''"},
 		{"cliproxy_management_key", "TEXT NOT NULL DEFAULT ''"},
 		{"cliproxy_enabled", "INTEGER NOT NULL DEFAULT 1"},
+		{"notification_rules", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.addColumnIfMissing(ctx, "settings", col.name, col.def); err != nil {
 			return err
@@ -449,11 +476,18 @@ func (s *Store) CleanupSessions(ctx context.Context) error {
 
 func (s *Store) Settings(ctx context.Context) (domain.Settings, error) {
 	var cfg domain.Settings
-	err := s.row(ctx, `SELECT check_interval_minutes, telegram_bot_token, telegram_chat_id, probe_model, site_name, site_icon, epay_base_url, epay_pid, epay_key FROM settings WHERE id='default'`).
-		Scan(&cfg.CheckIntervalMinutes, &cfg.TelegramBotToken, &cfg.TelegramChatID, &cfg.ProbeModel, &cfg.SiteName, &cfg.SiteIcon, &cfg.EpayBaseURL, &cfg.EpayPID, &cfg.EpayKey)
+	var rules string
+	err := s.row(ctx, `SELECT check_interval_minutes, telegram_bot_token, telegram_chat_id, probe_model, site_name, site_icon, epay_base_url, epay_pid, epay_key, notification_rules FROM settings WHERE id='default'`).
+		Scan(&cfg.CheckIntervalMinutes, &cfg.TelegramBotToken, &cfg.TelegramChatID, &cfg.ProbeModel, &cfg.SiteName, &cfg.SiteIcon, &cfg.EpayBaseURL, &cfg.EpayPID, &cfg.EpayKey, &rules)
 	if err != nil {
 		return cfg, err
 	}
+	if rules == "" {
+		cfg.NotificationRules = domain.DefaultNotificationRules()
+	} else {
+		_ = json.Unmarshal([]byte(rules), &cfg.NotificationRules)
+	}
+	cfg.NotificationRules = domain.NormalizeNotificationRules(cfg.NotificationRules)
 	cfg.CheckIntervalMinutes = domain.NormalizeCheckInterval(cfg.CheckIntervalMinutes)
 	cfg.ProbeModel = domain.ProbeModel
 	if cfg.SiteName == "" {
@@ -471,8 +505,21 @@ func (s *Store) UpdateSettings(ctx context.Context, cfg domain.Settings) (domain
 	cfg.EpayBaseURL = strings.TrimRight(strings.TrimSpace(cfg.EpayBaseURL), "/")
 	cfg.EpayPID = strings.TrimSpace(cfg.EpayPID)
 	cfg.EpayKey = strings.TrimSpace(cfg.EpayKey)
-	_, err := s.exec(ctx, `UPDATE settings SET check_interval_minutes=?, telegram_bot_token=?, telegram_chat_id=?, probe_model=?, site_name=?, site_icon=?, epay_base_url=?, epay_pid=?, epay_key=? WHERE id='default'`,
-		cfg.CheckIntervalMinutes, cfg.TelegramBotToken, cfg.TelegramChatID, cfg.ProbeModel, cfg.SiteName, cfg.SiteIcon, cfg.EpayBaseURL, cfg.EpayPID, cfg.EpayKey)
+	if cfg.NotificationRules.EventTypes == nil && cfg.NotificationRules.FailureThreshold == 0 {
+		current, err := s.NotificationRules(ctx)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.NotificationRules = current
+	} else {
+		cfg.NotificationRules = domain.NormalizeNotificationRules(cfg.NotificationRules)
+	}
+	rules, err := json.Marshal(cfg.NotificationRules)
+	if err != nil {
+		return cfg, err
+	}
+	_, err = s.exec(ctx, `UPDATE settings SET check_interval_minutes=?, telegram_bot_token=?, telegram_chat_id=?, probe_model=?, site_name=?, site_icon=?, epay_base_url=?, epay_pid=?, epay_key=?, notification_rules=? WHERE id='default'`,
+		cfg.CheckIntervalMinutes, cfg.TelegramBotToken, cfg.TelegramChatID, cfg.ProbeModel, cfg.SiteName, cfg.SiteIcon, cfg.EpayBaseURL, cfg.EpayPID, cfg.EpayKey, string(rules))
 	return cfg, err
 }
 

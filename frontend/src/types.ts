@@ -150,11 +150,12 @@ export type SettingsData = {
   epay_base_url: string
   epay_pid: string
   epay_key: string
+  notification_rules: NotificationRules
 }
 
 export type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>
 
-export type TabID = 'status' | 'balances' | 'revenue' | 'messages' | 'upstreams' | 'scheduler' | 'pools' | 'settings'
+export type TabID = 'status' | 'balances' | 'revenue' | 'messages' | 'upstreams' | 'scheduler' | 'pools' | 'ops' | 'settings'
 
 export type NavTab = { id: TabID; label: string; short: string; icon: ElementType }
 
@@ -349,4 +350,104 @@ export type CLIProxyQuota = {
   subscription_active_until?: string
   rate_limit_reset_credits_available?: number
   windows: CLIProxyQuotaWindow[]
+}
+
+export type NotificationRules = {
+  enabled: boolean
+  event_types: Record<string, boolean>
+  failure_threshold: number
+  recovery: boolean
+}
+
+export type OpsEvent = {
+  id: string
+  type: string
+  severity: 'info' | 'warning' | 'success' | 'error' | string
+  title: string
+  message: string
+  target_type?: string
+  target_id?: string
+  actions: string[]
+  read: boolean
+  acked: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type AuditLog = {
+  id: string
+  actor: string
+  action: string
+  target_type?: string
+  target_id?: string
+  summary: string
+  fields: string[]
+  created_at: string
+}
+
+export type OpsProbeTrendPoint = {
+  at: string
+  total: number
+  success: number
+  failed: number
+  success_rate: number
+  avg_latency: number
+}
+
+export type OpsBalanceTrendPoint = {
+  at: string
+  upstream_id: string
+  name: string
+  remain: number
+  error?: string
+}
+
+export type RevenueSnapshot = {
+  id: string
+  source_id: string
+  source_name: string
+  source_type: string
+  checked_at: string
+  revenue: number
+  error?: string
+}
+
+export type CLIProxyQuotaSnapshot = {
+  id: string
+  account_name: string
+  auth_index?: string
+  checked_at: string
+  ok: boolean
+  plan_type?: string
+  summary?: string
+  error?: string
+}
+
+export type OpsTrendResponse = {
+  window: string
+  probes: OpsProbeTrendPoint[]
+  balances: OpsBalanceTrendPoint[]
+  revenue: RevenueSnapshot[]
+  cliproxy_quotas: CLIProxyQuotaSnapshot[]
+}
+
+export type ProfitResponse = {
+  window: string
+  revenue: number
+  cost: number
+  profit: number
+  upstream_cost: { upstream_id: string; name: string; cost: number }[]
+  note: string
+}
+
+export type SelfCheckResponse = {
+  checked_at: string
+  items: { name: string; status: 'ok' | 'warn' | 'error' | 'safe_mode' | string; message?: string }[]
+}
+
+export type BulkResult = {
+  id?: string
+  name?: string
+  status: 'ok' | 'error' | string
+  error?: string
 }
