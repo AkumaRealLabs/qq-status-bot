@@ -481,10 +481,11 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function InfoCell({ label, value }: { label: string; value: string }) {
+  const text = value || '-'
   return (
     <div className="min-w-0 rounded-sm border border-border bg-background px-3 py-2">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate text-sm font-medium">{value || '-'}</div>
+      <div className="mt-1 whitespace-normal break-words text-sm font-medium leading-snug" title={text}>{text}</div>
     </div>
   )
 }
