@@ -97,9 +97,10 @@ export function SchedulerPage() {
   if (!form) return <ShellLoading />
   const rows = cards.data ?? []
   const list = channels.data ?? []
-  const groupRows = schedulerGroupRows(groups.data ?? [], list)
-  const selectableGroups = groupRows.filter((group) => group.name !== '未分组')
   const tiers = schedulerTiers(form)
+  const rawGroupRows = schedulerGroupRows(groups.data ?? [], list)
+  const groupRows = schedulerTierRows(tiers, groups.data ?? [], list)
+  const selectableGroups = rawGroupRows.filter((group) => group.name !== '未分组')
   const groupOptions = schedulerGroupOptions(selectableGroups, list, tiers)
   const updateTier = (index: number, patch: Partial<SchedulerTier>) =>
     setCfgDraft({ ...form, scheduler_tiers: tiers.map((tier, i) => i === index ? { ...tier, ...patch } : tier) })
@@ -175,27 +176,30 @@ export function SchedulerPage() {
         {!groups.isLoading && !groups.error && groupRows.length > 0 && (
           <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {groupRows.map((group) => (
-              <Card key={group.name} className="bg-card">
+              <Card key={`${group.name}-${group.title || group.name}`} className="bg-card">
                 <CardHeader className="gap-2">
                   <div className="flex min-w-0 items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <CardTitle className="truncate">{group.name}</CardTitle>
-                      <CardDescription className="truncate">{group.description || `${group.channels.length} 个渠道`}</CardDescription>
+                      <CardTitle className="truncate">{group.title || group.name}</CardTitle>
+                      <CardDescription className="truncate">调度器分组 {group.name} · {group.channels.length} 个渠道</CardDescription>
                     </div>
                     {group.ratio && <Badge variant="outline">{group.ratio}x</Badge>}
                   </div>
                 </CardHeader>
                 <CardContent className="grid gap-1.5">
                   {group.channels.length === 0 && <div className="text-sm text-muted-foreground">暂无渠道</div>}
-                  {group.channels.slice(0, 6).map((channel) => (
-                    <div key={channel.id} className="flex min-w-0 items-center justify-between gap-2 rounded-sm border border-border bg-background px-2.5 py-1.5 text-sm">
-                      <span className="min-w-0 truncate">{channel.name || channel.id}</span>
-                      <span className={cn('shrink-0 text-xs', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
-                        {schedulerStatus(channel.status)}
-                      </span>
+                  {group.channels.length > 0 && (
+                    <div className="grid max-h-72 gap-1.5 overflow-y-auto pr-1">
+                      {group.channels.map((channel) => (
+                        <div key={channel.id} className="flex min-w-0 items-center justify-between gap-2 rounded-sm border border-border bg-background px-2.5 py-1.5 text-sm">
+                          <span className="min-w-0 truncate">{channel.name || channel.id}</span>
+                          <span className={cn('shrink-0 text-xs', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
+                            {schedulerStatus(channel.status)}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  {group.channels.length > 6 && <div className="text-xs text-muted-foreground">+{group.channels.length - 6}</div>}
+                  )}
                 </CardContent>
               </Card>
             ))}
@@ -246,7 +250,7 @@ export function SchedulerPage() {
                                 <SelectItem value={none}>未确认</SelectItem>
                                 {selectableGroups.map((group) => (
                                   <SelectItem key={group.name} value={group.name}>
-                                    {group.name}
+                                    {schedulerGroupLabel(group.name, tiers)}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
@@ -437,7 +441,7 @@ function SchedulerGroupDialog({
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             {tiers.map((tier, index) => (
-              <div key={`${tier.tag}-${index}`} className="grid min-w-0 gap-3 rounded-sm border border-border bg-background p-3">
+              <div key={index} className="grid min-w-0 gap-3 rounded-sm border border-border bg-background p-3">
                 <div className="flex min-w-0 items-center justify-between gap-2">
                   <Field label="名称">
                     <Input value={tier.tag} onChange={(e) => onUpdateTier(index, { tag: e.target.value })} />
@@ -530,6 +534,10 @@ function schedulerGroupOptions(groups: SchedulerGroupRow[], channels: SchedulerC
   return Array.from(new Set([...groups.map((group) => group.name), ...channels.flatMap(channelGroups), ...tiers.map((tier) => tier.group)])).filter(Boolean).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
 }
 
+function schedulerGroupLabel(name: string, tiers: SchedulerTier[]) {
+  return tiers.find((tier) => tier.group === name)?.tag.trim() || name
+}
+
 function nextTierName(tiers: SchedulerTier[], group: string) {
   const used = new Set(tiers.map((tier) => tier.tag))
   let name = group || 'new_group'
@@ -551,7 +559,7 @@ function groupCards(cards: ModelCard[]) {
   return groups
 }
 
-type SchedulerGroupRow = SchedulerGroup & { channels: SchedulerChannel[] }
+type SchedulerGroupRow = SchedulerGroup & { channels: SchedulerChannel[]; title?: string }
 
 function schedulerGroupRows(groups: SchedulerGroup[], channels: SchedulerChannel[]): SchedulerGroupRow[] {
   const known = groups.length > 0 ? groups : Array.from(new Set(channels.flatMap(channelGroups))).map((name) => ({ name }))
@@ -559,6 +567,16 @@ function schedulerGroupRows(groups: SchedulerGroup[], channels: SchedulerChannel
   const ungrouped = channels.filter((channel) => channelGroups(channel).length === 0)
   if (ungrouped.length > 0) rows.push({ name: '未分组', channels: ungrouped })
   return rows
+}
+
+function schedulerTierRows(tiers: SchedulerTier[], groups: SchedulerGroup[], channels: SchedulerChannel[]): SchedulerGroupRow[] {
+  const byName = new Map(groups.map((group) => [group.name, group]))
+  return tiers.flatMap((tier) => {
+    const name = tier.group.trim()
+    if (!name) return []
+    const group = byName.get(name) ?? { name }
+    return [{ ...group, title: tier.tag.trim() || name, channels: channels.filter((channel) => channelGroups(channel).includes(name)) }]
+  })
 }
 
 function channelGroups(channel: SchedulerChannel) {
