@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download, Loader2, RefreshCcw, RotateCcw, Save, Settings2, Trash2, Upload } from 'lucide-react'
 import { EmptyPanel, Field, FormError, IconAction, Metric } from '@/components/common'
@@ -18,6 +18,7 @@ const emptyConfig: CLIProxyConfig = { name: 'CLIProxyAPI', base_url: '', managem
 
 export function CLIProxyPoolPage() {
   const qc = useQueryClient()
+  const [quotaRefreshToken, setQuotaRefreshToken] = useState(0)
   const cfg = useQuery({ queryKey: ['cliproxy', 'config'], queryFn: () => api<CLIProxyConfig>('/api/pools/cliproxy/config') })
   const configured = Boolean(cfg.data?.enabled && cfg.data.base_url && cfg.data.management_key_set)
   const accounts = useQuery({
@@ -28,9 +29,12 @@ export function CLIProxyPoolPage() {
   const rows = useMemo(() => sortAccounts(accounts.data ?? []), [accounts.data])
   const stats = useMemo(() => accountStats(rows), [rows])
   const refreshing = cfg.isFetching || accounts.isFetching
-  const refreshAll = () => {
+  const refreshAll = async () => {
     void cfg.refetch()
-    if (configured) void accounts.refetch()
+    if (configured) {
+      await accounts.refetch()
+      setQuotaRefreshToken((value) => value + 1)
+    }
   }
   const remove = useMutation({
     mutationFn: (name: string) => api(`/api/pools/cliproxy/accounts/${encodeURIComponent(name)}`, { method: 'DELETE' }),
@@ -56,7 +60,7 @@ export function CLIProxyPoolPage() {
       actions={
         <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
           {refreshing && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-          <Button variant="outline" size="sm" onClick={refreshAll} disabled={refreshing}>
+          <Button variant="outline" size="sm" onClick={() => void refreshAll()} disabled={refreshing}>
             <RefreshCcw className={cn('size-4', refreshing && 'animate-spin')} />
             刷新
           </Button>
@@ -113,7 +117,7 @@ export function CLIProxyPoolPage() {
                         <div className="text-xs text-muted-foreground">{account.account_type || '-'}</div>
                       </td>
                       <td className="w-64 px-3 py-2">
-                        <AccountQuota account={account} />
+                        <AccountQuota account={account} refreshToken={quotaRefreshToken} />
                       </td>
                       <td className="px-3 py-2">
                         <span className="text-success">{account.success ?? 0}</span>
@@ -310,20 +314,22 @@ function AccountBadge({ account }: { account: CLIProxyAccount }) {
   return <Badge variant={disabled ? 'amber' : bad ? 'destructive' : 'success'}>{text}</Badge>
 }
 
-function AccountQuota({ account }: { account: CLIProxyAccount }) {
+function AccountQuota({ account, refreshToken }: { account: CLIProxyAccount; refreshToken: number }) {
   const canLoad = Boolean(account.auth_index && isCodexAccount(account))
-  const quota = useQuery({
+  const { data, error, isFetching, refetch } = useQuery({
     queryKey: ['cliproxy', 'quota', account.name],
     queryFn: () => api<CLIProxyQuota>(quotaURL(account)),
-    enabled: canLoad,
-    staleTime: 60_000,
+    enabled: false,
     retry: false,
   })
+  useEffect(() => {
+    if (canLoad && refreshToken > 0) void refetch()
+  }, [canLoad, refetch, refreshToken])
   if (!canLoad) return <span className="text-muted-foreground">-</span>
-  if (quota.isLoading) return <Loader2 className="size-4 animate-spin text-muted-foreground" />
-  if (quota.error) return <span className="text-xs text-destructive" title={errorMessage(quota.error)}>读取失败</span>
+  if (isFetching && !data) return <Loader2 className="size-4 animate-spin text-muted-foreground" />
+  if (!data && error) return <span className="text-xs text-destructive" title={errorMessage(error)}>读取失败</span>
+  if (!data) return <span className="text-xs text-muted-foreground">点刷新查看</span>
 
-  const data = quota.data
   const plan = planText(data?.plan_type || account.account_type)
   return (
     <div className="grid min-w-0 gap-1.5">
@@ -334,6 +340,7 @@ function AccountQuota({ account }: { account: CLIProxyAccount }) {
           </span>
         )}
         <span>主动重置次数 {data?.rate_limit_reset_credits_available ?? '未记录'}</span>
+        {isFetching && <Loader2 className="size-3 animate-spin" />}
       </div>
       {(data?.windows ?? []).slice(0, 2).map((window) => (
         <QuotaWindow key={window.id} window={window} />
