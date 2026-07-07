@@ -151,13 +151,13 @@ func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "A", Type: "newapi", BaseURL: "https://api.example.test", BalanceRate: 1, Enabled: true})
+	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "A", Type: "newapi", BaseURL: "https://api.example.test", BalanceRate: 2, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SaveKeys(t.Context(), u.ID, []monitor.APIKey{
-		{RemoteID: "low", Name: "low", GroupRatio: "0.05"},
-		{RemoteID: "stable", Name: "stable", GroupRatio: "0.12"},
+		{RemoteID: "low", Name: "low", GroupRatio: "0.025"},
+		{RemoteID: "stable", Name: "stable", GroupRatio: "0.06"},
 	}); err != nil {
 		t.Fatal(err)
 	}

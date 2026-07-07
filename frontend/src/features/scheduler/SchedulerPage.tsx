@@ -52,11 +52,10 @@ export function SchedulerPage() {
     onError: (error) => setMessage(errorMessage(error)),
   })
   const bind = useMutation({
-    mutationFn: ({ card, schedulerGroup, channel }: { card: ModelCard; schedulerGroup?: string; channel?: SchedulerChannel }) =>
+    mutationFn: ({ card, channel }: { card: ModelCard; channel?: SchedulerChannel }) =>
       api(`/api/cards/${card.id}`, {
         method: 'PATCH',
         body: JSON.stringify({
-          scheduler_group: schedulerGroup ?? card.scheduler_group ?? '',
           scheduler_channel_id: channel?.id ?? '',
           scheduler_channel_name: channel?.name ?? '',
         }),
@@ -98,10 +97,8 @@ export function SchedulerPage() {
   const rows = cards.data ?? []
   const list = channels.data ?? []
   const tiers = schedulerTiers(form)
-  const rawGroupRows = schedulerGroupRows(groups.data ?? [], list)
   const groupRows = schedulerTierRows(tiers, groups.data ?? [], list)
-  const selectableGroups = rawGroupRows.filter((group) => group.name !== '未分组')
-  const groupOptions = schedulerGroupOptions(selectableGroups, list, tiers)
+  const groupOptions = schedulerGroupOptions(groups.data ?? [], list, tiers)
   const updateTier = (index: number, patch: Partial<SchedulerTier>) =>
     setCfgDraft({ ...form, scheduler_tiers: tiers.map((tier, i) => i === index ? { ...tier, ...patch } : tier) })
   const addTier = () => {
@@ -237,30 +234,14 @@ export function SchedulerPage() {
                           <div className="grid grid-cols-2 gap-2">
                             <InfoCell label="展示分组" value={displayGroupName(card)} />
                             <InfoCell label="上游 Key 原始分组" value={originalKeyGroup(card)} />
+                            <InfoCell label="上游成本" value={upstreamCost(card)} />
+                            <InfoCell label="自动命中分组" value={matchedTierLabel(card, tiers)} />
+                            <InfoCell label="调度器渠道" value={schedulerChannelName(card, channel)} />
                           </div>
-                          <Field label="调度器分组">
-                            <Select
-                              value={card.scheduler_group || none}
-                              onValueChange={(value) => bind.mutate({ card, schedulerGroup: value === none ? '' : value })}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="选择分组" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value={none}>未确认</SelectItem>
-                                {selectableGroups.map((group) => (
-                                  <SelectItem key={group.name} value={group.name}>
-                                    {schedulerGroupLabel(group.name, tiers)}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </Field>
-                          <Field label="调度器渠道">
+                          <Field label="绑定渠道">
                             <Select
                               value={card.scheduler_channel_id || none}
-                              disabled={!card.scheduler_group}
-                              onValueChange={(value) => bind.mutate({ card, schedulerGroup: card.scheduler_group, channel: value === none ? undefined : options.find((item) => item.id === value) })}
+                              onValueChange={(value) => bind.mutate({ card, channel: value === none ? undefined : options.find((item) => item.id === value) })}
                             >
                               <SelectTrigger>
                                 <SelectValue placeholder="选择渠道" />
@@ -515,8 +496,7 @@ function channelDetail(channel?: SchedulerChannel) {
 
 function channelsForCard(channels: SchedulerChannel[], card: ModelCard, cards: ModelCard[]) {
   const used = new Set(cards.filter((item) => item.id !== card.id).map((item) => item.scheduler_channel_id).filter(Boolean))
-  const group = card.scheduler_group?.trim()
-  const available = channels.filter((channel) => !used.has(channel.id) && (!group || channelGroups(channel).includes(group)))
+  const available = channels.filter((channel) => !used.has(channel.id))
   if (!card.scheduler_channel_id || available.some((item) => item.id === card.scheduler_channel_id)) return available
   return [{ id: card.scheduler_channel_id, name: card.scheduler_channel_name || card.scheduler_channel_id, status: -1 }, ...available]
 }
@@ -530,12 +510,8 @@ function schedulerTiers(cfg: SchedulerConfig) {
   return Array.isArray(cfg.scheduler_tiers) ? cfg.scheduler_tiers : defaultTiers
 }
 
-function schedulerGroupOptions(groups: SchedulerGroupRow[], channels: SchedulerChannel[], tiers: SchedulerTier[] = []) {
+function schedulerGroupOptions(groups: SchedulerGroup[], channels: SchedulerChannel[], tiers: SchedulerTier[] = []) {
   return Array.from(new Set([...groups.map((group) => group.name), ...channels.flatMap(channelGroups), ...tiers.map((tier) => tier.group)])).filter(Boolean).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
-}
-
-function schedulerGroupLabel(name: string, tiers: SchedulerTier[]) {
-  return tiers.find((tier) => tier.group === name)?.tag.trim() || name
 }
 
 function nextTierName(tiers: SchedulerTier[], group: string) {
@@ -561,14 +537,6 @@ function groupCards(cards: ModelCard[]) {
 
 type SchedulerGroupRow = SchedulerGroup & { channels: SchedulerChannel[]; title?: string }
 
-function schedulerGroupRows(groups: SchedulerGroup[], channels: SchedulerChannel[]): SchedulerGroupRow[] {
-  const known = groups.length > 0 ? groups : Array.from(new Set(channels.flatMap(channelGroups))).map((name) => ({ name }))
-  const rows = known.map((group) => ({ ...group, channels: channels.filter((channel) => channelGroups(channel).includes(group.name)) }))
-  const ungrouped = channels.filter((channel) => channelGroups(channel).length === 0)
-  if (ungrouped.length > 0) rows.push({ name: '未分组', channels: ungrouped })
-  return rows
-}
-
 function schedulerTierRows(tiers: SchedulerTier[], groups: SchedulerGroup[], channels: SchedulerChannel[]): SchedulerGroupRow[] {
   const byName = new Map(groups.map((group) => [group.name, group]))
   return tiers.flatMap((tier) => {
@@ -589,6 +557,31 @@ function displayGroupName(card: ModelCard) {
 
 function originalKeyGroup(card: ModelCard) {
   return card.key_group || (card.base_url ? '自定义' : '-')
+}
+
+function upstreamCost(card: ModelCard) {
+  return card.effective_ratio || '-'
+}
+
+function matchedTierLabel(card: ModelCard, tiers: SchedulerTier[]) {
+  const raw = card.effective_ratio?.trim()
+  if (!raw) return '成本缺失'
+  const price = Number(raw)
+  if (!Number.isFinite(price)) return '成本缺失'
+  const matched = tiers.filter((tier) => {
+    const group = tier.group.trim()
+    return group && price >= tier.price_min && price <= tier.price_max
+  })
+  if (matched.length === 0) return '未命中'
+  return matched.map((tier) => {
+    const tag = tier.tag.trim()
+    const group = tier.group.trim()
+    return tag && tag !== group ? `${tag} (${group})` : group
+  }).join('，')
+}
+
+function schedulerChannelName(card: ModelCard, channel?: SchedulerChannel) {
+  return channel?.name || card.scheduler_channel_name || card.scheduler_channel_id || '未绑定'
 }
 
 function schedulerStatus(status: number) {

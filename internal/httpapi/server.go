@@ -337,8 +337,9 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.SchedulerChannelID != nil {
+		oldChannelID := schedulerChannelID
 		schedulerChannelID = *body.SchedulerChannelID
-		if schedulerChannelID == "" {
+		if strings.TrimSpace(schedulerChannelID) == "" || schedulerChannelID != oldChannelID {
 			schedulerAutoDisabled = false
 		}
 	}

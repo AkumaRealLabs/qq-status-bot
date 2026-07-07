@@ -182,6 +182,35 @@ func TestUpdateCardCanClearDisplayGroup(t *testing.T) {
 	}
 }
 
+func TestUpdateCardChangingSchedulerChannelClearsAutoDisabled(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", BaseURL: "https://api.example.test", APIKey: "sk-test", SchedulerGroup: "gpt_low", SchedulerChannelID: "9", SchedulerChannelName: "旧通道", SchedulerAutoDisabled: true, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/cards/"+card.ID, strings.NewReader(`{"scheduler_channel_id":"10","scheduler_channel_name":"新通道"}`))
+	req.SetPathValue("id", card.ID)
+	rr := httptest.NewRecorder()
+	(&Server{App: app.New(st)}).updateCard(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	got, err := st.Card(t.Context(), card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SchedulerAutoDisabled || got.SchedulerChannelID != "10" || got.SchedulerChannelName != "新通道" || got.SchedulerGroup != "gpt_low" {
+		t.Fatalf("card = %+v", got)
+	}
+}
+
 func TestLegacyAdminPathsRedirect(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
 	if err != nil {
