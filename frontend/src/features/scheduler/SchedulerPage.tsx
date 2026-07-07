@@ -219,7 +219,7 @@ export function SchedulerPage() {
                     const canToggle = channel?.status === 1 || channel?.status === 2
                     const nextStatus = channel?.status === 2 ? 1 : 2
                     const detail = channelDetail(channel)
-                    const badge = schedulerCardBadge(card, channel)
+                    const badge = schedulerChannelBadge(card, channel)
                     return (
                       <Card key={card.id} className="min-w-0 bg-card">
                         <CardHeader className="gap-2">
@@ -238,6 +238,7 @@ export function SchedulerPage() {
                             <InfoCell label="上游成本" value={upstreamCost(card)} />
                             <InfoCell label="自动命中分组" value={matchedTierLabel(card, tiers)} />
                             <InfoCell label="调度器渠道" value={schedulerChannelName(card, channel)} />
+                            <InfoCell label="自动恢复" value={schedulerRestoreState(card, channel)} />
                           </div>
                           <Field label="绑定渠道">
                             <Select
@@ -586,12 +587,19 @@ function schedulerChannelName(card: ModelCard, channel?: SchedulerChannel) {
   return channel?.name || card.scheduler_channel_name || card.scheduler_channel_id || '未绑定'
 }
 
-function schedulerCardBadge(card: ModelCard, channel?: SchedulerChannel) {
+function schedulerChannelBadge(card: ModelCard, channel?: SchedulerChannel) {
   if (!card.scheduler_channel_id) return { ok: false, text: '未绑定' }
-  if (card.scheduler_auto_disabled) return { ok: false, text: '已自动关闭' }
-  if (channel?.status === 1) return { ok: true, text: '可自动控制' }
-  if (channel?.status === 2) return { ok: false, text: '已关闭' }
+  if (channel?.status === 1) return { ok: true, text: '渠道已启用' }
+  if (channel?.status === 2) return { ok: false, text: '渠道已关闭' }
   return { ok: false, text: '状态未知' }
+}
+
+function schedulerRestoreState(card: ModelCard, channel?: SchedulerChannel) {
+  if (!card.scheduler_channel_id) return '-'
+  if (card.scheduler_auto_disabled) return '待自动恢复'
+  if (channel?.status === 2) return '外部/手动关闭'
+  if (channel?.status === 1) return '未触发'
+  return '状态未知'
 }
 
 function schedulerStatus(status: number) {
