@@ -34,9 +34,9 @@ export function BrandIcon({ src, className }: { src?: string; className?: string
 
 export function MobileTabs({ tab, setTab, tabs }: { tab: TabID; setTab: (tab: TabID) => void; tabs: NavTab[] }) {
   return (
-    <div className="mb-4 grid min-w-0 gap-2 md:hidden" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+    <div className="mb-4 flex min-w-0 gap-2 overflow-x-auto pb-1 md:hidden">
       {tabs.map((item) => (
-        <Button key={item.id} variant={tab === item.id ? 'secondary' : 'outline'} size="sm" className="px-2" onClick={() => setTab(item.id)}>
+        <Button key={item.id} variant={tab === item.id ? 'secondary' : 'outline'} size="sm" className="min-w-20 px-3" onClick={() => setTab(item.id)}>
           <item.icon className="size-4" />
           {item.short}
         </Button>

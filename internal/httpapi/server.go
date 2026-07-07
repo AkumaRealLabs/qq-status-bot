@@ -787,7 +787,9 @@ func decode(w http.ResponseWriter, r *http.Request, out any) bool {
 func writeJSONOrError(w http.ResponseWriter, out any, err error) {
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, sql.ErrNoRows) {
+		if app.IsBadRequest(err) {
+			status = http.StatusBadRequest
+		} else if errors.Is(err, sql.ErrNoRows) {
 			status = http.StatusNotFound
 		} else if statusError(err) {
 			status = http.StatusBadRequest

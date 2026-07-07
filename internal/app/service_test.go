@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,44 @@ func TestSetupOnlyOnce(t *testing.T) {
 	}
 	if _, err := svc.Setup(t.Context(), "admin2", "secret"); err == nil {
 		t.Fatal("second setup succeeded")
+	}
+}
+
+func TestSetupConcurrentCreatesOneUser(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	success := make(chan struct{}, 8)
+	for i := range 8 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			if _, err := svc.Setup(t.Context(), "admin"+string(rune('0'+i)), "secret"); err == nil {
+				success <- struct{}{}
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(success)
+	if len(success) != 1 {
+		t.Fatalf("successful setups = %d, want 1", len(success))
+	}
+	n, err := st.UserCount(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("users = %d, want 1", n)
 	}
 }
 

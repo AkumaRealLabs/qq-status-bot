@@ -54,6 +54,22 @@ func TestProbeSendsFixedModelPayload(t *testing.T) {
 	}
 }
 
+func TestApplySub2TokensPreservesRefreshWhenMissing(t *testing.T) {
+	u := &Upstream{Sub2APIAccessToken: "old-access", Sub2APIRefreshToken: "old-refresh"}
+	if !applySub2Tokens(u, map[string]any{"data": map[string]any{"access_token": "new-access"}}) {
+		t.Fatal("token apply failed")
+	}
+	if u.Sub2APIAccessToken != "new-access" || u.Sub2APIRefreshToken != "old-refresh" {
+		t.Fatalf("tokens = %+v", u)
+	}
+	if !applySub2Tokens(u, map[string]any{"data": map[string]any{"access_token": "newer-access", "refresh_token": "new-refresh"}}) {
+		t.Fatal("token apply failed")
+	}
+	if u.Sub2APIAccessToken != "newer-access" || u.Sub2APIRefreshToken != "new-refresh" {
+		t.Fatalf("tokens = %+v", u)
+	}
+}
+
 func TestProbeExtractsNestedResponseText(t *testing.T) {
 	old := newChallenge
 	newChallenge = func() challenge { return challenge{Prompt: "Where? lake", ExpectedAnswer: "lake"} }

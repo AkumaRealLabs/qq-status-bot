@@ -34,6 +34,10 @@ type ExportData struct {
 
 type RowMap map[string]any
 
+const InitialUserID = "initial-user"
+
+var ErrInitialUserExists = errors.New("initial user already exists")
+
 var exportTables = []string{
 	"settings",
 	"upstreams",
@@ -398,6 +402,19 @@ func (s *Store) CreateUser(ctx context.Context, username, passwordHash string) (
 	u := domain.User{ID: NewID(), Username: username, PasswordHash: passwordHash, CreatedAt: time.Now().UTC()}
 	_, err := s.exec(ctx, `INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)`, u.ID, u.Username, u.PasswordHash, u.CreatedAt.Format(time.RFC3339Nano))
 	return u, err
+}
+
+func (s *Store) CreateInitialUser(ctx context.Context, username, passwordHash string) (domain.User, error) {
+	u := domain.User{ID: InitialUserID, Username: username, PasswordHash: passwordHash, CreatedAt: time.Now().UTC()}
+	res, err := s.exec(ctx, `INSERT INTO users (id, username, password_hash, created_at)
+		SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)`, u.ID, u.Username, u.PasswordHash, u.CreatedAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return u, err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return u, ErrInitialUserExists
+	}
+	return u, nil
 }
 
 func (s *Store) UserByUsername(ctx context.Context, username string) (domain.User, error) {

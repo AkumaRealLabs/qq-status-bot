@@ -25,7 +25,7 @@ func (s *Service) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, 
 
 func (s *Service) SaveSchedulerConfig(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerConfig, error) {
 	if err := domain.ValidateSchedulerTiers(cfg.Tiers); err != nil {
-		return domain.SchedulerConfig{}, err
+		return domain.SchedulerConfig{}, BadRequest(err)
 	}
 	return s.Store.UpdateSchedulerConfig(ctx, cfg)
 }
@@ -36,7 +36,7 @@ func (s *Service) SchedulerChannels(ctx context.Context, keyword string) ([]doma
 		return nil, err
 	}
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
-		return nil, errors.New("请先配置调度器连接")
+		return nil, ErrBadRequest("请先配置调度器连接")
 	}
 	values := url.Values{}
 	values.Set("page_size", "1000")
@@ -63,7 +63,7 @@ func (s *Service) SchedulerGroups(ctx context.Context) ([]domain.SchedulerGroup,
 		return nil, err
 	}
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
-		return nil, errors.New("请先配置调度器连接")
+		return nil, ErrBadRequest("请先配置调度器连接")
 	}
 	if groups, err := s.fetchSchedulerGroups(ctx, cfg, "/api/user/self/groups"); err == nil {
 		return groups, nil
@@ -118,14 +118,14 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 
 func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID string, status int) (domain.ModelCard, error) {
 	if status != 1 && status != 2 {
-		return domain.ModelCard{}, errors.New("status must be 1 or 2")
+		return domain.ModelCard{}, ErrBadRequest("status must be 1 or 2")
 	}
 	card, err := s.Store.Card(ctx, cardID)
 	if err != nil {
 		return domain.ModelCard{}, err
 	}
 	if card.SchedulerChannelID == "" {
-		return domain.ModelCard{}, errors.New("scheduler channel required")
+		return domain.ModelCard{}, ErrBadRequest("scheduler channel required")
 	}
 	if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, status); err != nil {
 		s.logSchedulerAction(ctx, card, schedulerAction(status), "error", err.Error())
@@ -268,7 +268,7 @@ func (s *Service) setSchedulerChannelStatus(ctx context.Context, channelID strin
 func (s *Service) setSchedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID, group string) error {
 	id, err := strconv.Atoi(strings.TrimSpace(channelID))
 	if err != nil || id <= 0 {
-		return fmt.Errorf("invalid scheduler channel id: %s", channelID)
+		return ErrBadRequest(fmt.Sprintf("invalid scheduler channel id: %s", channelID))
 	}
 	var raw map[string]any
 	if err := s.schedulerJSON(ctx, cfg, http.MethodPut, "/api/channel/", map[string]any{"id": id, "group": group}, &raw); err != nil {

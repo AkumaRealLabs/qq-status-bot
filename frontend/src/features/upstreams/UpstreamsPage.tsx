@@ -577,14 +577,22 @@ function Action({ path, label }: { path: string; label: string }) {
 }
 
 function openBrowserLogin(
-  mutation: { mutate: (variables: void, options: { onSuccess: (out: { vnc_url: string }) => void; onError: (error: unknown) => void }) => void },
+  mutation: { mutate: (variables: void, options: { onSuccess: (out: { vnc_url?: string }) => void; onError: (error: unknown) => void }) => void },
   onSuccess?: () => void,
   onError?: (error: unknown) => void,
 ) {
-  const win = window.open(browserVNCURL, 'ai-upstream-monitor-vnc', 'popup=yes,width=1280,height=900')
+  const win = window.open('', 'ai-upstream-monitor-vnc', 'popup=yes,width=1280,height=900')
   browserLoginWindow = win
   mutation.mutate(undefined, {
-    onSuccess: () => onSuccess?.(),
+    onSuccess: (out) => {
+      const url = out.vnc_url || browserVNCURL
+      if (win && !win.closed) {
+        win.location.href = url
+      } else {
+        browserLoginWindow = window.open(url, 'ai-upstream-monitor-vnc', 'popup=yes,width=1280,height=900')
+      }
+      onSuccess?.()
+    },
     onError: (error) => {
       closeBrowserLoginWindow()
       if (onError) {

@@ -603,9 +603,15 @@ func applySub2Tokens(u *Upstream, raw map[string]any) bool {
 	if len(data) == 0 {
 		data = raw
 	}
-	u.Sub2APIAccessToken = str(first(data, "access_token", "accessToken", "token"))
-	u.Sub2APIRefreshToken = str(first(data, "refresh_token", "refreshToken"))
-	return u.Sub2APIAccessToken != ""
+	access := str(first(data, "access_token", "accessToken", "token"))
+	if access == "" {
+		return false
+	}
+	u.Sub2APIAccessToken = access
+	if refresh := str(first(data, "refresh_token", "refreshToken")); refresh != "" {
+		u.Sub2APIRefreshToken = refresh
+	}
+	return true
 }
 
 func joinURL(base, path string) string { return strings.TrimRight(base, "/") + path }

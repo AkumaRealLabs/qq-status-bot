@@ -68,20 +68,29 @@ func (s *Service) SetupStatus(ctx context.Context) (map[string]bool, error) {
 
 func (s *Service) Setup(ctx context.Context, username, password string) (domain.User, error) {
 	if username == "" || password == "" {
-		return domain.User{}, errors.New("username and password are required")
+		return domain.User{}, ErrBadRequest("username and password are required")
 	}
 	n, err := s.Store.UserCount(ctx)
 	if err != nil {
 		return domain.User{}, err
 	}
 	if n > 0 {
-		return domain.User{}, errors.New("setup already completed")
+		return domain.User{}, ErrBadRequest("setup already completed")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return domain.User{}, err
 	}
-	return s.Store.CreateUser(ctx, username, string(hash))
+	u, err := s.Store.CreateInitialUser(ctx, username, string(hash))
+	if err != nil {
+		if errors.Is(err, store.ErrInitialUserExists) {
+			return domain.User{}, ErrBadRequest("setup already completed")
+		}
+		if n, countErr := s.Store.UserCount(ctx); countErr == nil && n > 0 {
+			return domain.User{}, ErrBadRequest("setup already completed")
+		}
+	}
+	return u, err
 }
 
 func (s *Service) Login(ctx context.Context, username, password string) (string, domain.User, error) {
@@ -106,10 +115,10 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 
 func (s *Service) SaveUpstream(ctx context.Context, id string, in domain.Upstream) (domain.Upstream, error) {
 	if in.Name == "" || in.Type == "" || in.BaseURL == "" {
-		return domain.Upstream{}, errors.New("name, type and base_url are required")
+		return domain.Upstream{}, ErrBadRequest("name, type and base_url are required")
 	}
 	if in.Type != "newapi" && in.Type != "sub2api" {
-		return domain.Upstream{}, errors.New("type must be newapi or sub2api")
+		return domain.Upstream{}, ErrBadRequest("type must be newapi or sub2api")
 	}
 	if in.BalanceRate <= 0 {
 		in.BalanceRate = 1
@@ -302,7 +311,7 @@ func (s *Service) RefreshBalanceRechargeLog(ctx context.Context, upstreamID, log
 		return domain.BalanceRechargeLog{}, err
 	}
 	if log.Method != "order" || strings.TrimSpace(log.RemoteOrderID) == "" {
-		return log, errors.New("该记录没有可刷新的订单号")
+		return log, ErrBadRequest("该记录没有可刷新的订单号")
 	}
 	mu := toMonitorUpstream(u)
 	out, err := s.Client.RefreshRechargeOrder(ctx, &mu, log.RemoteOrderID)
@@ -374,7 +383,7 @@ func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) 
 		}
 		for _, item := range cards {
 			if item.ID != id && item.SchedulerChannelID == card.SchedulerChannelID {
-				return domain.ModelCard{}, errors.New("scheduler channel already bound to another card")
+				return domain.ModelCard{}, ErrBadRequest("scheduler channel already bound to another card")
 			}
 		}
 	}
@@ -413,13 +422,13 @@ func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domai
 	custom := card.BaseURL != "" || card.APIKey != ""
 	if custom {
 		if card.Name == "" || card.BaseURL == "" || card.APIKey == "" {
-			return card, errors.New("name, base_url and api_key are required")
+			return card, ErrBadRequest("name, base_url and api_key are required")
 		}
 		card.UpstreamID, card.KeyID = "", ""
 		return card, nil
 	}
 	if card.UpstreamID == "" || card.KeyID == "" {
-		return card, errors.New("upstream_id and key_id are required")
+		return card, ErrBadRequest("upstream_id and key_id are required")
 	}
 	u, err := s.Store.Upstream(ctx, card.UpstreamID)
 	if err != nil {
@@ -430,7 +439,7 @@ func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domai
 		return card, err
 	}
 	if k.UpstreamID != card.UpstreamID {
-		return card, errors.New("key does not belong to upstream")
+		return card, ErrBadRequest("key does not belong to upstream")
 	}
 	if card.Name == "" {
 		card.Name = domain.CardName(u, &k)
@@ -440,16 +449,16 @@ func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domai
 
 func (s *Service) SortCards(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
-		return errors.New("ids are required")
+		return ErrBadRequest("ids are required")
 	}
 	seen := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
 		if id == "" {
-			return errors.New("card id is required")
+			return ErrBadRequest("card id is required")
 		}
 		if _, ok := seen[id]; ok {
-			return errors.New("duplicate card id")
+			return ErrBadRequest("duplicate card id")
 		}
 		seen[id] = struct{}{}
 	}
@@ -803,7 +812,7 @@ func (s *Service) normalizeRevenueCard(ctx context.Context, in domain.RevenueCar
 			}
 		}
 		if card.BaseURL == "" || card.EpayPID == "" || card.EpayKey == "" {
-			return card, errors.New("易支付 Base URL、PID、Key 是必填")
+			return card, ErrBadRequest("易支付 Base URL、PID、Key 是必填")
 		}
 	case "newapi_orders", "sub2api_orders":
 		want := strings.TrimSuffix(card.SourceType, "_orders")
@@ -813,26 +822,26 @@ func (s *Service) normalizeRevenueCard(ctx context.Context, in domain.RevenueCar
 				return card, err
 			}
 			if u.Type != want {
-				return card, errors.New("upstream type does not match revenue card")
+				return card, ErrBadRequest("upstream type does not match revenue card")
 			}
 			if card.Name == "" {
 				card.Name = u.Name
 			}
 		}
 		if card.BaseURL == "" && card.UpstreamID == "" {
-			return card, errors.New("Base URL 是必填")
+			return card, ErrBadRequest("Base URL 是必填")
 		}
 		if want == "newapi" && card.UpstreamID == "" && (card.UserID == "" || card.AccessToken == "") {
-			return card, errors.New("new-api 用户 ID 和 Access Token 是必填")
+			return card, ErrBadRequest("new-api 用户 ID 和 Access Token 是必填")
 		}
 		if want == "sub2api" && card.AdminAPIKey == "" && card.UpstreamID == "" {
-			return card, errors.New("sub2api 管理员 API Key 是必填")
+			return card, ErrBadRequest("sub2api 管理员 API Key 是必填")
 		}
 		if card.Name == "" {
 			card.Name = sourceTypeLabel(card.SourceType)
 		}
 	default:
-		return card, errors.New("source_type must be epay_total, newapi_orders or sub2api_orders")
+		return card, ErrBadRequest("source_type must be epay_total, newapi_orders or sub2api_orders")
 	}
 	return card, nil
 }
@@ -933,16 +942,16 @@ func (s *Service) RevenueCardOrders(ctx context.Context, id string) ([]monitor.R
 
 func (s *Service) SortRevenueCards(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
-		return errors.New("ids are required")
+		return ErrBadRequest("ids are required")
 	}
 	seen := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
 		if id == "" {
-			return errors.New("card id is required")
+			return ErrBadRequest("card id is required")
 		}
 		if _, ok := seen[id]; ok {
-			return errors.New("duplicate card id")
+			return ErrBadRequest("duplicate card id")
 		}
 		seen[id] = struct{}{}
 	}
@@ -982,7 +991,7 @@ func (s *Service) revenueMonitorUpstream(ctx context.Context, card domain.Revenu
 		return toMonitorUpstream(u), u.ID, nil
 	}
 	if card.BaseURL == "" {
-		return monitor.Upstream{}, "", errors.New("Base URL 是必填")
+		return monitor.Upstream{}, "", ErrBadRequest("Base URL 是必填")
 	}
 	return monitor.Upstream{
 		Name:        card.Name,

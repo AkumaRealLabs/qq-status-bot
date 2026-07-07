@@ -211,6 +211,23 @@ func TestUpdateCardChangingSchedulerChannelClearsAutoDisabled(t *testing.T) {
 	}
 }
 
+func TestSchedulerTierValidationReturnsBadRequest(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/scheduler/config", strings.NewReader(`{"scheduler_tiers":[{"tag":"","group":"gpt_low","price_min":0,"price_max":1}]}`))
+	rr := httptest.NewRecorder()
+	(&Server{App: app.New(st)}).updateSchedulerConfig(rr, req)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "分组名称不能为空") {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestLegacyAdminPathsRedirect(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
 	if err != nil {
