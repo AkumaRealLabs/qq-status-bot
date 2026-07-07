@@ -50,6 +50,7 @@ export type ModelCard = {
   key_group_ratio?: string
   effective_ratio?: string
   display_group: string
+  scheduler_group?: string
   scheduler_channel_id?: string
   scheduler_channel_name?: string
   scheduler_auto_disabled: boolean
@@ -278,6 +279,12 @@ export type SchedulerChannel = {
   type?: string
   group?: string
   models?: string[]
+}
+
+export type SchedulerGroup = {
+  name: string
+  ratio?: string
+  description?: string
 }
 
 export type SchedulerLog = {

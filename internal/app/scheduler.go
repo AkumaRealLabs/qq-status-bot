@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,31 @@ func (s *Service) SchedulerChannels(ctx context.Context, keyword string) ([]doma
 		return nil, errors.New(schedulerMessage(raw))
 	}
 	return schedulerChannels(raw), nil
+}
+
+func (s *Service) SchedulerGroups(ctx context.Context) ([]domain.SchedulerGroup, error) {
+	cfg, err := s.Store.SchedulerConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
+		return nil, errors.New("请先配置调度器连接")
+	}
+	if groups, err := s.fetchSchedulerGroups(ctx, cfg, "/api/user/self/groups"); err == nil {
+		return groups, nil
+	}
+	return s.fetchSchedulerGroups(ctx, cfg, "/api/user/groups")
+}
+
+func (s *Service) fetchSchedulerGroups(ctx context.Context, cfg domain.SchedulerConfig, path string) ([]domain.SchedulerGroup, error) {
+	var raw map[string]any
+	if err := s.schedulerJSON(ctx, cfg, http.MethodGet, path, nil, &raw); err != nil {
+		return nil, err
+	}
+	if ok, exists := raw["success"].(bool); exists && !ok {
+		return nil, errors.New(schedulerMessage(raw))
+	}
+	return schedulerGroups(raw), nil
 }
 
 func (s *Service) SchedulerLogs(ctx context.Context, limit int) ([]domain.SchedulerLog, error) {
@@ -334,6 +360,50 @@ func schedulerChannels(raw map[string]any) []domain.SchedulerChannel {
 	return out
 }
 
+func schedulerGroups(raw map[string]any) []domain.SchedulerGroup {
+	data := firstScheduler(raw, "data", "groups", "items")
+	seen := map[string]domain.SchedulerGroup{}
+	if m, ok := data.(map[string]any); ok {
+		for name, value := range m {
+			group := schedulerGroup(name, value)
+			if group.Name != "" {
+				seen[group.Name] = group
+			}
+		}
+	}
+	for _, item := range schedulerArray(data) {
+		group := schedulerGroup("", item)
+		if group.Name != "" {
+			seen[group.Name] = group
+		}
+	}
+	out := make([]domain.SchedulerGroup, 0, len(seen))
+	for _, group := range seen {
+		out = append(out, group)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func schedulerGroup(defaultName string, value any) domain.SchedulerGroup {
+	m, _ := value.(map[string]any)
+	group := domain.SchedulerGroup{
+		Name:        schedulerString(firstScheduler(m, "name", "group", "group_name", "groupName", "id", "group_id")),
+		Ratio:       schedulerRatioString(firstScheduler(m, "rate_multiplier", "rateMultiplier", "ratio", "group_ratio", "groupRatio")),
+		Description: schedulerString(firstScheduler(m, "description", "desc", "remark", "memo", "note")),
+	}
+	if group.Name == "" {
+		group.Name = strings.TrimSpace(defaultName)
+	}
+	if group.Name == "" && m == nil {
+		group.Name = schedulerString(value)
+	}
+	if _, nested := value.(map[string]any); group.Ratio == "" && defaultName != "" && !nested {
+		group.Ratio = schedulerRatioString(value)
+	}
+	return group
+}
+
 func schedulerArray(v any) []any {
 	switch x := v.(type) {
 	case []any:
@@ -370,6 +440,21 @@ func schedulerString(v any) string {
 		return strconv.Itoa(x)
 	default:
 		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+func schedulerRatioString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return strings.TrimSuffix(strings.TrimSpace(x), "x")
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(x)
+	case json.Number:
+		return x.String()
+	default:
+		return ""
 	}
 }
 

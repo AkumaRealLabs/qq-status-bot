@@ -159,11 +159,11 @@ func TestUpdateCardCanClearDisplayGroup(t *testing.T) {
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", BaseURL: "https://api.example.test", APIKey: "sk-test", DisplayGroup: "生产", Enabled: true})
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", BaseURL: "https://api.example.test", APIKey: "sk-test", DisplayGroup: "生产", SchedulerGroup: "gpt_low", SchedulerChannelID: "9", SchedulerChannelName: "通道", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPatch, "/api/cards/"+card.ID, strings.NewReader(`{"display_group":""}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/cards/"+card.ID, strings.NewReader(`{"display_group":"","scheduler_group":""}`))
 	req.SetPathValue("id", card.ID)
 	rr := httptest.NewRecorder()
 	(&Server{App: app.New(st)}).updateCard(rr, req)
@@ -176,6 +176,9 @@ func TestUpdateCardCanClearDisplayGroup(t *testing.T) {
 	}
 	if got.DisplayGroup != "" {
 		t.Fatalf("display_group = %q", got.DisplayGroup)
+	}
+	if got.SchedulerGroup != "" || got.SchedulerChannelID != "" || got.SchedulerChannelName != "" {
+		t.Fatalf("scheduler binding = %+v", got)
 	}
 }
 
@@ -257,6 +260,7 @@ func TestSchedulerRoutesRequireAuth(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/scheduler/config"},
 		{http.MethodPatch, "/api/scheduler/config"},
+		{http.MethodGet, "/api/scheduler/groups"},
 		{http.MethodGet, "/api/scheduler/channels"},
 		{http.MethodGet, "/api/scheduler/logs"},
 		{http.MethodPost, "/api/scheduler/groups/apply"},

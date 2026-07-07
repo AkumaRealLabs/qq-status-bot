@@ -64,6 +64,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/cards/{id}/scheduler/status", s.auth(s.setCardSchedulerStatus))
 	mux.HandleFunc("GET /api/scheduler/config", s.auth(s.schedulerConfig))
 	mux.HandleFunc("PATCH /api/scheduler/config", s.auth(s.updateSchedulerConfig))
+	mux.HandleFunc("GET /api/scheduler/groups", s.auth(s.schedulerGroups))
 	mux.HandleFunc("GET /api/scheduler/channels", s.auth(s.schedulerChannels))
 	mux.HandleFunc("GET /api/scheduler/logs", s.auth(s.schedulerLogs))
 	mux.HandleFunc("POST /api/scheduler/groups/apply", s.auth(s.applySchedulerGroups))
@@ -266,6 +267,7 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 		UpstreamID           string `json:"upstream_id"`
 		KeyID                string `json:"key_id"`
 		DisplayGroup         string `json:"display_group"`
+		SchedulerGroup       string `json:"scheduler_group"`
 		SchedulerChannelID   string `json:"scheduler_channel_id"`
 		SchedulerChannelName string `json:"scheduler_channel_name"`
 		Enabled              *bool  `json:"enabled"`
@@ -284,7 +286,7 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 	}
 	card, err := s.App.SaveCard(r.Context(), "", domain.ModelCard{
 		Name: body.Name, BaseURL: body.BaseURL, APIKey: body.APIKey, UpstreamID: body.UpstreamID, KeyID: body.KeyID,
-		DisplayGroup: body.DisplayGroup, SchedulerChannelID: body.SchedulerChannelID, SchedulerChannelName: body.SchedulerChannelName, Enabled: enabled, PublicEnabled: publicEnabled,
+		DisplayGroup: body.DisplayGroup, SchedulerGroup: body.SchedulerGroup, SchedulerChannelID: body.SchedulerChannelID, SchedulerChannelName: body.SchedulerChannelName, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
 	writeJSONOrError(w, card, err)
 }
@@ -297,6 +299,7 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 		UpstreamID           string  `json:"upstream_id"`
 		KeyID                string  `json:"key_id"`
 		DisplayGroup         *string `json:"display_group"`
+		SchedulerGroup       *string `json:"scheduler_group"`
 		SchedulerChannelID   *string `json:"scheduler_channel_id"`
 		SchedulerChannelName *string `json:"scheduler_channel_name"`
 		Enabled              *bool   `json:"enabled"`
@@ -326,7 +329,13 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	if body.DisplayGroup != nil {
 		displayGroup = *body.DisplayGroup
 	}
-	schedulerChannelID, schedulerChannelName, schedulerAutoDisabled := old.SchedulerChannelID, old.SchedulerChannelName, old.SchedulerAutoDisabled
+	schedulerGroup, schedulerChannelID, schedulerChannelName, schedulerAutoDisabled := old.SchedulerGroup, old.SchedulerChannelID, old.SchedulerChannelName, old.SchedulerAutoDisabled
+	if body.SchedulerGroup != nil {
+		schedulerGroup = *body.SchedulerGroup
+		if strings.TrimSpace(schedulerGroup) == "" || strings.TrimSpace(schedulerGroup) != old.SchedulerGroup {
+			schedulerChannelID, schedulerChannelName, schedulerAutoDisabled = "", "", false
+		}
+	}
 	if body.SchedulerChannelID != nil {
 		schedulerChannelID = *body.SchedulerChannelID
 		if schedulerChannelID == "" {
@@ -341,7 +350,7 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	}
 	card, err := s.App.SaveCard(r.Context(), r.PathValue("id"), domain.ModelCard{
 		Name: name, BaseURL: baseURL, APIKey: apiKey, UpstreamID: upstreamID, KeyID: keyID,
-		DisplayGroup: displayGroup, SchedulerChannelID: schedulerChannelID, SchedulerChannelName: schedulerChannelName, SchedulerAutoDisabled: schedulerAutoDisabled, Enabled: enabled, PublicEnabled: publicEnabled,
+		DisplayGroup: displayGroup, SchedulerGroup: schedulerGroup, SchedulerChannelID: schedulerChannelID, SchedulerChannelName: schedulerChannelName, SchedulerAutoDisabled: schedulerAutoDisabled, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
 	writeJSONOrError(w, card, err)
 }
@@ -380,6 +389,11 @@ func (s *Server) updateSchedulerConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) schedulerChannels(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.App.SchedulerChannels(r.Context(), r.URL.Query().Get("keyword"))
+	writeJSONOrError(w, rows, err)
+}
+
+func (s *Server) schedulerGroups(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.App.SchedulerGroups(r.Context())
 	writeJSONOrError(w, rows, err)
 }
 

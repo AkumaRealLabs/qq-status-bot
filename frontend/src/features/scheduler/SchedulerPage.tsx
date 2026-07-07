@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Power, PowerOff, RefreshCcw, Save, Settings2, Tags } from 'lucide-react'
+import { Loader2, Power, PowerOff, RefreshCcw, Save, Settings2, SlidersHorizontal, Tags } from 'lucide-react'
 import { EmptyPanel, Field, FormError, StatusBadge } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -11,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api } from '@/lib/api'
 import { errorMessage, fmtTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig, SchedulerLog, SchedulerTier } from '@/types'
+import type { ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig, SchedulerGroup, SchedulerLog, SchedulerTier } from '@/types'
 
 const none = '__none__'
 const defaultTiers: SchedulerTier[] = [
@@ -27,10 +28,16 @@ export function SchedulerPage() {
   const cfg = useQuery({ queryKey: ['scheduler', 'config'], queryFn: () => api<SchedulerConfig>('/api/scheduler/config') })
   const cards = useQuery({ queryKey: ['cards'], queryFn: () => api<ModelCard[]>('/api/cards') })
   const logs = useQuery({ queryKey: ['scheduler', 'logs'], queryFn: () => api<SchedulerLog[]>('/api/scheduler/logs?limit=50') })
+  const configured = Boolean(cfg.data?.scheduler_base_url && cfg.data.scheduler_user_id && cfg.data.scheduler_access_token)
+  const groups = useQuery({
+    queryKey: ['scheduler', 'groups'],
+    queryFn: () => api<SchedulerGroup[]>('/api/scheduler/groups'),
+    enabled: configured,
+  })
   const channels = useQuery({
     queryKey: ['scheduler', 'channels', keyword],
     queryFn: () => api<SchedulerChannel[]>(`/api/scheduler/channels?keyword=${encodeURIComponent(keyword)}`),
-    enabled: Boolean(cfg.data?.scheduler_base_url && cfg.data.scheduler_user_id && cfg.data.scheduler_access_token),
+    enabled: configured,
   })
   const form = cfgDraft ?? cfg.data
   const saveConfig = useMutation({
@@ -39,15 +46,17 @@ export function SchedulerPage() {
       setMessage('已保存')
       setCfgDraft(null)
       await qc.setQueryData(['scheduler', 'config'], data)
+      void groups.refetch()
       void channels.refetch()
     },
     onError: (error) => setMessage(errorMessage(error)),
   })
   const bind = useMutation({
-    mutationFn: ({ card, channel }: { card: ModelCard; channel?: SchedulerChannel }) =>
+    mutationFn: ({ card, schedulerGroup, channel }: { card: ModelCard; schedulerGroup?: string; channel?: SchedulerChannel }) =>
       api(`/api/cards/${card.id}`, {
         method: 'PATCH',
         body: JSON.stringify({
+          scheduler_group: schedulerGroup ?? card.scheduler_group ?? '',
           scheduler_channel_id: channel?.id ?? '',
           scheduler_channel_name: channel?.name ?? '',
         }),
@@ -80,6 +89,7 @@ export function SchedulerPage() {
     onSuccess: (data) => {
       setCfgDraft(null)
       setMessage(`已更新 ${data.updated} 个渠道，跳过 ${data.skipped} 个`)
+      void groups.refetch()
       void channels.refetch()
     },
     onError: (error) => setMessage(errorMessage(error)),
@@ -87,17 +97,18 @@ export function SchedulerPage() {
   if (!form) return <ShellLoading />
   const rows = cards.data ?? []
   const list = channels.data ?? []
+  const groupRows = schedulerGroupRows(groups.data ?? [], list)
+  const selectableGroups = groupRows.filter((group) => group.name !== '未分组')
   const tiers = schedulerTiers(form)
-  const groupOptions = schedulerGroups(list)
+  const groupOptions = schedulerGroupOptions(selectableGroups, list)
   const updateTier = (tag: SchedulerTier['tag'], patch: Partial<SchedulerTier>) =>
     setCfgDraft({ ...form, scheduler_tiers: tiers.map((tier) => tier.tag === tag ? { ...tier, ...patch } : tier) })
   return (
     <Page
       title="调度器"
-      description="连接 new-api 调度器并绑定状态卡片"
       actions={
         <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-          {(cfg.isFetching || cards.isFetching || channels.isFetching || logs.isFetching) && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          {(cfg.isFetching || cards.isFetching || channels.isFetching || groups.isFetching || logs.isFetching) && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
           <SchedulerConfigDialog
             form={form}
             message={message}
@@ -106,174 +117,216 @@ export function SchedulerPage() {
             onChange={(patch) => setCfgDraft({ ...form, ...patch })}
             onSave={() => saveConfig.mutate()}
           />
-          <Button variant="outline" size="sm" onClick={() => void channels.refetch()} disabled={channels.isFetching}>
-            <RefreshCcw className={cn('size-4', channels.isFetching && 'animate-spin')} />
-            刷新渠道
-          </Button>
+          <SchedulerGroupDialog
+            tiers={tiers}
+            groupOptions={groupOptions}
+            message={message}
+            saveError={saveConfig.isError || applyGroups.isError}
+            saving={saveConfig.isPending}
+            applying={applyGroups.isPending}
+            onUpdateTier={updateTier}
+            onApply={() => applyGroups.mutate()}
+            onRefresh={() => {
+              void groups.refetch()
+              void channels.refetch()
+            }}
+          />
         </div>
       }
     >
-      <Card className="w-full max-w-3xl bg-card">
-        <CardContent className="grid min-w-0 gap-4 md:grid-cols-[1fr_auto]">
-          <Field label="渠道搜索">
-            <Input value={keyword} placeholder="名称、模型或分组" onChange={(e) => setKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void channels.refetch() }} />
-          </Field>
-          <div className="flex items-end">
-            <Button variant="outline" onClick={() => void channels.refetch()} disabled={channels.isFetching}>
-              {channels.isFetching ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
-              测试连接
-            </Button>
-          </div>
-          <div className="md:col-span-2">
-            <FormError error={channels.error} />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="min-w-0 bg-card">
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <CardTitle>价格分组</CardTitle>
-              <CardDescription>gpt_low / gpt_stable</CardDescription>
+      <Section title="连接配置">
+        <Card className="bg-card">
+          <CardContent className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+            <InfoCell label="Base URL" value={form.scheduler_base_url || '-'} />
+            <InfoCell label="用户 ID" value={form.scheduler_user_id || '-'} />
+            <div className="flex items-end">
+              <Button variant="outline" onClick={() => {
+                void groups.refetch()
+                void channels.refetch()
+              }} disabled={!configured || groups.isFetching || channels.isFetching}>
+                {groups.isFetching || channels.isFetching ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
+                测试连接
+              </Button>
             </div>
-            <Button onClick={() => applyGroups.mutate()} disabled={applyGroups.isPending || saveConfig.isPending}>
-              {applyGroups.isPending ? <Loader2 className="size-4 animate-spin" /> : <Tags className="size-4" />}
-              应用分组
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          <datalist id="scheduler-group-options">
-            {groupOptions.map((group) => <option key={group} value={group} />)}
-          </datalist>
-          <div className="grid gap-3 md:grid-cols-2">
-            {tiers.map((tier) => (
-              <div key={tier.tag} className="grid min-w-0 gap-3 rounded-sm border border-border bg-background p-3">
-                <div className="text-sm font-medium text-foreground">{tier.tag}</div>
-                <Field label="调度器分组">
-                  <Input list="scheduler-group-options" value={tier.group} onChange={(e) => updateTier(tier.tag, { group: e.target.value })} />
-                </Field>
-                <div className="grid grid-cols-2 gap-2">
-                  <Field label="最低价格">
-                    <Input type="number" step="0.01" min="0" value={tier.price_min} onChange={(e) => updateTier(tier.tag, { price_min: Number(e.target.value || 0) })} />
-                  </Field>
-                  <Field label="最高价格">
-                    <Input type="number" step="0.01" min="0" value={tier.price_max} onChange={(e) => updateTier(tier.tag, { price_max: Number(e.target.value || 0) })} />
-                  </Field>
-                </div>
-              </div>
+            <div className="md:col-span-3">
+              <Field label="渠道搜索">
+                <Input value={keyword} placeholder="名称、模型或分组" onChange={(e) => setKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void channels.refetch() }} />
+              </Field>
+            </div>
+            <div className="md:col-span-3">
+              <FormError error={groups.error || channels.error} />
+            </div>
+          </CardContent>
+        </Card>
+      </Section>
+
+      <Section title="调度器分组">
+        <FormError error={groups.error} />
+        {groups.isLoading && <EmptyPanel text="加载中..." />}
+        {!groups.isLoading && !groups.error && groupRows.length === 0 && <EmptyPanel text="暂无调度器分组" />}
+        {!groups.isLoading && !groups.error && groupRows.length > 0 && (
+          <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {groupRows.map((group) => (
+              <Card key={group.name} className="bg-card">
+                <CardHeader className="gap-2">
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <CardTitle className="truncate">{group.name}</CardTitle>
+                      <CardDescription className="truncate">{group.description || `${group.channels.length} 个渠道`}</CardDescription>
+                    </div>
+                    {group.ratio && <Badge variant="outline">{group.ratio}x</Badge>}
+                  </div>
+                </CardHeader>
+                <CardContent className="grid gap-1.5">
+                  {group.channels.length === 0 && <div className="text-sm text-muted-foreground">暂无渠道</div>}
+                  {group.channels.slice(0, 6).map((channel) => (
+                    <div key={channel.id} className="flex min-w-0 items-center justify-between gap-2 rounded-sm border border-border bg-background px-2.5 py-1.5 text-sm">
+                      <span className="min-w-0 truncate">{channel.name || channel.id}</span>
+                      <span className={cn('shrink-0 text-xs', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
+                        {schedulerStatus(channel.status)}
+                      </span>
+                    </div>
+                  ))}
+                  {group.channels.length > 6 && <div className="text-xs text-muted-foreground">+{group.channels.length - 6}</div>}
+                </CardContent>
+              </Card>
             ))}
           </div>
-          {message && <div className={cn('text-sm', saveConfig.isError || applyGroups.isError ? 'text-destructive' : 'text-muted-foreground')}>{message}</div>}
-        </CardContent>
-      </Card>
+        )}
+      </Section>
 
-      {cards.isLoading && <EmptyPanel text="加载中..." />}
-      {!cards.isLoading && rows.length === 0 && <EmptyPanel text="暂无状态卡片" />}
-      {!cards.isLoading && rows.length > 0 && (
-        <div className="grid min-w-0 gap-5">
-          {groupCards(rows).map((group) => (
-            <section key={group.name} className="grid min-w-0 gap-2">
-              <div className="text-sm font-medium text-foreground">{group.name}</div>
-              <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {group.cards.map((card) => {
-                  const options = channelsForCard(list, card, rows)
-                  const channel = options.find((item) => item.id === card.scheduler_channel_id)
-                  const canToggle = channel?.status === 1 || channel?.status === 2
-                  const nextStatus = channel?.status === 2 ? 1 : 2
-                  const detail = channelDetail(channel)
-                  return (
-                    <Card key={card.id} className="min-w-0 bg-card">
-                      <CardHeader className="gap-2">
-                        <div className="flex min-w-0 items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <CardTitle className="truncate">{card.name}</CardTitle>
-                            <CardDescription>{card.scheduler_channel_name || '未绑定渠道'}</CardDescription>
+      <Section title="卡片绑定">
+        {cards.isLoading && <EmptyPanel text="加载中..." />}
+        {!cards.isLoading && rows.length === 0 && <EmptyPanel text="暂无状态卡片" />}
+        {!cards.isLoading && rows.length > 0 && (
+          <div className="grid min-w-0 gap-5">
+            {groupCards(rows).map((group) => (
+              <section key={group.name} className="grid min-w-0 gap-2">
+                <div className="text-sm font-medium text-foreground">展示分组 · {group.name}</div>
+                <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {group.cards.map((card) => {
+                    const options = channelsForCard(list, card, rows)
+                    const channel = channelForCard(list, card)
+                    const canToggle = channel?.status === 1 || channel?.status === 2
+                    const nextStatus = channel?.status === 2 ? 1 : 2
+                    const detail = channelDetail(channel)
+                    return (
+                      <Card key={card.id} className="min-w-0 bg-card">
+                        <CardHeader className="gap-2">
+                          <div className="flex min-w-0 items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <CardTitle className="truncate">{card.name}</CardTitle>
+                              <CardDescription>{card.scheduler_channel_name || '未绑定渠道'}</CardDescription>
+                            </div>
+                            <StatusBadge ok={!card.scheduler_auto_disabled} okText={card.scheduler_channel_id ? '可自动控制' : '未绑定'} failText="已自动关闭" />
                           </div>
-                          <StatusBadge ok={!card.scheduler_auto_disabled} okText={card.scheduler_channel_id ? '可自动控制' : '未绑定'} failText="已自动关闭" />
-                        </div>
-                      </CardHeader>
-                      <CardContent className="grid gap-3">
-                        <Field label="调度器渠道">
-                          <Select
-                            value={card.scheduler_channel_id || none}
-                            onValueChange={(value) => bind.mutate({ card, channel: value === none ? undefined : list.find((item) => item.id === value) })}
+                        </CardHeader>
+                        <CardContent className="grid gap-3">
+                          <div className="grid grid-cols-2 gap-2">
+                            <InfoCell label="展示分组" value={displayGroupName(card)} />
+                            <InfoCell label="上游 Key 原始分组" value={originalKeyGroup(card)} />
+                          </div>
+                          <Field label="调度器分组">
+                            <Select
+                              value={card.scheduler_group || none}
+                              onValueChange={(value) => bind.mutate({ card, schedulerGroup: value === none ? '' : value })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="选择分组" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={none}>未确认</SelectItem>
+                                {selectableGroups.map((group) => (
+                                  <SelectItem key={group.name} value={group.name}>
+                                    {group.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </Field>
+                          <Field label="调度器渠道">
+                            <Select
+                              value={card.scheduler_channel_id || none}
+                              disabled={!card.scheduler_group}
+                              onValueChange={(value) => bind.mutate({ card, schedulerGroup: card.scheduler_group, channel: value === none ? undefined : options.find((item) => item.id === value) })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="选择渠道" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={none}>不绑定</SelectItem>
+                                {options.map((channel) => (
+                                  <SelectItem key={channel.id} value={channel.id}>
+                                    {channel.name || channel.id}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </Field>
+                          <div className="text-xs leading-relaxed text-muted-foreground">
+                            {channel ? (
+                              <>
+                                <span className={cn('font-medium', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
+                                  {schedulerStatus(channel.status)}
+                                </span>
+                                {detail && ` · ${detail}`}
+                              </>
+                            ) : '先刷新渠道，再选择要绑定的渠道'}
+                          </div>
+                          <Button
+                            variant={!canToggle ? 'outline' : nextStatus === 1 ? 'default' : 'danger'}
+                            size="sm"
+                            className={cn(canToggle && nextStatus === 1 && 'bg-success text-primary-foreground hover:bg-success/90 focus-visible:ring-success/20')}
+                            disabled={!card.scheduler_channel_id || !canToggle || setStatus.isPending}
+                            onClick={() => setStatus.mutate({ card, status: nextStatus })}
                           >
-                            <SelectTrigger>
-                              <SelectValue placeholder="选择渠道" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={none}>不绑定</SelectItem>
-                              {options.map((channel) => (
-                                <SelectItem key={channel.id} value={channel.id}>
-                                  {channel.name || channel.id}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </Field>
-                        <div className="text-xs leading-relaxed text-muted-foreground">
-                          {channel ? (
-                            <>
-                              <span className={cn('font-medium', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
-                                {schedulerStatus(channel.status)}
-                              </span>
-                              {detail && ` · ${detail}`}
-                            </>
-                          ) : '先刷新渠道，再选择要绑定的渠道'}
-                        </div>
-                        <Button
-                          variant={!canToggle ? 'outline' : nextStatus === 1 ? 'default' : 'danger'}
-                          size="sm"
-                          className={cn(canToggle && nextStatus === 1 && 'bg-success text-primary-foreground hover:bg-success/90 focus-visible:ring-success/20')}
-                          disabled={!card.scheduler_channel_id || !canToggle || setStatus.isPending}
-                          onClick={() => setStatus.mutate({ card, status: nextStatus })}
-                        >
-                          {setStatus.isPending ? <Loader2 className="size-4 animate-spin" /> : nextStatus === 1 ? <Power className="size-4" /> : <PowerOff className="size-4" />}
-                          {!canToggle ? '刷新渠道' : nextStatus === 1 ? '启用渠道' : '关闭渠道'}
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  )
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
-
-      <Card className="min-w-0 bg-card">
-        <CardHeader>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <CardTitle>调度日志</CardTitle>
-              <CardDescription>自动关闭和恢复渠道的执行记录</CardDescription>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => void logs.refetch()} disabled={logs.isFetching}>
-              <RefreshCcw className={cn('size-4', logs.isFetching && 'animate-spin')} />
-              刷新
-            </Button>
+                            {setStatus.isPending ? <Loader2 className="size-4 animate-spin" /> : nextStatus === 1 ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                            {!canToggle ? '刷新渠道' : nextStatus === 1 ? '启用渠道' : '关闭渠道'}
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
-        </CardHeader>
-        <CardContent className="grid gap-2">
-          {logs.isLoading && <EmptyPanel text="加载中..." />}
-          <FormError error={logs.error} />
-          {!logs.isLoading && !logs.error && (logs.data ?? []).length === 0 && <EmptyPanel text="暂无调度日志" />}
-          {(logs.data ?? []).map((log) => (
-            <div key={log.id} className="grid min-w-0 gap-1 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm md:grid-cols-[140px_1fr_auto] md:items-center">
-              <span className="text-xs text-muted-foreground">{fmtTime(log.created_at)}</span>
-              <div className="min-w-0">
-                <div className="truncate font-medium">{log.card_name || log.card_id || '未知卡片'} · {log.channel_name || log.channel_id || '未知渠道'}</div>
-                <div className="truncate text-xs text-muted-foreground">{log.message}</div>
+        )}
+      </Section>
+
+      <Section title="调度日志">
+        <Card className="min-w-0 bg-card">
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle>调度日志</CardTitle>
+                <CardDescription>自动关闭和恢复渠道的执行记录</CardDescription>
               </div>
-              <span className={cn('text-xs font-medium', log.status === 'success' ? 'text-emerald-600' : log.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
-                {logAction(log.action)} · {logStatus(log.status)}
-              </span>
+              <Button variant="outline" size="sm" onClick={() => void logs.refetch()} disabled={logs.isFetching}>
+                <RefreshCcw className={cn('size-4', logs.isFetching && 'animate-spin')} />
+                刷新
+              </Button>
             </div>
-          ))}
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent className="grid gap-2">
+            {logs.isLoading && <EmptyPanel text="加载中..." />}
+            <FormError error={logs.error} />
+            {!logs.isLoading && !logs.error && (logs.data ?? []).length === 0 && <EmptyPanel text="暂无调度日志" />}
+            {(logs.data ?? []).map((log) => (
+              <div key={log.id} className="grid min-w-0 gap-1 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm md:grid-cols-[140px_1fr_auto] md:items-center">
+                <span className="text-xs text-muted-foreground">{fmtTime(log.created_at)}</span>
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{log.card_name || log.card_id || '未知卡片'} · {log.channel_name || log.channel_id || '未知渠道'}</div>
+                  <div className="truncate text-xs text-muted-foreground">{log.message}</div>
+                </div>
+                <span className={cn('text-xs font-medium', log.status === 'success' ? 'text-emerald-600' : log.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+                  {logAction(log.action)} · {logStatus(log.status)}
+                </span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </Section>
     </Page>
   )
 }
@@ -326,24 +379,120 @@ function SchedulerConfigDialog({
   )
 }
 
+function SchedulerGroupDialog({
+  tiers,
+  groupOptions,
+  message,
+  saveError,
+  saving,
+  applying,
+  onUpdateTier,
+  onApply,
+  onRefresh,
+}: {
+  tiers: SchedulerTier[]
+  groupOptions: string[]
+  message: string
+  saveError: boolean
+  saving: boolean
+  applying: boolean
+  onUpdateTier: (tag: SchedulerTier['tag'], patch: Partial<SchedulerTier>) => void
+  onApply: () => void
+  onRefresh: () => void
+}) {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <SlidersHorizontal className="size-4" />
+          分组配置
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogTitle>分组配置</DialogTitle>
+        <div className="grid gap-4">
+          <div className="flex justify-end">
+            <Button variant="outline" size="sm" onClick={onRefresh}>
+              <RefreshCcw className="size-4" />
+              刷新分组
+            </Button>
+          </div>
+          <datalist id="scheduler-group-options">
+            {groupOptions.map((group) => <option key={group} value={group} />)}
+          </datalist>
+          <div className="grid gap-3 md:grid-cols-2">
+            {tiers.map((tier) => (
+              <div key={tier.tag} className="grid min-w-0 gap-3 rounded-sm border border-border bg-background p-3">
+                <div className="text-sm font-medium text-foreground">{tier.tag}</div>
+                <Field label="调度器分组">
+                  <Input list="scheduler-group-options" value={tier.group} onChange={(e) => onUpdateTier(tier.tag, { group: e.target.value })} />
+                </Field>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="最低价格">
+                    <Input type="number" step="0.01" min="0" value={tier.price_min} onChange={(e) => onUpdateTier(tier.tag, { price_min: Number(e.target.value || 0) })} />
+                  </Field>
+                  <Field label="最高价格">
+                    <Input type="number" step="0.01" min="0" value={tier.price_max} onChange={(e) => onUpdateTier(tier.tag, { price_max: Number(e.target.value || 0) })} />
+                  </Field>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {message && <span className={cn('text-sm', saveError ? 'text-destructive' : 'text-muted-foreground')}>{message}</span>}
+            <Button onClick={onApply} disabled={applying || saving}>
+              {applying ? <Loader2 className="size-4 animate-spin" /> : <Tags className="size-4" />}
+              应用分组
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="grid min-w-0 gap-3">
+      <h2 className="font-display text-2xl font-normal leading-tight">{title}</h2>
+      {children}
+    </section>
+  )
+}
+
+function InfoCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-sm border border-border bg-background px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate text-sm font-medium">{value || '-'}</div>
+    </div>
+  )
+}
+
 function channelDetail(channel?: SchedulerChannel) {
   if (!channel) return '先刷新渠道，再选择要绑定的渠道'
-  return [channel.type, channel.group, channel.tag, channel.models?.join(', ')].filter(Boolean).join(' · ')
+  return [channel.type, channel.tag, channel.models?.join(', ')].filter(Boolean).join(' · ')
 }
 
 function channelsForCard(channels: SchedulerChannel[], card: ModelCard, cards: ModelCard[]) {
   const used = new Set(cards.filter((item) => item.id !== card.id).map((item) => item.scheduler_channel_id).filter(Boolean))
-  const available = channels.filter((channel) => !used.has(channel.id))
+  const group = card.scheduler_group?.trim()
+  const available = channels.filter((channel) => !used.has(channel.id) && (!group || channelGroups(channel).includes(group)))
   if (!card.scheduler_channel_id || available.some((item) => item.id === card.scheduler_channel_id)) return available
   return [{ id: card.scheduler_channel_id, name: card.scheduler_channel_name || card.scheduler_channel_id, status: -1 }, ...available]
+}
+
+function channelForCard(channels: SchedulerChannel[], card: ModelCard) {
+  if (!card.scheduler_channel_id) return undefined
+  return channels.find((item) => item.id === card.scheduler_channel_id) ?? { id: card.scheduler_channel_id, name: card.scheduler_channel_name || card.scheduler_channel_id, status: -1 }
 }
 
 function schedulerTiers(cfg: SchedulerConfig) {
   return defaultTiers.map((fallback) => cfg.scheduler_tiers?.find((tier) => tier.tag === fallback.tag) ?? fallback)
 }
 
-function schedulerGroups(channels: SchedulerChannel[]) {
-  return Array.from(new Set(channels.flatMap((channel) => (channel.group || '').split(',').map((group) => group.trim()).filter(Boolean)))).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+function schedulerGroupOptions(groups: SchedulerGroupRow[], channels: SchedulerChannel[]) {
+  return Array.from(new Set([...groups.map((group) => group.name), ...channels.flatMap(channelGroups)])).filter(Boolean).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
 }
 
 function groupCards(cards: ModelCard[]) {
@@ -358,6 +507,28 @@ function groupCards(cards: ModelCard[]) {
     group.cards.push(card)
   }
   return groups
+}
+
+type SchedulerGroupRow = SchedulerGroup & { channels: SchedulerChannel[] }
+
+function schedulerGroupRows(groups: SchedulerGroup[], channels: SchedulerChannel[]): SchedulerGroupRow[] {
+  const known = groups.length > 0 ? groups : Array.from(new Set(channels.flatMap(channelGroups))).map((name) => ({ name }))
+  const rows = known.map((group) => ({ ...group, channels: channels.filter((channel) => channelGroups(channel).includes(group.name)) }))
+  const ungrouped = channels.filter((channel) => channelGroups(channel).length === 0)
+  if (ungrouped.length > 0) rows.push({ name: '未分组', channels: ungrouped })
+  return rows
+}
+
+function channelGroups(channel: SchedulerChannel) {
+  return (channel.group ?? '').split(/[,，、;；\s]+/).map((item) => item.trim()).filter(Boolean)
+}
+
+function displayGroupName(card: ModelCard) {
+  return card.display_group?.trim() || '其他'
+}
+
+function originalKeyGroup(card: ModelCard) {
+  return card.key_group || (card.base_url ? '自定义' : '-')
 }
 
 function schedulerStatus(status: number) {

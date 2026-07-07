@@ -379,6 +379,49 @@ func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	}
 }
 
+func TestSchedulerGroupsFallbackAndParse(t *testing.T) {
+	selfHit := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "token" || r.Header.Get("New-Api-User") != "42" {
+			t.Fatalf("bad scheduler headers: %#v", r.Header)
+		}
+		switch r.URL.Path {
+		case "/api/user/self/groups":
+			selfHit = true
+			http.Error(w, "forbidden", http.StatusForbidden)
+		case "/api/user/groups":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{
+				"gpt_stable": map[string]any{"ratio": 1.2, "description": "稳定"},
+				"gpt_low":    map[string]any{"rate_multiplier": "0.5x"},
+				"bugteam":    "",
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+		t.Fatal(err)
+	}
+	groups, err := svc.SchedulerGroups(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !selfHit || len(groups) != 3 || groups[0].Name != "bugteam" || groups[1].Name != "gpt_low" || groups[1].Ratio != "0.5" || groups[2].Ratio != "1.2" {
+		t.Fatalf("groups = %+v selfHit=%v", groups, selfHit)
+	}
+}
+
 func TestTodayRevenueMapsEpayBalance(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()

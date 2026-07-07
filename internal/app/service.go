@@ -402,6 +402,7 @@ func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domai
 		KeyID:                 strings.TrimSpace(in.KeyID),
 		Model:                 domain.ProbeModel,
 		DisplayGroup:          strings.TrimSpace(in.DisplayGroup),
+		SchedulerGroup:        strings.TrimSpace(in.SchedulerGroup),
 		SchedulerChannelID:    strings.TrimSpace(in.SchedulerChannelID),
 		SchedulerChannelName:  strings.TrimSpace(in.SchedulerChannelName),
 		SchedulerAutoDisabled: in.SchedulerAutoDisabled,

@@ -59,6 +59,7 @@ type ModelCard struct {
 	EffectiveRatio        string     `json:"effective_ratio,omitempty"`
 	Model                 string     `json:"model"`
 	DisplayGroup          string     `json:"display_group"`
+	SchedulerGroup        string     `json:"scheduler_group,omitempty"`
 	SchedulerChannelID    string     `json:"scheduler_channel_id,omitempty"`
 	SchedulerChannelName  string     `json:"scheduler_channel_name,omitempty"`
 	SchedulerAutoDisabled bool       `json:"scheduler_auto_disabled"`
@@ -215,6 +216,12 @@ type SchedulerChannel struct {
 	Type   string   `json:"type,omitempty"`
 	Group  string   `json:"group,omitempty"`
 	Models []string `json:"models,omitempty"`
+}
+
+type SchedulerGroup struct {
+	Name        string `json:"name"`
+	Ratio       string `json:"ratio,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 type SchedulerLog struct {
