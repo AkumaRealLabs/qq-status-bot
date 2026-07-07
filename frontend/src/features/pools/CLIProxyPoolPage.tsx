@@ -218,21 +218,30 @@ function ConfigDialog({ config }: { config: CLIProxyConfig }) {
 function UploadDialog({ disabled }: { disabled: boolean }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
+  const [files, setFiles] = useState<File[]>([])
   const [content, setContent] = useState('')
+  const [dragging, setDragging] = useState(false)
   const upload = useMutation({
-    mutationFn: () => api('/api/pools/cliproxy/accounts', { method: 'POST', body: JSON.stringify({ name, content }) }),
+    mutationFn: async () => {
+      if (files.length > 0) {
+        for (const file of files) {
+          await api('/api/pools/cliproxy/accounts', { method: 'POST', body: JSON.stringify({ name: file.name, content: await file.text() }) })
+        }
+        return
+      }
+      await api('/api/pools/cliproxy/accounts', { method: 'POST', body: JSON.stringify({ content }) })
+    },
     onSuccess: async () => {
       setOpen(false)
-      setName('')
+      setFiles([])
       setContent('')
       await qc.invalidateQueries({ queryKey: ['cliproxy', 'accounts'] })
     },
   })
-  const pickFile = async (file?: File) => {
-    if (!file) return
-    setName((value) => value || file.name)
-    setContent(await file.text())
+  const pickFiles = (list?: FileList | null) => {
+    const next = Array.from(list ?? [])
+    setFiles(next)
+    if (next.length > 0) setContent('')
   }
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -246,18 +255,41 @@ function UploadDialog({ disabled }: { disabled: boolean }) {
         <DialogTitle>上传授权文件</DialogTitle>
         <FormError error={upload.error} />
         <div className="grid min-w-0 gap-4">
-          <Field label="JSON 文件">
-            <Input type="file" accept=".json,application/json" onChange={(event) => void pickFile(event.target.files?.[0])} />
-          </Field>
-          <Field label="文件名">
-            <Input value={name} placeholder="account.json" onChange={(event) => setName(event.target.value)} />
-          </Field>
-          <Field label="JSON 内容">
-            <Textarea value={content} className="min-h-56 font-mono text-sm" onChange={(event) => setContent(event.target.value)} />
+          <div
+            className={cn(
+              'rounded-sm border border-dashed border-border bg-secondary/40 p-4 text-center transition-colors',
+              dragging && 'border-primary bg-primary/5',
+            )}
+            onDragOver={(event) => {
+              event.preventDefault()
+              setDragging(true)
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault()
+              setDragging(false)
+              pickFiles(event.dataTransfer.files)
+            }}
+          >
+            <Upload className="mx-auto size-6 text-muted-foreground" />
+            <div className="mt-2 text-sm font-medium">{files.length > 0 ? `已选择 ${files.length} 个文件` : '拖入 JSON 文件'}</div>
+            {files.length > 0 && <div className="mt-1 truncate text-xs text-muted-foreground">{files.map((file) => file.name).join(', ')}</div>}
+            <Input className="mt-3 bg-background" type="file" multiple accept=".json,application/json" onChange={(event) => pickFiles(event.target.files)} />
+          </div>
+          <Field label="粘贴 JSON">
+            <Textarea
+              value={content}
+              className="min-h-56 font-mono text-sm"
+              placeholder="文件上传和粘贴二选一"
+              onChange={(event) => {
+                setFiles([])
+                setContent(event.target.value)
+              }}
+            />
           </Field>
         </div>
         <div className="flex justify-end">
-          <Button onClick={() => upload.mutate()} disabled={upload.isPending || !name || !content.trim()}>
+          <Button onClick={() => upload.mutate()} disabled={upload.isPending || (files.length === 0 && !content.trim())}>
             {upload.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
             上传
           </Button>

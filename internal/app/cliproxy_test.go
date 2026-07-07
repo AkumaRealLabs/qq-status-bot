@@ -69,10 +69,14 @@ func TestCLIProxyAuthFilesFlow(t *testing.T) {
 	if len(accounts) != 1 || accounts[0].Name != "acc.json" || accounts[0].AuthIndex != "7" || accounts[0].Success != 2 || accounts[0].Failed != 1 {
 		t.Fatalf("accounts = %+v", accounts)
 	}
-	if err := svc.UploadCLIProxyAccount(t.Context(), "acc.json", `{"token":"x"}`); err != nil {
+	if err := svc.UploadCLIProxyAccount(t.Context(), "acc.json", `{"type":"codex","access_token":"x"}`); err != nil {
 		t.Fatal(err)
 	}
-	if uploadedName != "acc.json" || uploadedContent != `{"token":"x"}` {
+	var uploaded map[string]any
+	if err := json.Unmarshal([]byte(uploadedContent), &uploaded); err != nil {
+		t.Fatalf("uploaded content is not json: %v", err)
+	}
+	if uploadedName != "acc.json" || uploaded["type"] != "codex" || uploaded["access_token"] != "x" {
 		t.Fatalf("upload name=%q content=%q", uploadedName, uploadedContent)
 	}
 	b, contentType, err := svc.DownloadCLIProxyAccount(t.Context(), "acc.json")
@@ -94,6 +98,112 @@ func TestCLIProxyAuthFilesFlow(t *testing.T) {
 	}
 	if resetAuthIndex != "7" || out.AuthIndex != "7" || len(out.Models) != 1 {
 		t.Fatalf("resetAuthIndex=%q out=%+v", resetAuthIndex, out)
+	}
+}
+
+func TestCLIProxyUploadConvertsSub2APIAccount(t *testing.T) {
+	content, err := normalizeCLIProxyAuthJSON(`{
+		"name": "acct",
+		"platform": "openai",
+		"type": "oauth",
+		"credentials": {
+			"access_token": "at",
+			"refresh_token": "rt",
+			"expires_at": "2026-08-05T13:40:42Z"
+		},
+		"extra": {"ignored": true}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(content), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["type"] != "codex" || out["auth_kind"] != "oauth" || out["access_token"] != "at" || out["refresh_token"] != "rt" || out["expired"] != "2026-08-05T13:40:42Z" {
+		t.Fatalf("converted = %+v", out)
+	}
+	if _, ok := out["extra"]; ok {
+		t.Fatalf("sub2api extra leaked into auth file: %+v", out)
+	}
+}
+
+func TestCLIProxyUploadConvertsSub2APICodexSession(t *testing.T) {
+	content, err := normalizeCLIProxyAuthJSON(`{
+		"user": {"id": "u1", "email": "a@example.test"},
+		"account": {"id": "acct_1", "planType": "plus"},
+		"accessToken": "at",
+		"sessionToken": "ignored"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(content), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["type"] != "codex" || out["access_token"] != "at" || out["email"] != "a@example.test" || out["account_id"] != "acct_1" || out["plan_type"] != "plus" {
+		t.Fatalf("converted = %+v", out)
+	}
+	if _, ok := out["sessionToken"]; ok {
+		t.Fatalf("sessionToken should be dropped: %+v", out)
+	}
+}
+
+func TestCLIProxyUploadConvertsTopLevelSub2APIOAuth(t *testing.T) {
+	content, err := normalizeCLIProxyAuthJSON(`{"type":"oauth","access_token":"at","refresh_token":"rt"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(content), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["type"] != "codex" || out["access_token"] != "at" || out["refresh_token"] != "rt" {
+		t.Fatalf("converted = %+v", out)
+	}
+}
+
+func TestCLIProxyUploadPreservesCPAAuthJSON(t *testing.T) {
+	files, err := normalizeCLIProxyAuthUploads("", `{"access_token":"at","refresh_token":"rt","email":"a@example.test","disabled":false}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Name != "codex-a-example-test.json" {
+		t.Fatalf("files = %+v", files)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(files[0].Content), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["access_token"] != "at" || out["refresh_token"] != "rt" || out["disabled"] != false {
+		t.Fatalf("preserved = %+v", out)
+	}
+	if _, ok := out["auth_kind"]; ok {
+		t.Fatalf("cpa auth should not be rewritten: %+v", out)
+	}
+}
+
+func TestCLIProxyUploadRejectsMultiAccountSub2APIExport(t *testing.T) {
+	_, err := normalizeCLIProxyAuthJSON(`{"type":"sub2api-data","accounts":[{"platform":"openai","type":"oauth","credentials":{"access_token":"a"}},{"platform":"openai","type":"oauth","credentials":{"access_token":"b"}}]}`)
+	if err == nil || !strings.Contains(err.Error(), "多个账号") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCLIProxyUploadAutoNamesAndSplitsSub2APIExport(t *testing.T) {
+	files, err := normalizeCLIProxyAuthUploads("", `{"type":"sub2api-data","accounts":[
+		{"platform":"openai","type":"oauth","credentials":{"access_token":"a","email":"a@example.test"}},
+		{"platform":"openai","type":"oauth","credentials":{"access_token":"b","email":"b@example.test"}}
+	]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("files len = %d", len(files))
+	}
+	if files[0].Name != "codex-a-example-test.json" || files[1].Name != "codex-b-example-test.json" {
+		t.Fatalf("names = %q, %q", files[0].Name, files[1].Name)
 	}
 }
 

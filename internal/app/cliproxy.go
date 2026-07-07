@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,11 @@ import (
 )
 
 var errCLIProxyNotConfigured = errors.New("请先配置 CLIProxyAPI 管理地址和管理密钥")
+
+type cliProxyAuthUpload struct {
+	Name    string
+	Content string
+}
 
 func (s *Service) CLIProxyConfig(ctx context.Context) (domain.CLIProxyConfig, error) {
 	cfg, err := s.Store.CLIProxyConfig(ctx)
@@ -67,17 +74,24 @@ func (s *Service) CLIProxyAccounts(ctx context.Context) ([]domain.CLIProxyAuthFi
 
 func (s *Service) UploadCLIProxyAccount(ctx context.Context, name, content string) error {
 	name = strings.TrimSpace(name)
-	if err := domain.ValidateCLIProxyAuthFileName(name); err != nil {
-		return BadRequest(err)
-	}
 	content = strings.TrimSpace(content)
-	if !json.Valid([]byte(content)) {
-		return ErrBadRequest("授权文件内容不是有效 JSON")
+	files, err := normalizeCLIProxyAuthUploads(name, content)
+	if err != nil {
+		return err
 	}
 	cfg, err := s.cliProxyConfig(ctx)
 	if err != nil {
 		return err
 	}
+	for _, file := range files {
+		if err := s.uploadCLIProxyAuthFile(ctx, cfg, file.Name, file.Content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) uploadCLIProxyAuthFile(ctx context.Context, cfg domain.CLIProxyConfig, name, content string) error {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, err := mw.CreateFormFile("file", name)
@@ -93,6 +107,255 @@ func (s *Service) UploadCLIProxyAccount(ctx context.Context, name, content strin
 	path := "/auth-files?name=" + url.QueryEscape(name)
 	_, _, err = s.cliProxyRequest(ctx, cfg, http.MethodPost, path, &body, mw.FormDataContentType())
 	return err
+}
+
+func normalizeCLIProxyAuthJSON(content string) (string, error) {
+	files, err := normalizeCLIProxyAuthUploads("", content)
+	if err != nil {
+		return "", err
+	}
+	if len(files) != 1 {
+		return "", ErrBadRequest("授权文件包含多个账号")
+	}
+	return files[0].Content, nil
+}
+
+func normalizeCLIProxyAuthUploads(name, content string) ([]cliProxyAuthUpload, error) {
+	dec := json.NewDecoder(strings.NewReader(content))
+	dec.UseNumber()
+	var raw any
+	if err := dec.Decode(&raw); err != nil {
+		return nil, ErrBadRequest("授权文件内容不是有效 JSON")
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return nil, ErrBadRequest("授权文件只能包含一个 JSON 值")
+	}
+	items, err := cliProxyAuthUploadValues(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, ErrBadRequest("授权文件没有可上传的账号")
+	}
+	files := make([]cliProxyAuthUpload, 0, len(items))
+	used := map[string]int{}
+	for _, item := range items {
+		b, err := json.Marshal(item)
+		if err != nil {
+			return nil, err
+		}
+		fileName := ""
+		if len(items) == 1 {
+			fileName = name
+		}
+		if strings.TrimSpace(fileName) == "" {
+			fileName = defaultCLIProxyAuthFileName(string(b))
+		}
+		fileName = uniqueCLIProxyAuthFileName(fileName, used)
+		if err := domain.ValidateCLIProxyAuthFileName(fileName); err != nil {
+			return nil, BadRequest(err)
+		}
+		files = append(files, cliProxyAuthUpload{Name: fileName, Content: string(b)})
+	}
+	return files, nil
+}
+
+func cliProxyAuthUploadValues(raw any) ([]map[string]any, error) {
+	switch v := raw.(type) {
+	case map[string]any:
+		return cliProxyAuthUploadObjects(v)
+	case []any:
+		out := make([]map[string]any, 0, len(v))
+		for _, item := range v {
+			items, err := cliProxyAuthUploadValues(item)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, items...)
+		}
+		return out, nil
+	case string:
+		token := strings.TrimSpace(v)
+		if token == "" {
+			return nil, ErrBadRequest("授权 token 不能为空")
+		}
+		return []map[string]any{{"type": "codex", "auth_kind": "oauth", "access_token": token}}, nil
+	default:
+		return nil, ErrBadRequest("授权文件内容必须是 JSON 对象")
+	}
+}
+
+func cliProxyAuthUploadObjects(raw map[string]any) ([]map[string]any, error) {
+	if accounts, ok := raw["accounts"].([]any); ok {
+		out := make([]map[string]any, 0, len(accounts))
+		for _, item := range accounts {
+			account, ok := item.(map[string]any)
+			if !ok {
+				return nil, ErrBadRequest("sub2api 账号格式无效")
+			}
+			converted, err := cliProxySub2APIAccountAuth(account)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, converted)
+		}
+		return out, nil
+	}
+	if _, ok := raw["credentials"].(map[string]any); ok || cliProxyStringAt(raw, "platform") != "" {
+		out, err := cliProxySub2APIAccountAuth(raw)
+		return []map[string]any{out}, err
+	}
+	if cliProxyHasAny(raw, "accessToken", "refreshToken", "idToken", "sessionToken", "tokens") {
+		out, err := cliProxySub2APIAccountAuth(raw)
+		return []map[string]any{out}, err
+	}
+	if strings.EqualFold(cliProxyStringAt(raw, "type"), "oauth") {
+		out, err := cliProxySub2APIAccountAuth(raw)
+		return []map[string]any{out}, err
+	}
+	return []map[string]any{raw}, nil
+}
+
+func cliProxySub2APIAccountAuth(raw map[string]any) (map[string]any, error) {
+	if platform := strings.ToLower(cliProxyStringAt(raw, "platform")); platform != "" && platform != "openai" {
+		return nil, ErrBadRequest("只支持 sub2api OpenAI 账号")
+	}
+	if typ := strings.ToLower(cliProxyStringAt(raw, "type")); typ != "" && typ != "oauth" && typ != "codex" {
+		return nil, ErrBadRequest("只支持 sub2api OpenAI OAuth 账号")
+	}
+	creds, _ := raw["credentials"].(map[string]any)
+	out := make(map[string]any, len(creds)+8)
+	for key, value := range creds {
+		out[key] = value
+	}
+	out["type"] = "codex"
+	out["auth_kind"] = "oauth"
+	cliProxySetString(out, "access_token", cliProxyFirstString(creds, raw, []string{"access_token"}, []string{"accessToken"}, []string{"tokens", "access_token"}, []string{"tokens", "accessToken"}, []string{"token"}))
+	cliProxySetString(out, "refresh_token", cliProxyFirstString(creds, raw, []string{"refresh_token"}, []string{"refreshToken"}, []string{"tokens", "refresh_token"}, []string{"tokens", "refreshToken"}))
+	cliProxySetString(out, "id_token", cliProxyFirstString(creds, raw, []string{"id_token"}, []string{"idToken"}, []string{"tokens", "id_token"}, []string{"tokens", "idToken"}))
+	cliProxySetString(out, "email", cliProxyFirstString(creds, raw, []string{"email"}, []string{"user", "email"}))
+	cliProxySetString(out, "account_id", cliProxyFirstString(creds, raw, []string{"account_id"}, []string{"chatgpt_account_id"}, []string{"accountId"}, []string{"chatgptAccountId"}, []string{"account", "id"}, []string{"account", "account_id"}, []string{"account", "chatgpt_account_id"}))
+	cliProxySetString(out, "plan_type", cliProxyFirstString(creds, raw, []string{"plan_type"}, []string{"planType"}, []string{"account", "plan_type"}, []string{"account", "planType"}))
+	cliProxySetString(out, "expired", cliProxyFirstString(creds, raw, []string{"expired"}, []string{"expires_at"}, []string{"expiresAt"}, []string{"tokens", "expires_at"}, []string{"tokens", "expiresAt"}))
+	delete(out, "session_token")
+	delete(out, "sessionToken")
+	if cliProxyStringAt(out, "access_token") == "" && cliProxyStringAt(out, "refresh_token") == "" {
+		return nil, ErrBadRequest("sub2api 账号缺少 access_token 或 refresh_token")
+	}
+	return out, nil
+}
+
+func cliProxyFirstString(creds, raw map[string]any, paths ...[]string) string {
+	for _, source := range []map[string]any{creds, raw} {
+		for _, path := range paths {
+			if s := cliProxyStringPath(source, path...); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func cliProxyStringPath(m map[string]any, path ...string) string {
+	if len(path) == 0 || m == nil {
+		return ""
+	}
+	var cur any = m
+	for _, key := range path {
+		next, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		cur = next[key]
+	}
+	return cliproxyString(cur)
+}
+
+func cliProxyStringAt(m map[string]any, key string) string {
+	return cliProxyStringPath(m, key)
+}
+
+func cliProxySetString(m map[string]any, key, value string) {
+	if strings.TrimSpace(value) != "" {
+		m[key] = value
+	}
+}
+
+func cliProxyHasAny(m map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := m[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultCLIProxyAuthFileName(content string) string {
+	var raw map[string]any
+	_ = json.Unmarshal([]byte(content), &raw)
+	provider := cliProxyFileSlug(cliproxyString(firstCLIProxy(raw, "type", "provider")))
+	if provider == "" && cliProxyHasAny(raw, "access_token", "refresh_token", "id_token") {
+		provider = "codex"
+	}
+	if provider == "" {
+		provider = "auth"
+	}
+	parts := make([]string, 0, 2)
+	for _, key := range []string{"email", "account_id", "chatgpt_account_id"} {
+		if part := cliProxyFileSlug(cliproxyString(firstCLIProxy(raw, key))); part != "" {
+			parts = append(parts, part)
+		}
+	}
+	if len(parts) == 0 {
+		for _, key := range []string{"name", "label"} {
+			if part := cliProxyFileSlug(cliproxyString(firstCLIProxy(raw, key))); part != "" {
+				parts = append(parts, part)
+				break
+			}
+		}
+	}
+	if len(parts) > 0 {
+		return provider + "-" + strings.Join(parts, "-") + ".json"
+	}
+	sum := sha256.Sum256([]byte(content))
+	return provider + "-" + hex.EncodeToString(sum[:])[:10] + ".json"
+}
+
+func cliProxyFileSlug(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	dash := false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		case r == '.', r == '_', r == '-', r == '@':
+			if !dash {
+				b.WriteByte('-')
+				dash = true
+			}
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func uniqueCLIProxyAuthFileName(name string, used map[string]int) string {
+	base := name
+	if strings.HasSuffix(strings.ToLower(base), ".json") {
+		base = base[:len(base)-len(".json")]
+	}
+	ext := ".json"
+	key := strings.ToLower(name)
+	used[key]++
+	if used[key] == 1 {
+		return name
+	}
+	return fmt.Sprintf("%s-%d%s", base, used[key], ext)
 }
 
 func (s *Service) DownloadCLIProxyAccount(ctx context.Context, name string) ([]byte, string, error) {
