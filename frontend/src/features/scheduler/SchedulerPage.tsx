@@ -219,6 +219,7 @@ export function SchedulerPage() {
                     const canToggle = channel?.status === 1 || channel?.status === 2
                     const nextStatus = channel?.status === 2 ? 1 : 2
                     const detail = channelDetail(channel)
+                    const badge = schedulerCardBadge(card, channel)
                     return (
                       <Card key={card.id} className="min-w-0 bg-card">
                         <CardHeader className="gap-2">
@@ -227,7 +228,7 @@ export function SchedulerPage() {
                               <CardTitle className="truncate">{card.name}</CardTitle>
                               <CardDescription>{card.scheduler_channel_name || '未绑定渠道'}</CardDescription>
                             </div>
-                            <StatusBadge ok={!card.scheduler_auto_disabled} okText={card.scheduler_channel_id ? '可自动控制' : '未绑定'} failText="已自动关闭" />
+                            <StatusBadge ok={badge.ok} okText={badge.text} failText={badge.text} />
                           </div>
                         </CardHeader>
                         <CardContent className="grid gap-3">
@@ -583,6 +584,14 @@ function matchedTierLabel(card: ModelCard, tiers: SchedulerTier[]) {
 
 function schedulerChannelName(card: ModelCard, channel?: SchedulerChannel) {
   return channel?.name || card.scheduler_channel_name || card.scheduler_channel_id || '未绑定'
+}
+
+function schedulerCardBadge(card: ModelCard, channel?: SchedulerChannel) {
+  if (!card.scheduler_channel_id) return { ok: false, text: '未绑定' }
+  if (card.scheduler_auto_disabled) return { ok: false, text: '已自动关闭' }
+  if (channel?.status === 1) return { ok: true, text: '可自动控制' }
+  if (channel?.status === 2) return { ok: false, text: '已关闭' }
+  return { ok: false, text: '状态未知' }
 }
 
 function schedulerStatus(status: number) {
