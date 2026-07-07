@@ -278,13 +278,19 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	if len(statuses) != 1 || statuses[0] != 2 || !card.SchedulerAutoDisabled {
 		t.Fatalf("disable statuses=%v card=%+v", statuses, card)
 	}
+	if err := svc.applySchedulerAutomation(t.Context(), card, false, 3); err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 2 || statuses[1] != 2 {
+		t.Fatalf("retry disable statuses=%v", statuses)
+	}
 	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.applySchedulerAutomation(t.Context(), card, true, 0); err != nil {
 		t.Fatal(err)
 	}
-	if len(statuses) != 1 {
+	if len(statuses) != 2 {
 		t.Fatalf("first success restored scheduler: %+v", statuses)
 	}
 	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
@@ -294,7 +300,7 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	card, _ = st.Card(t.Context(), card.ID)
-	if len(statuses) != 2 || statuses[1] != 1 || card.SchedulerAutoDisabled {
+	if len(statuses) != 3 || statuses[2] != 1 || card.SchedulerAutoDisabled {
 		t.Fatalf("restore statuses=%v card=%+v", statuses, card)
 	}
 	logs, err := svc.SchedulerLogs(t.Context(), 10)

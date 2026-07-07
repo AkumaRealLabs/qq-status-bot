@@ -144,7 +144,7 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 	if card.SchedulerChannelID == "" {
 		return nil
 	}
-	if !success && failures >= 2 && !card.SchedulerAutoDisabled {
+	if !success && failures >= 2 {
 		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 2); err != nil {
 			if errors.Is(err, errSchedulerNotConfigured) {
 				s.logSchedulerAction(ctx, card, "disable", "skipped", "调度器未配置")
@@ -152,6 +152,9 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 			}
 			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
 			return err
+		}
+		if card.SchedulerAutoDisabled {
+			return nil
 		}
 		if err := s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true); err != nil {
 			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
