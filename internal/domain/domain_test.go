@@ -20,3 +20,19 @@ func TestCardName(t *testing.T) {
 		t.Fatalf("name = %q", got)
 	}
 }
+
+func TestNormalizeSchedulerTiersKeepsCustomRows(t *testing.T) {
+	custom := []SchedulerTier{{Tag: "cheap", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1}}
+	if got := NormalizeSchedulerTiers(custom); len(got) != 1 || got[0].Tag != "cheap" {
+		t.Fatalf("custom tiers = %+v", got)
+	}
+	if got := NormalizeSchedulerTiers([]SchedulerTier{}); len(got) != 0 {
+		t.Fatalf("empty tiers = %+v", got)
+	}
+	if err := ValidateSchedulerTiers([]SchedulerTier{
+		{Tag: "a", Group: "gpt_low", PriceMin: 0, PriceMax: 1},
+		{Tag: "b", Group: "gpt_low", PriceMin: 0, PriceMax: 1},
+	}); err == nil {
+		t.Fatal("duplicate scheduler group passed")
+	}
+}

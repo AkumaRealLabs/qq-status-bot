@@ -182,25 +182,40 @@ func DefaultSchedulerTiers() []SchedulerTier {
 }
 
 func NormalizeSchedulerTiers(in []SchedulerTier) []SchedulerTier {
-	out := DefaultSchedulerTiers()
-	for i := range out {
-		for _, tier := range in {
-			if strings.EqualFold(strings.TrimSpace(tier.Tag), out[i].Tag) {
-				out[i].Group = strings.TrimSpace(tier.Group)
-				out[i].PriceMin = tier.PriceMin
-				out[i].PriceMax = tier.PriceMax
-				break
-			}
-		}
+	if in == nil {
+		return DefaultSchedulerTiers()
+	}
+	out := make([]SchedulerTier, 0, len(in))
+	for _, tier := range in {
+		out = append(out, SchedulerTier{
+			Tag:      strings.TrimSpace(tier.Tag),
+			Group:    strings.TrimSpace(tier.Group),
+			PriceMin: tier.PriceMin,
+			PriceMax: tier.PriceMax,
+		})
 	}
 	return out
 }
 
 func ValidateSchedulerTiers(tiers []SchedulerTier) error {
+	tags := map[string]bool{}
+	groups := map[string]bool{}
 	for _, tier := range NormalizeSchedulerTiers(tiers) {
+		if tier.Tag == "" {
+			return errors.New("分组名称不能为空")
+		}
 		if tier.Group == "" {
 			return errors.New("调度器分组不能为空")
 		}
+		tagKey := strings.ToLower(tier.Tag)
+		if tags[tagKey] {
+			return errors.New("分组名称不能重复")
+		}
+		if groups[tier.Group] {
+			return errors.New("调度器分组不能重复")
+		}
+		tags[tagKey] = true
+		groups[tier.Group] = true
 		if tier.PriceMin < 0 || tier.PriceMax < 0 || tier.PriceMax < tier.PriceMin {
 			return errors.New("调度器价格区间无效")
 		}

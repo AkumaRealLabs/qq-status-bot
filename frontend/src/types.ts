@@ -265,7 +265,7 @@ export type SchedulerConfig = {
 }
 
 export type SchedulerTier = {
-  tag: 'gpt_low' | 'gpt_stable'
+  tag: string
   group: string
   price_min: number
   price_max: number

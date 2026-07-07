@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Power, PowerOff, RefreshCcw, Save, Settings2, SlidersHorizontal, Tags } from 'lucide-react'
+import { Loader2, Plus, Power, PowerOff, RefreshCcw, Save, Settings2, SlidersHorizontal, Tags, Trash2 } from 'lucide-react'
 import { EmptyPanel, Field, FormError, StatusBadge } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
@@ -100,9 +100,15 @@ export function SchedulerPage() {
   const groupRows = schedulerGroupRows(groups.data ?? [], list)
   const selectableGroups = groupRows.filter((group) => group.name !== '未分组')
   const tiers = schedulerTiers(form)
-  const groupOptions = schedulerGroupOptions(selectableGroups, list)
-  const updateTier = (tag: SchedulerTier['tag'], patch: Partial<SchedulerTier>) =>
-    setCfgDraft({ ...form, scheduler_tiers: tiers.map((tier) => tier.tag === tag ? { ...tier, ...patch } : tier) })
+  const groupOptions = schedulerGroupOptions(selectableGroups, list, tiers)
+  const updateTier = (index: number, patch: Partial<SchedulerTier>) =>
+    setCfgDraft({ ...form, scheduler_tiers: tiers.map((tier, i) => i === index ? { ...tier, ...patch } : tier) })
+  const addTier = () => {
+    const used = new Set(tiers.map((tier) => tier.group).filter(Boolean))
+    const group = groupOptions.find((item) => !used.has(item)) ?? ''
+    setCfgDraft({ ...form, scheduler_tiers: [...tiers, { tag: nextTierName(tiers, group), group, price_min: 0, price_max: 0 }] })
+  }
+  const deleteTier = (index: number) => setCfgDraft({ ...form, scheduler_tiers: tiers.filter((_, i) => i !== index) })
   return (
     <Page
       title="调度器"
@@ -125,6 +131,8 @@ export function SchedulerPage() {
             saving={saveConfig.isPending}
             applying={applyGroups.isPending}
             onUpdateTier={updateTier}
+            onAddTier={addTier}
+            onDeleteTier={deleteTier}
             onApply={() => applyGroups.mutate()}
             onRefresh={() => {
               void groups.refetch()
@@ -387,6 +395,8 @@ function SchedulerGroupDialog({
   saving,
   applying,
   onUpdateTier,
+  onAddTier,
+  onDeleteTier,
   onApply,
   onRefresh,
 }: {
@@ -396,10 +406,14 @@ function SchedulerGroupDialog({
   saveError: boolean
   saving: boolean
   applying: boolean
-  onUpdateTier: (tag: SchedulerTier['tag'], patch: Partial<SchedulerTier>) => void
+  onUpdateTier: (index: number, patch: Partial<SchedulerTier>) => void
+  onAddTier: () => void
+  onDeleteTier: (index: number) => void
   onApply: () => void
   onRefresh: () => void
 }) {
+  const usedGroups = new Set(tiers.map((tier) => tier.group).filter(Boolean))
+  const canAdd = groupOptions.some((group) => !usedGroups.has(group))
   return (
     <Dialog>
       <DialogTrigger asChild>
@@ -411,28 +425,49 @@ function SchedulerGroupDialog({
       <DialogContent>
         <DialogTitle>分组配置</DialogTitle>
         <div className="grid gap-4">
-          <div className="flex justify-end">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button variant="outline" size="sm" onClick={onRefresh}>
               <RefreshCcw className="size-4" />
               刷新分组
             </Button>
+            <Button variant="outline" size="sm" onClick={onAddTier} disabled={!canAdd}>
+              <Plus className="size-4" />
+              新增
+            </Button>
           </div>
-          <datalist id="scheduler-group-options">
-            {groupOptions.map((group) => <option key={group} value={group} />)}
-          </datalist>
           <div className="grid gap-3 md:grid-cols-2">
-            {tiers.map((tier) => (
-              <div key={tier.tag} className="grid min-w-0 gap-3 rounded-sm border border-border bg-background p-3">
-                <div className="text-sm font-medium text-foreground">{tier.tag}</div>
+            {tiers.map((tier, index) => (
+              <div key={`${tier.tag}-${index}`} className="grid min-w-0 gap-3 rounded-sm border border-border bg-background p-3">
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <Field label="名称">
+                    <Input value={tier.tag} onChange={(e) => onUpdateTier(index, { tag: e.target.value })} />
+                  </Field>
+                  <Button variant="ghost" size="icon" title="删除" onClick={() => onDeleteTier(index)}>
+                    <Trash2 className="size-4" />
+                    <span className="sr-only">删除</span>
+                  </Button>
+                </div>
                 <Field label="调度器分组">
-                  <Input list="scheduler-group-options" value={tier.group} onChange={(e) => onUpdateTier(tier.tag, { group: e.target.value })} />
+                  <Select value={tier.group || none} onValueChange={(value) => onUpdateTier(index, { group: value === none ? '' : value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="选择调度器分组" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={none}>未选择</SelectItem>
+                      {groupOptions.map((group) => (
+                        <SelectItem key={group} value={group} disabled={tier.group !== group && usedGroups.has(group)}>
+                          {group}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Field>
                 <div className="grid grid-cols-2 gap-2">
                   <Field label="最低价格">
-                    <Input type="number" step="0.01" min="0" value={tier.price_min} onChange={(e) => onUpdateTier(tier.tag, { price_min: Number(e.target.value || 0) })} />
+                    <Input type="number" step="0.01" min="0" value={tier.price_min} onChange={(e) => onUpdateTier(index, { price_min: Number(e.target.value || 0) })} />
                   </Field>
                   <Field label="最高价格">
-                    <Input type="number" step="0.01" min="0" value={tier.price_max} onChange={(e) => onUpdateTier(tier.tag, { price_max: Number(e.target.value || 0) })} />
+                    <Input type="number" step="0.01" min="0" value={tier.price_max} onChange={(e) => onUpdateTier(index, { price_max: Number(e.target.value || 0) })} />
                   </Field>
                 </div>
               </div>
@@ -488,11 +523,18 @@ function channelForCard(channels: SchedulerChannel[], card: ModelCard) {
 }
 
 function schedulerTiers(cfg: SchedulerConfig) {
-  return defaultTiers.map((fallback) => cfg.scheduler_tiers?.find((tier) => tier.tag === fallback.tag) ?? fallback)
+  return Array.isArray(cfg.scheduler_tiers) ? cfg.scheduler_tiers : defaultTiers
 }
 
-function schedulerGroupOptions(groups: SchedulerGroupRow[], channels: SchedulerChannel[]) {
-  return Array.from(new Set([...groups.map((group) => group.name), ...channels.flatMap(channelGroups)])).filter(Boolean).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+function schedulerGroupOptions(groups: SchedulerGroupRow[], channels: SchedulerChannel[], tiers: SchedulerTier[] = []) {
+  return Array.from(new Set([...groups.map((group) => group.name), ...channels.flatMap(channelGroups), ...tiers.map((tier) => tier.group)])).filter(Boolean).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+function nextTierName(tiers: SchedulerTier[], group: string) {
+  const used = new Set(tiers.map((tier) => tier.tag))
+  let name = group || 'new_group'
+  for (let i = 2; used.has(name); i += 1) name = `${group || 'new_group'}_${i}`
+  return name
 }
 
 function groupCards(cards: ModelCard[]) {
