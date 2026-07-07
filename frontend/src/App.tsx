@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, BarChart3, Database, ExternalLink, Loader2, LogOut, MessageSquare, Settings, SlidersHorizontal, WalletCards } from 'lucide-react'
+import { Activity, BarChart3, Database, ExternalLink, KeyRound, Loader2, LogOut, MessageSquare, Settings, SlidersHorizontal, WalletCards } from 'lucide-react'
 import { BrandIcon, MobileTabs, NavItem, ShellLoading } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { LoginPage, SetupPage } from '@/features/auth/AuthPages'
 import { BalancesPage } from '@/features/balances/BalancesPage'
 import { MessagesPage } from '@/features/messages/MessagesPage'
+import { CLIProxyPoolPage } from '@/features/pools/CLIProxyPoolPage'
 import { RevenuePage } from '@/features/revenue/RevenuePage'
 import { SchedulerPage } from '@/features/scheduler/SchedulerPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
@@ -22,6 +23,7 @@ const tabs: NavTab[] = [
   { id: 'messages', label: '最新消息', short: '消息', icon: MessageSquare },
   { id: 'upstreams', label: '上游管理', short: '上游', icon: Database },
   { id: 'scheduler', label: '调度器', short: '调度', icon: SlidersHorizontal },
+  { id: 'pools', label: '号池管理', short: '号池', icon: KeyRound },
   { id: 'settings', label: '设置', short: '设置', icon: Settings },
 ]
 
@@ -32,6 +34,7 @@ const tabPaths: Record<TabID, string> = {
   messages: '/admin/messages',
   upstreams: '/admin/upstreams',
   scheduler: '/admin/scheduler',
+  pools: '/admin/pools',
   settings: '/admin/settings',
 }
 
@@ -163,6 +166,7 @@ export default function App() {
           {tab === 'messages' && <MessagesPage />}
           {tab === 'upstreams' && <UpstreamsPage />}
           {tab === 'scheduler' && <SchedulerPage />}
+          {tab === 'pools' && <CLIProxyPoolPage />}
           {tab === 'settings' && <SettingsPage />}
         </main>
       </div>

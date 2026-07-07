@@ -76,6 +76,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/scheduler/channels", s.auth(s.schedulerChannels))
 	mux.HandleFunc("GET /api/scheduler/logs", s.auth(s.schedulerLogs))
 	mux.HandleFunc("POST /api/scheduler/groups/apply", s.auth(s.applySchedulerGroups))
+	mux.HandleFunc("GET /api/pools/cliproxy/config", s.auth(s.cliProxyConfig))
+	mux.HandleFunc("PATCH /api/pools/cliproxy/config", s.auth(s.updateCLIProxyConfig))
+	mux.HandleFunc("GET /api/pools/cliproxy/accounts", s.auth(s.cliProxyAccounts))
+	mux.HandleFunc("POST /api/pools/cliproxy/accounts", s.auth(s.uploadCLIProxyAccount))
+	mux.HandleFunc("GET /api/pools/cliproxy/accounts/{name}/download", s.auth(s.downloadCLIProxyAccount))
+	mux.HandleFunc("DELETE /api/pools/cliproxy/accounts/{name}", s.auth(s.deleteCLIProxyAccount))
+	mux.HandleFunc("POST /api/pools/cliproxy/accounts/{name}/reset-quota", s.auth(s.resetCLIProxyQuota))
 	mux.HandleFunc("GET /api/settings", s.auth(s.settings))
 	mux.HandleFunc("PATCH /api/settings", s.auth(s.updateSettings))
 	mux.HandleFunc("GET /api/settings/export", s.auth(s.exportData))
@@ -115,6 +122,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /messages", redirectTo("/admin/messages"))
 	mux.HandleFunc("GET /upstreams", redirectTo("/admin/upstreams"))
 	mux.HandleFunc("GET /scheduler", redirectTo("/admin/scheduler"))
+	mux.HandleFunc("GET /pools", redirectTo("/admin/pools"))
 	mux.HandleFunc("GET /settings", redirectTo("/admin/settings"))
 	mux.Handle("/", s.static())
 	return s.checkOrigin(mux)
@@ -520,6 +528,60 @@ func (s *Server) setCardSchedulerStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSONOrError(w, card, err)
 }
 
+func (s *Server) cliProxyConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.App.CLIProxyConfig(r.Context())
+	writeJSONOrError(w, cfg, err)
+}
+
+func (s *Server) updateCLIProxyConfig(w http.ResponseWriter, r *http.Request) {
+	var cfg domain.CLIProxyConfig
+	if !decode(w, r, &cfg) {
+		return
+	}
+	cfg, err := s.App.SaveCLIProxyConfig(r.Context(), cfg)
+	writeJSONOrError(w, cfg, err)
+}
+
+func (s *Server) cliProxyAccounts(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.CLIProxyAccounts(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) uploadCLIProxyAccount(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	writeNoContentOrError(w, s.App.UploadCLIProxyAccount(r.Context(), body.Name, body.Content))
+}
+
+func (s *Server) downloadCLIProxyAccount(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	b, contentType, err := s.App.DownloadCLIProxyAccount(r.Context(), name)
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	if contentType == "" {
+		contentType = "application/json; charset=utf-8"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(name, `"`, "")+`"`)
+	_, _ = w.Write(b)
+}
+
+func (s *Server) deleteCLIProxyAccount(w http.ResponseWriter, r *http.Request) {
+	writeNoContentOrError(w, s.App.DeleteCLIProxyAccount(r.Context(), r.PathValue("name")))
+}
+
+func (s *Server) resetCLIProxyQuota(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.ResetCLIProxyQuota(r.Context(), r.PathValue("name"))
+	writeJSONOrError(w, out, err)
+}
+
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.App.Store.Settings(r.Context())
 	writeJSONOrError(w, cfg, err)
@@ -902,6 +964,8 @@ func writeJSONOrError(w http.ResponseWriter, out any, err error) {
 		status := http.StatusInternalServerError
 		if app.IsBadRequest(err) {
 			status = http.StatusBadRequest
+		} else if code, ok := app.ErrorStatus(err); ok {
+			status = code
 		} else if errors.Is(err, sql.ErrNoRows) {
 			status = http.StatusNotFound
 		}

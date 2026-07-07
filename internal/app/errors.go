@@ -8,6 +8,11 @@ type badRequestError struct {
 	err error
 }
 
+type statusError struct {
+	status int
+	err    error
+}
+
 func ErrBadRequest(msg string) error {
 	return badRequestError{err: errors.New(msg)}
 }
@@ -24,5 +29,19 @@ func IsBadRequest(err error) bool {
 	return errors.As(err, &target)
 }
 
+func ErrStatus(status int, msg string) error {
+	return statusError{status: status, err: errors.New(msg)}
+}
+
+func ErrorStatus(err error) (int, bool) {
+	var target statusError
+	if errors.As(err, &target) {
+		return target.status, true
+	}
+	return 0, false
+}
+
 func (e badRequestError) Error() string { return e.err.Error() }
 func (e badRequestError) Unwrap() error { return e.err }
+func (e statusError) Error() string     { return e.err.Error() }
+func (e statusError) Unwrap() error     { return e.err }

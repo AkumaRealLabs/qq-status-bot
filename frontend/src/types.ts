@@ -154,7 +154,7 @@ export type SettingsData = {
 
 export type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>
 
-export type TabID = 'status' | 'balances' | 'revenue' | 'messages' | 'upstreams' | 'scheduler' | 'settings'
+export type TabID = 'status' | 'balances' | 'revenue' | 'messages' | 'upstreams' | 'scheduler' | 'pools' | 'settings'
 
 export type NavTab = { id: TabID; label: string; short: string; icon: ElementType }
 
@@ -302,4 +302,36 @@ export type SchedulerLog = {
 export type SchedulerApplyResult = {
   updated: number
   skipped: number
+}
+
+export type CLIProxyConfig = {
+  name: string
+  base_url: string
+  management_key?: string
+  management_key_set: boolean
+  enabled: boolean
+}
+
+export type CLIProxyAccount = {
+  name: string
+  provider?: string
+  type?: string
+  status?: string
+  status_message?: string
+  email?: string
+  account_type?: string
+  account?: string
+  source?: string
+  auth_index?: string
+  size?: number
+  modtime?: string
+  created_at?: string
+  updated_at?: string
+  last_refresh?: string
+  success: number
+  failed: number
+  recent_requests?: unknown
+  runtime_only?: boolean
+  disabled?: boolean
+  unavailable?: boolean
 }

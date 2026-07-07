@@ -82,7 +82,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 			site_name TEXT NOT NULL DEFAULT 'AI 上游监控', site_icon TEXT NOT NULL DEFAULT '',
 			epay_base_url TEXT NOT NULL DEFAULT '', epay_pid TEXT NOT NULL DEFAULT '', epay_key TEXT NOT NULL DEFAULT '',
 			scheduler_base_url TEXT NOT NULL DEFAULT '', scheduler_user_id TEXT NOT NULL DEFAULT '', scheduler_access_token TEXT NOT NULL DEFAULT '',
-			scheduler_tiers TEXT NOT NULL DEFAULT ''
+			scheduler_tiers TEXT NOT NULL DEFAULT '',
+			cliproxy_name TEXT NOT NULL DEFAULT 'CLIProxyAPI', cliproxy_base_url TEXT NOT NULL DEFAULT '',
+			cliproxy_management_key TEXT NOT NULL DEFAULT '', cliproxy_enabled INTEGER NOT NULL DEFAULT 1
 		)`,
 		`CREATE TABLE IF NOT EXISTS upstreams (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, base_url TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
@@ -189,6 +191,16 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if err := s.addColumnIfMissing(ctx, "settings", "scheduler_tiers", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
+	}
+	for _, col := range []struct{ name, def string }{
+		{"cliproxy_name", "TEXT NOT NULL DEFAULT 'CLIProxyAPI'"},
+		{"cliproxy_base_url", "TEXT NOT NULL DEFAULT ''"},
+		{"cliproxy_management_key", "TEXT NOT NULL DEFAULT ''"},
+		{"cliproxy_enabled", "INTEGER NOT NULL DEFAULT 1"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "settings", col.name, col.def); err != nil {
+			return err
+		}
 	}
 	if err := s.addColumnIfMissing(ctx, "probe_runs", "status", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err

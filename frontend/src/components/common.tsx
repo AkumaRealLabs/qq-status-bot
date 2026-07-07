@@ -161,15 +161,17 @@ export function IconAction({
   onClick,
   pending,
   danger,
+  disabled,
 }: {
   title: string
   icon: ElementType
   onClick: () => void
   pending: boolean
   danger?: boolean
+  disabled?: boolean
 }) {
   return (
-    <Button variant={danger ? 'danger' : 'outline'} size="icon" onClick={onClick} disabled={pending} title={title}>
+    <Button variant={danger ? 'danger' : 'outline'} size="icon" onClick={onClick} disabled={pending || disabled} title={title}>
       {pending ? <Loader2 className="size-4 animate-spin" /> : <Icon className="size-4" />}
       <span className="sr-only">{title}</span>
     </Button>
