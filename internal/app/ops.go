@@ -282,7 +282,7 @@ func checkItem(name string, err error, ok string) domain.SelfCheckItem {
 }
 
 func opsWindow(window string) (time.Time, string, time.Duration) {
-	now := time.Now()
+	now := time.Now().In(appLocation())
 	switch window {
 	case "today":
 		y, m, d := now.Date()

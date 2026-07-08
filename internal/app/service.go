@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	_ "time/tzdata"
 
 	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/epay"
@@ -34,6 +35,7 @@ type Service struct {
 }
 
 func New(st *store.Store) *Service {
+	time.Local = appLocation()
 	mediaDir := os.Getenv("TG_MEDIA_DIR")
 	if mediaDir == "" {
 		mediaDir = "/app/data/tg_media"
@@ -882,10 +884,13 @@ func (s *Service) TodayRevenue(ctx context.Context) ([]domain.RevenueRow, error)
 		row.CheckedAt = time.Now().UTC()
 		switch card.SourceType {
 		case "epay_total":
-			balance := (epay.Client{HTTP: s.Client.HTTP}).MerchantBalance(ctx, epay.Config{BaseURL: firstNonEmpty(card.BaseURL, cfg.EpayBaseURL), PID: firstNonEmpty(card.EpayPID, cfg.EpayPID), Key: firstNonEmpty(card.EpayKey, cfg.EpayKey)})
-			row.Revenue, row.CheckedAt, row.Error = balance.Balance, balance.CheckedAt, balance.Error
-			if row.Error != "" {
+			orders, err := (epay.Client{HTTP: s.Client.HTTP}).TodayOrders(ctx, epay.Config{BaseURL: firstNonEmpty(card.BaseURL, cfg.EpayBaseURL), PID: firstNonEmpty(card.EpayPID, cfg.EpayPID), Key: firstNonEmpty(card.EpayKey, cfg.EpayKey)}, start)
+			for _, order := range orders {
+				row.Revenue += order.Amount
+			}
+			if err != nil {
 				row.Revenue = 0
+				row.Error = err.Error()
 			}
 		case "newapi_orders", "sub2api_orders":
 			mu, upstreamID, err := s.revenueMonitorUpstream(ctx, card)
@@ -1035,9 +1040,18 @@ func firstNonEmpty(values ...string) string {
 }
 
 func todayStart() time.Time {
-	now := time.Now()
+	now := time.Now().In(appLocation())
 	y, m, d := now.Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+}
+
+func appLocation() *time.Location {
+	if name := strings.TrimSpace(os.Getenv("TZ")); name != "" {
+		if loc, err := time.LoadLocation(name); err == nil {
+			return loc
+		}
+	}
+	return time.Local
 }
 
 func (s *Service) UpstreamRows(ctx context.Context) ([]map[string]any, error) {

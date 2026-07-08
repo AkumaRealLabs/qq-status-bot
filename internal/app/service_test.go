@@ -149,6 +149,20 @@ func TestProfitUsesBalanceDropsOnly(t *testing.T) {
 	}
 }
 
+func TestTodayStartUsesConfiguredTimezone(t *testing.T) {
+	oldLocal := time.Local
+	t.Cleanup(func() { time.Local = oldLocal })
+	t.Setenv("TZ", "Asia/Shanghai")
+	time.Local = appLocation()
+
+	start := todayStart()
+	_, offset := start.Zone()
+	now := time.Now().In(start.Location())
+	if start.Location().String() != "Asia/Shanghai" || offset != 8*60*60 || start.Hour() != 0 || start.YearDay() != now.YearDay() {
+		t.Fatalf("todayStart = %s, want Asia/Shanghai midnight", start)
+	}
+}
+
 func TestNewDefaultsToCodexCLIProbeWithHTTPFallback(t *testing.T) {
 	t.Setenv("AUM_PROBE_MODE", "")
 	if got := New(nil).Client.ProbeMode; got != monitor.ProbeModeCLI {
@@ -540,13 +554,17 @@ func TestSchedulerGroupsFallbackAndParse(t *testing.T) {
 	}
 }
 
-func TestTodayRevenueMapsEpayBalance(t *testing.T) {
+func TestTodayRevenueMapsEpayOrders(t *testing.T) {
+	now := todayStart().Add(time.Hour).Format("2006-01-02 15:04:05")
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if r.URL.Path != "/api.php" || q.Get("act") != "query" || q.Get("pid") != "1000" || q.Get("key") != "secret" {
+		if r.URL.Path != "/api.php" || q.Get("act") != "orders" || q.Get("pid") != "1000" || q.Get("key") != "secret" {
 			t.Fatalf("bad epay request: %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "money": "88.66"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "data": []map[string]any{
+			{"trade_no": "E-1", "money": "10", "status": "1", "endtime": now},
+			{"trade_no": "E-2", "money": "99", "status": "0", "endtime": now},
+		}})
 	}))
 	defer ts.Close()
 
@@ -574,7 +592,7 @@ func TestTodayRevenueMapsEpayBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 1 || out[0].SourceType != "epay_total" || out[0].Revenue != 88.66 {
+	if len(out) != 1 || out[0].SourceType != "epay_total" || out[0].Revenue != 10 {
 		t.Fatalf("revenue = %+v", out)
 	}
 }
@@ -589,7 +607,9 @@ func TestTodayRevenueReturnsIndependentCardRows(t *testing.T) {
 			if r.URL.Query().Get("pid") != "1000" || r.URL.Query().Get("key") != "secret" {
 				t.Fatalf("bad epay query: %s", r.URL.RawQuery)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "money": "88.66"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "data": []map[string]any{
+				{"money": "88.66", "status": "1", "endtime": now},
+			}})
 		case "/api/user/topup":
 			if r.Header.Get("Authorization") != "new-token" || r.Header.Get("New-Api-User") != "new-user" {
 				t.Fatalf("bad newapi auth: auth=%q user=%q", r.Header.Get("Authorization"), r.Header.Get("New-Api-User"))
