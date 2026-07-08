@@ -18,6 +18,12 @@ import (
 	"github.com/gotd/td/tg"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
 func TestSetupOnlyOnce(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
 	if err != nil {
@@ -173,6 +179,20 @@ func TestCheckBrowserCDPFallsBackToJSONList(t *testing.T) {
 	got := checkBrowserCDP(t.Context(), ts.Client(), ts.URL)
 	if got.Status != "ok" || !sawVersion || !sawList {
 		t.Fatalf("got=%+v sawVersion=%v sawList=%v", got, sawVersion, sawList)
+	}
+}
+
+func TestCheckBrowserCDPUsesLocalChromeHostHeader(t *testing.T) {
+	var gotHost, gotPath string
+	hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotHost = r.Host
+		gotPath = r.URL.Path
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: http.NoBody, Header: make(http.Header), Request: r}, nil
+	})}
+
+	got := checkBrowserCDP(t.Context(), hc, "http://browser:9222")
+	if got.Status != "ok" || gotPath != "/json/version" || gotHost != "127.0.0.1:19222" {
+		t.Fatalf("got=%+v path=%q host=%q", got, gotPath, gotHost)
 	}
 }
 

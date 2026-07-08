@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -275,13 +277,18 @@ func diskCheck() domain.SelfCheckItem {
 
 func checkBrowserCDP(ctx context.Context, hc *http.Client, baseURL string) domain.SelfCheckItem {
 	baseURL = strings.TrimRight(baseURL, "/")
-	if item := checkHTTP(ctx, hc, "browser_cdp", baseURL+"/json/version"); item.Status == "ok" {
+	hostHeader := browserCDPHostHeader(baseURL)
+	if item := checkHTTPWithHost(ctx, hc, "browser_cdp", baseURL+"/json/version", hostHeader); item.Status == "ok" {
 		return item
 	}
-	return checkHTTP(ctx, hc, "browser_cdp", baseURL+"/json")
+	return checkHTTPWithHost(ctx, hc, "browser_cdp", baseURL+"/json", hostHeader)
 }
 
 func checkHTTP(ctx context.Context, hc *http.Client, name, rawurl string) domain.SelfCheckItem {
+	return checkHTTPWithHost(ctx, hc, name, rawurl, "")
+}
+
+func checkHTTPWithHost(ctx context.Context, hc *http.Client, name, rawurl, hostHeader string) domain.SelfCheckItem {
 	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if hc == nil {
@@ -290,6 +297,9 @@ func checkHTTP(ctx context.Context, hc *http.Client, name, rawurl string) domain
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawurl, nil)
 	if err != nil {
 		return checkItem(name, err, "")
+	}
+	if hostHeader != "" {
+		req.Host = hostHeader
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -300,6 +310,34 @@ func checkHTTP(ctx context.Context, hc *http.Client, name, rawurl string) domain
 		return domain.SelfCheckItem{Name: name, Status: "error", Message: resp.Status}
 	}
 	return domain.SelfCheckItem{Name: name, Status: "ok", Message: rawurl}
+}
+
+func browserCDPHostHeader(rawurl string) string {
+	if v := strings.TrimSpace(os.Getenv("BROWSER_DEBUG_HOST_HEADER")); v != "" {
+		return v
+	}
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		return "127.0.0.1:19222"
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") || net.ParseIP(host) != nil {
+		return hostWithDefaultPort(u.Host, u.Scheme)
+	}
+	return "127.0.0.1:19222"
+}
+
+func hostWithDefaultPort(host, scheme string) string {
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return host
+	}
+	if strings.Contains(host, ":") {
+		return host
+	}
+	if scheme == "https" || scheme == "wss" {
+		return net.JoinHostPort(host, "443")
+	}
+	return net.JoinHostPort(host, "80")
 }
 
 func (s *Service) cliProxySelfCheck(ctx context.Context) domain.SelfCheckItem {
