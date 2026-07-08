@@ -339,7 +339,7 @@ model_instructions_file = %q
 disable_response_storage = true
 project_doc_max_bytes = 0
 web_search = "disabled"
-model_reasoning_effort = "minimal"
+model_reasoning_effort = "low"
 model_verbosity = "low"
 model_reasoning_summary = "none"
 

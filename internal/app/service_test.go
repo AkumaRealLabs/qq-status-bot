@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -118,7 +119,7 @@ func TestEffectiveRatioUsesBalanceRate(t *testing.T) {
 	}
 }
 
-func TestProfitUsesBalanceDropsOnly(t *testing.T) {
+func TestProfitRequiresSchedulerConfig(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -127,25 +128,9 @@ func TestProfitUsesBalanceDropsOnly(t *testing.T) {
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "A", Type: "sub2api", BaseURL: "https://example.test", BalanceRate: 1, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, remain := range []float64{100, 90, 120, 110} {
-		if _, err := st.SaveBalance(t.Context(), u.ID, monitor.Balance{Remain: remain}, "", 0); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if err := st.SaveRevenueSnapshot(t.Context(), domain.RevenueSnapshot{SourceID: "r1", SourceName: "收入", SourceType: "epay_total", Revenue: 50}); err != nil {
-		t.Fatal(err)
-	}
 	out, err := New(st).Profit(t.Context(), "24h")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.Revenue != 50 || out.Cost != 20 || out.Profit != 30 {
-		t.Fatalf("profit = %+v", out)
+	if err == nil || out.Window != "24h" {
+		t.Fatalf("profit=%+v err=%v", out, err)
 	}
 }
 
@@ -319,6 +304,118 @@ func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 	if out.Updated != 2 || updated[9] != "gpt_low,gpt_stable" || updated[10] != "gpt_stable" {
 		t.Fatalf("out=%+v updated=%+v", out, updated)
 	}
+}
+
+func TestProfitUsageUnitsUsesOriginalQuota(t *testing.T) {
+	got, ok := profitUsageUnits(50000, 0.1)
+	if !ok || got != 1 {
+		t.Fatalf("usage=%v ok=%v", got, ok)
+	}
+}
+
+func TestProfitFromSchedulerLogs(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/log/" || r.URL.Query().Get("type") != "2" || r.URL.Query().Get("p") != "1" || r.URL.Query().Get("page_size") != "200" {
+			t.Fatalf("bad log request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		switch r.URL.Query().Get("group") {
+		case "gpt_low":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
+				{"quota": 100 * 500000 * 0.1, "channel": 9, "group": "gpt_low", "other": map[string]any{"group_ratio": 0.1}},
+				{"quota": 10 * 500000 * 0.1, "channel": 99, "group": "gpt_low", "other": `{"group_ratio":0.1}`},
+			}}})
+		case "gpt_stable":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
+				{"quota": 100 * 500000 * 0.2, "channel": "10", "group": "gpt_stable", "other": map[string]any{"group_ratio": 0.2}},
+			}}})
+		default:
+			t.Fatalf("unexpected group %q", r.URL.Query().Get("group"))
+		}
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	low, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "low-up", Type: "newapi", BaseURL: "https://low.example.test", BalanceRate: 1, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stable, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "stable-up", Type: "newapi", BaseURL: "https://stable.example.test", BalanceRate: 1, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveKeys(t.Context(), low.ID, []monitor.APIKey{{RemoteID: "low", Name: "low-key", GroupRatio: "0.08"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveKeys(t.Context(), stable.ID, []monitor.APIKey{{RemoteID: "stable", Name: "stable-key", GroupRatio: "0.15"}}); err != nil {
+		t.Fatal(err)
+	}
+	lowKeys, _ := st.ListKeys(t.Context(), low.ID)
+	stableKeys, _ := st.ListKeys(t.Context(), stable.ID)
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "low-card", UpstreamID: low.ID, KeyID: lowKeys[0].ID, SchedulerChannelID: "9", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "stable-card", UpstreamID: stable.ID, KeyID: stableKeys[0].ID, SchedulerChannelID: "10", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
+		BaseURL: ts.URL, UserID: "42", AccessToken: "token",
+		Tiers: []domain.SchedulerTier{
+			{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1, SalePrice: 0.1},
+			{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.25, SalePrice: 0.25},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := svc.Profit(t.Context(), "today")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lowPool := profitTestPool(out.Pools, "gpt_low")
+	stablePool := profitTestPool(out.Pools, "gpt_stable")
+	if out.Complete || !closeEnough(out.Revenue, 35) || !closeEnough(out.Cost, 23) || !closeEnough(out.Profit, 12) || !closeEnough(out.MissingRevenue, 1) {
+		t.Fatalf("profit = %+v", out)
+	}
+	if lowPool.Complete || !closeEnough(lowPool.Usage, 110) || !closeEnough(lowPool.Revenue, 10) || !closeEnough(lowPool.Cost, 8) || !closeEnough(lowPool.Profit, 2) {
+		t.Fatalf("low pool = %+v", lowPool)
+	}
+	if !stablePool.Complete || !closeEnough(stablePool.Usage, 100) || !closeEnough(stablePool.Revenue, 25) || !closeEnough(stablePool.Cost, 15) || !closeEnough(stablePool.Profit, 10) {
+		t.Fatalf("stable pool = %+v", stablePool)
+	}
+	missing := profitTestChannel(lowPool.Channels, "99")
+	if missing.Complete || !closeEnough(missing.Revenue, 1) || missing.Cost != 0 || missing.MissingReason == "" {
+		t.Fatalf("missing channel = %+v", missing)
+	}
+}
+
+func profitTestPool(rows []domain.ProfitPoolRow, group string) domain.ProfitPoolRow {
+	for _, row := range rows {
+		if row.Group == group {
+			return row
+		}
+	}
+	return domain.ProfitPoolRow{}
+}
+
+func profitTestChannel(rows []domain.ProfitChannelRow, id string) domain.ProfitChannelRow {
+	for _, row := range rows {
+		if row.ChannelID == id {
+			return row
+		}
+	}
+	return domain.ProfitChannelRow{}
+}
+
+func closeEnough(a, b float64) bool {
+	return math.Abs(a-b) < 1e-9
 }
 
 func TestSchedulerAutomationDisableAndRestore(t *testing.T) {

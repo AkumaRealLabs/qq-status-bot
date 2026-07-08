@@ -21,7 +21,7 @@ const tabs: NavTab[] = [
   { id: 'status', label: '状态监控', short: '状态', icon: Activity },
   { id: 'balances', label: '余额监控', short: '余额', icon: WalletCards },
   { id: 'revenue', label: '今日收入', short: '收入', icon: BarChart3 },
-  { id: 'profit', label: '利润估算', short: '利润', icon: TrendingUp },
+  { id: 'profit', label: '调度池利润', short: '利润', icon: TrendingUp },
   { id: 'messages', label: '最新消息', short: '消息', icon: MessageSquare },
   { id: 'upstreams', label: '上游管理', short: '上游', icon: Database },
   { id: 'scheduler', label: '调度器', short: '调度', icon: SlidersHorizontal },

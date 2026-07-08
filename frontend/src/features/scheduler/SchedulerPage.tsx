@@ -16,8 +16,8 @@ import type { ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig
 
 const none = '__none__'
 const defaultTiers: SchedulerTier[] = [
-  { tag: 'gpt_low', group: 'gpt_low', price_min: 0, price_max: 0.1 },
-  { tag: 'gpt_stable', group: 'gpt_stable', price_min: 0, price_max: 0.15 },
+  { tag: 'gpt_low', group: 'gpt_low', price_min: 0, price_max: 0.1, sale_price: 0.1 },
+  { tag: 'gpt_stable', group: 'gpt_stable', price_min: 0, price_max: 0.25, sale_price: 0.25 },
 ]
 
 export function SchedulerPage() {
@@ -104,7 +104,7 @@ export function SchedulerPage() {
   const addTier = () => {
     const used = new Set(tiers.map((tier) => tier.group).filter(Boolean))
     const group = groupOptions.find((item) => !used.has(item)) ?? ''
-    setCfgDraft({ ...form, scheduler_tiers: [...tiers, { tag: nextTierName(tiers, group), group, price_min: 0, price_max: 0 }] })
+    setCfgDraft({ ...form, scheduler_tiers: [...tiers, { tag: nextTierName(tiers, group), group, price_min: 0, price_max: 0, sale_price: schedulerSalePrice({ tag: group, group, price_min: 0, price_max: 0, sale_price: 0 }) }] })
   }
   const deleteTier = (index: number) => setCfgDraft({ ...form, scheduler_tiers: tiers.filter((_, i) => i !== index) })
   const refreshing = cfg.isFetching || cards.isFetching || channels.isFetching || groups.isFetching || logs.isFetching
@@ -450,13 +450,16 @@ function SchedulerGroupDialog({
                   </Select>
                 </Field>
                 <div className="grid grid-cols-2 gap-2">
-                  <Field label="最低价格">
+                  <Field label="上游成本下限">
                     <Input type="number" step="0.01" min="0" value={tier.price_min} onChange={(e) => onUpdateTier(index, { price_min: Number(e.target.value || 0) })} />
                   </Field>
-                  <Field label="最高价格">
+                  <Field label="上游成本上限">
                     <Input type="number" step="0.01" min="0" value={tier.price_max} onChange={(e) => onUpdateTier(index, { price_max: Number(e.target.value || 0) })} />
                   </Field>
                 </div>
+                <Field label="对外售价（元/刀）">
+                  <Input type="number" step="0.01" min="0" value={tier.sale_price} onChange={(e) => onUpdateTier(index, { sale_price: Number(e.target.value || 0) })} />
+                </Field>
               </div>
             ))}
           </div>
@@ -505,7 +508,13 @@ function channelForCard(channels: SchedulerChannel[], card: ModelCard) {
 }
 
 function schedulerTiers(cfg: SchedulerConfig) {
-  return Array.isArray(cfg.scheduler_tiers) ? cfg.scheduler_tiers : defaultTiers
+  return Array.isArray(cfg.scheduler_tiers) ? cfg.scheduler_tiers.map((tier) => ({ ...tier, sale_price: schedulerSalePrice(tier) })) : defaultTiers
+}
+
+function schedulerSalePrice(tier: SchedulerTier) {
+  if (tier.sale_price > 0) return tier.sale_price
+  const keys = [tier.tag.trim(), tier.group.trim()]
+  return defaultTiers.find((item) => keys.includes(item.tag) || keys.includes(item.group))?.sale_price ?? tier.price_max
 }
 
 function schedulerGroupOptions(groups: SchedulerGroup[], channels: SchedulerChannel[], tiers: SchedulerTier[] = []) {

@@ -95,13 +95,47 @@ type ProfitCostRow struct {
 	Cost       float64 `json:"cost"`
 }
 
+type ProfitChannelRow struct {
+	ChannelID     string  `json:"channel_id"`
+	ChannelName   string  `json:"channel_name"`
+	CardID        string  `json:"card_id,omitempty"`
+	CardName      string  `json:"card_name,omitempty"`
+	UpstreamID    string  `json:"upstream_id,omitempty"`
+	UpstreamName  string  `json:"upstream_name,omitempty"`
+	KeyID         string  `json:"key_id,omitempty"`
+	KeyName       string  `json:"key_name,omitempty"`
+	CostPerUnit   float64 `json:"cost_per_unit,omitempty"`
+	Usage         float64 `json:"usage"`
+	Revenue       float64 `json:"revenue"`
+	Cost          float64 `json:"cost"`
+	Profit        float64 `json:"profit"`
+	Complete      bool    `json:"complete"`
+	MissingReason string  `json:"missing_reason,omitempty"`
+}
+
+type ProfitPoolRow struct {
+	Group          string             `json:"group"`
+	Tag            string             `json:"tag"`
+	SalePrice      float64            `json:"sale_price"`
+	Usage          float64            `json:"usage"`
+	Revenue        float64            `json:"revenue"`
+	Cost           float64            `json:"cost"`
+	Profit         float64            `json:"profit"`
+	MissingRevenue float64            `json:"missing_revenue"`
+	Complete       bool               `json:"complete"`
+	Channels       []ProfitChannelRow `json:"channels"`
+}
+
 type ProfitResponse struct {
-	Window       string          `json:"window"`
-	Revenue      float64         `json:"revenue"`
-	Cost         float64         `json:"cost"`
-	Profit       float64         `json:"profit"`
-	UpstreamCost []ProfitCostRow `json:"upstream_cost"`
-	Note         string          `json:"note"`
+	Window         string          `json:"window"`
+	Revenue        float64         `json:"revenue"`
+	Cost           float64         `json:"cost"`
+	Profit         float64         `json:"profit"`
+	MissingRevenue float64         `json:"missing_revenue"`
+	Complete       bool            `json:"complete"`
+	Pools          []ProfitPoolRow `json:"pools"`
+	UpstreamCost   []ProfitCostRow `json:"upstream_cost"`
+	Note           string          `json:"note"`
 }
 
 type SelfCheckItem struct {

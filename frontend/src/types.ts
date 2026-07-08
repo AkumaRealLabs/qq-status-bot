@@ -269,6 +269,7 @@ export type SchedulerTier = {
   group: string
   price_min: number
   price_max: number
+  sale_price: number
 }
 
 export type SchedulerChannel = {
@@ -389,8 +390,42 @@ export type ProfitResponse = {
   revenue: number
   cost: number
   profit: number
+  missing_revenue: number
+  complete: boolean
+  pools: ProfitPoolRow[]
   upstream_cost: { upstream_id: string; name: string; cost: number }[]
   note: string
+}
+
+export type ProfitPoolRow = {
+  group: string
+  tag: string
+  sale_price: number
+  usage: number
+  revenue: number
+  cost: number
+  profit: number
+  missing_revenue: number
+  complete: boolean
+  channels: ProfitChannelRow[]
+}
+
+export type ProfitChannelRow = {
+  channel_id: string
+  channel_name: string
+  card_id?: string
+  card_name?: string
+  upstream_id?: string
+  upstream_name?: string
+  key_id?: string
+  key_name?: string
+  cost_per_unit?: number
+  usage: number
+  revenue: number
+  cost: number
+  profit: number
+  complete: boolean
+  missing_reason?: string
 }
 
 export type SelfCheckResponse = {

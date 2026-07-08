@@ -26,6 +26,9 @@ func TestNormalizeSchedulerTiersKeepsCustomRows(t *testing.T) {
 	if got := NormalizeSchedulerTiers(custom); len(got) != 1 || got[0].Tag != "cheap" {
 		t.Fatalf("custom tiers = %+v", got)
 	}
+	if got := NormalizeSchedulerTiers([]SchedulerTier{{Tag: "稳定池", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.15}}); got[0].SalePrice != 0.25 {
+		t.Fatalf("old scheduler tier sale price = %+v", got)
+	}
 	if got := NormalizeSchedulerTiers([]SchedulerTier{}); len(got) != 0 {
 		t.Fatalf("empty tiers = %+v", got)
 	}

@@ -162,10 +162,11 @@ type SchedulerConfig struct {
 }
 
 type SchedulerTier struct {
-	Tag      string  `json:"tag"`
-	Group    string  `json:"group"`
-	PriceMin float64 `json:"price_min"`
-	PriceMax float64 `json:"price_max"`
+	Tag       string  `json:"tag"`
+	Group     string  `json:"group"`
+	PriceMin  float64 `json:"price_min"`
+	PriceMax  float64 `json:"price_max"`
+	SalePrice float64 `json:"sale_price"`
 }
 
 type SchedulerApplyResult struct {
@@ -175,8 +176,8 @@ type SchedulerApplyResult struct {
 
 func DefaultSchedulerTiers() []SchedulerTier {
 	return []SchedulerTier{
-		{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1},
-		{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.15},
+		{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1, SalePrice: 0.1},
+		{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.25, SalePrice: 0.25},
 	}
 }
 
@@ -187,13 +188,29 @@ func NormalizeSchedulerTiers(in []SchedulerTier) []SchedulerTier {
 	out := make([]SchedulerTier, 0, len(in))
 	for _, tier := range in {
 		out = append(out, SchedulerTier{
-			Tag:      strings.TrimSpace(tier.Tag),
-			Group:    strings.TrimSpace(tier.Group),
-			PriceMin: tier.PriceMin,
-			PriceMax: tier.PriceMax,
+			Tag:       strings.TrimSpace(tier.Tag),
+			Group:     strings.TrimSpace(tier.Group),
+			PriceMin:  tier.PriceMin,
+			PriceMax:  tier.PriceMax,
+			SalePrice: schedulerSalePrice(tier),
 		})
 	}
 	return out
+}
+
+func schedulerSalePrice(tier SchedulerTier) float64 {
+	if tier.SalePrice > 0 {
+		return tier.SalePrice
+	}
+	keys := []string{strings.ToLower(strings.TrimSpace(tier.Tag)), strings.ToLower(strings.TrimSpace(tier.Group))}
+	for _, def := range DefaultSchedulerTiers() {
+		for _, key := range keys {
+			if key == def.Tag || key == def.Group {
+				return def.SalePrice
+			}
+		}
+	}
+	return tier.PriceMax
 }
 
 func ValidateSchedulerTiers(tiers []SchedulerTier) error {
@@ -217,6 +234,9 @@ func ValidateSchedulerTiers(tiers []SchedulerTier) error {
 		groups[tier.Group] = true
 		if tier.PriceMin < 0 || tier.PriceMax < 0 || tier.PriceMax < tier.PriceMin {
 			return errors.New("调度器价格区间无效")
+		}
+		if tier.SalePrice <= 0 {
+			return errors.New("调度器售价必须大于 0")
 		}
 	}
 	return nil

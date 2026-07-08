@@ -41,7 +41,7 @@ export function NotificationsPage() {
 }
 
 export function ProfitPage() {
-  return <Page title="利润估算" description="收入快照减去余额消耗估算"><ProfitTab /></Page>
+  return <Page title="调度池利润" description="按调度器/NewAPI 消费日志计算已确认毛利"><ProfitTab /></Page>
 }
 
 export function SelfCheckPage() {
@@ -190,24 +190,67 @@ function ProfitTab() {
         <Select value={windowValue} onValueChange={setWindowValue}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="today">today</SelectItem><SelectItem value="24h">24h</SelectItem><SelectItem value="7d">7d</SelectItem></SelectContent></Select>
       </div>
       <FormError error={q.error} />
-      <div className="grid gap-3 md:grid-cols-3">
-        <Metric label="收入" value={num(q.data?.revenue)} accent="success" />
-        <Metric label="成本" value={num(q.data?.cost)} accent={q.data?.cost ? 'danger' : undefined} />
-        <Metric label="利润" value={num(q.data?.profit)} accent={(q.data?.profit ?? 0) >= 0 ? 'success' : 'danger'} />
+      <div className="grid gap-3 md:grid-cols-4">
+        <Metric label="已确认收入" value={num(q.data?.revenue)} accent="success" />
+        <Metric label="已确认成本" value={num(q.data?.cost)} accent={q.data?.cost ? 'danger' : undefined} />
+        <Metric label="已确认利润" value={num(q.data?.profit)} accent={(q.data?.profit ?? 0) >= 0 ? 'success' : 'danger'} />
+        <Metric label="未匹配收入" value={num(q.data?.missing_revenue)} accent={q.data?.missing_revenue ? 'danger' : undefined} />
       </div>
-      <Card className="bg-card">
-        <CardContent className="grid gap-2 text-sm">
-          <div className="text-muted-foreground">{q.data?.note}</div>
-          {(q.data?.upstream_cost ?? []).map((row) => (
-            <div key={row.upstream_id} className="flex items-center justify-between gap-3 border-t border-border pt-2">
-              <span className="truncate">{row.name}</span>
-              <span>{num(row.cost)}</span>
+      <div className="text-sm text-muted-foreground">{q.data?.note}</div>
+      {q.isLoading && <EmptyPanel text="加载中..." />}
+      {!q.isLoading && (q.data?.pools?.length ?? 0) === 0 && <EmptyPanel text="暂无消费日志" />}
+      {(q.data?.pools ?? []).map((pool) => (
+        <Card key={pool.group} className="bg-card">
+          <CardHeader>
+            <CardTitle className="flex flex-wrap items-center gap-2">
+              <span>{pool.tag || pool.group}</span>
+              <Badge variant={pool.complete ? 'success' : 'amber'}>{pool.complete ? '完整' : '缺成本绑定'}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            <div className="grid gap-2 text-sm sm:grid-cols-3 lg:grid-cols-6">
+              <ProfitMini label="售价" value={num(pool.sale_price)} />
+              <ProfitMini label="原始刀数" value={num(pool.usage)} />
+              <ProfitMini label="收入" value={num(pool.revenue)} />
+              <ProfitMini label="成本" value={num(pool.cost)} />
+              <ProfitMini label="利润" value={num(pool.profit)} />
+              <ProfitMini label="未匹配收入" value={num(pool.missing_revenue)} />
             </div>
-          ))}
-          {!q.isLoading && (q.data?.upstream_cost.length ?? 0) === 0 && <div className="text-muted-foreground">暂无成本快照</div>}
-        </CardContent>
-      </Card>
+            <div className="overflow-x-auto rounded-sm border border-border">
+              <table className="w-full min-w-[980px] text-left text-sm">
+                <thead className="bg-secondary text-xs text-muted-foreground">
+                  <tr><th className="px-3 py-2">渠道</th><th className="px-3 py-2">绑定卡片</th><th className="px-3 py-2">上游 Key</th><th className="px-3 py-2">成本/刀</th><th className="px-3 py-2">用量</th><th className="px-3 py-2">收入</th><th className="px-3 py-2">成本</th><th className="px-3 py-2">利润</th><th className="px-3 py-2">状态</th></tr>
+                </thead>
+                <tbody>
+                  {pool.channels.map((row) => (
+                    <tr key={row.channel_id || row.channel_name} className={cn('border-t border-border align-top', !row.complete && 'bg-destructive/5')}>
+                      <td className="px-3 py-2">{row.channel_name || row.channel_id || '-'}</td>
+                      <td className="px-3 py-2">{row.card_name || '-'}</td>
+                      <td className="px-3 py-2">{[row.upstream_name, row.key_name].filter(Boolean).join(' / ') || '-'}</td>
+                      <td className="px-3 py-2">{row.complete ? num(row.cost_per_unit) : '-'}</td>
+                      <td className="px-3 py-2">{num(row.usage)}</td>
+                      <td className="px-3 py-2">{num(row.revenue)}</td>
+                      <td className="px-3 py-2">{row.complete ? num(row.cost) : '-'}</td>
+                      <td className="px-3 py-2">{row.complete ? num(row.profit) : '-'}</td>
+                      <td className="px-3 py-2">{row.complete ? <Badge variant="success">已确认</Badge> : <Badge variant="amber">{row.missing_reason || '缺成本绑定'}</Badge>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
     </section>
+  )
+}
+
+function ProfitMini({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-sm border border-border bg-background px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 font-medium">{value}</div>
+    </div>
   )
 }
 

@@ -2,11 +2,15 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -112,41 +116,273 @@ func alertOpsActions(eventType string) []string {
 
 func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitResponse, error) {
 	since, label, _ := opsWindow(window)
-	if label == "today" {
-		_, _ = s.TodayRevenue(ctx)
-	}
-	revenueSnaps, err := s.Store.RevenueSnapshotsSince(ctx, since)
+	cfg, err := s.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return domain.ProfitResponse{}, err
 	}
-	latestRevenue := map[string]domain.RevenueSnapshot{}
-	for _, snap := range revenueSnaps {
-		key := firstNonEmpty(snap.SourceID, snap.SourceName, snap.ID)
-		if snap.Error == "" && latestRevenue[key].CheckedAt.Before(snap.CheckedAt) {
-			latestRevenue[key] = snap
-		}
+	out := domain.ProfitResponse{Window: label, Complete: true, Note: "按调度器/NewAPI 消费日志计算：原始刀数 × 池子售价 - 原始刀数 × 实际上游成本。"}
+	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
+		return out, ErrBadRequest("请先配置调度器连接")
 	}
-	out := domain.ProfitResponse{Window: label, Note: "收入取各收入源最新快照，成本用余额下降估算；充值导致余额上升不计负成本。"}
-	for _, snap := range latestRevenue {
-		out.Revenue += snap.Revenue
-	}
-	upstreams, err := s.Store.ListUpstreams(ctx)
+	tiers := domain.NormalizeSchedulerTiers(cfg.Tiers)
+	bindings, err := s.profitChannelBindings(ctx)
 	if err != nil {
-		return out, err
+		return domain.ProfitResponse{}, err
 	}
-	for _, u := range upstreams {
-		snaps, err := s.Store.BalanceSnapshotsSince(ctx, u.ID, since)
+	pools := map[string]*profitPool{}
+	upstreamCosts := map[string]domain.ProfitCostRow{}
+	end := time.Now().UTC()
+	for _, tier := range tiers {
+		group := strings.TrimSpace(tier.Group)
+		if group == "" {
+			continue
+		}
+		logs, err := s.schedulerProfitLogs(ctx, cfg, since, end, group)
 		if err != nil {
 			return out, err
 		}
-		cost := balanceCost(u, snaps)
-		if cost > 0 {
-			out.UpstreamCost = append(out.UpstreamCost, domain.ProfitCostRow{UpstreamID: u.ID, Name: u.Name, Cost: cost})
+		if len(logs) == 0 {
+			continue
+		}
+		pool := pools[group]
+		if pool == nil {
+			pool = &profitPool{row: domain.ProfitPoolRow{Group: group, Tag: strings.TrimSpace(tier.Tag), SalePrice: tier.SalePrice, Complete: true}, channels: map[string]*domain.ProfitChannelRow{}}
+			pools[group] = pool
+		}
+		for _, log := range logs {
+			units, ok := profitUsageUnits(log.Quota, log.GroupRatio)
+			row := pool.channel(log.ChannelID, log.ChannelName)
+			if !ok {
+				row.Complete = false
+				row.MissingReason = firstNonEmpty(row.MissingReason, "缺 group_ratio")
+				pool.row.Complete = false
+				out.Complete = false
+				continue
+			}
+			revenue := units * tier.SalePrice
+			row.Usage += units
+			row.Revenue += revenue
+			pool.row.Usage += units
+			binding, matched := bindings[log.ChannelID]
+			if matched {
+				row.CardID, row.CardName = binding.card.ID, binding.card.Name
+				row.UpstreamID, row.UpstreamName = binding.upstream.ID, binding.upstream.Name
+				row.KeyID, row.KeyName = binding.key.ID, binding.key.Name
+			}
+			if !matched || !binding.complete {
+				row.Complete = false
+				row.MissingReason = firstNonEmpty(row.MissingReason, binding.reason, "缺成本绑定")
+				pool.row.MissingRevenue += revenue
+				out.MissingRevenue += revenue
+				pool.row.Complete = false
+				out.Complete = false
+				continue
+			}
+			row.CostPerUnit = binding.costPerUnit
+			cost := units * binding.costPerUnit
+			row.Cost += cost
+			row.Profit = row.Revenue - row.Cost
+			pool.row.Revenue += revenue
+			pool.row.Cost += cost
+			out.Revenue += revenue
 			out.Cost += cost
+			costRow := upstreamCosts[binding.upstream.ID]
+			costRow.UpstreamID, costRow.Name = binding.upstream.ID, binding.upstream.Name
+			costRow.Cost += cost
+			upstreamCosts[binding.upstream.ID] = costRow
 		}
 	}
+	for _, pool := range pools {
+		pool.row.Profit = pool.row.Revenue - pool.row.Cost
+		for _, ch := range pool.channels {
+			pool.row.Channels = append(pool.row.Channels, *ch)
+		}
+		sort.Slice(pool.row.Channels, func(i, j int) bool { return pool.row.Channels[i].ChannelID < pool.row.Channels[j].ChannelID })
+		out.Pools = append(out.Pools, pool.row)
+	}
+	sort.Slice(out.Pools, func(i, j int) bool { return out.Pools[i].Group < out.Pools[j].Group })
+	for _, row := range upstreamCosts {
+		out.UpstreamCost = append(out.UpstreamCost, row)
+	}
+	sort.Slice(out.UpstreamCost, func(i, j int) bool { return out.UpstreamCost[i].Name < out.UpstreamCost[j].Name })
 	out.Profit = out.Revenue - out.Cost
 	return out, nil
+}
+
+type schedulerProfitLog struct {
+	Group       string
+	ChannelID   string
+	ChannelName string
+	Quota       float64
+	GroupRatio  float64
+}
+
+type profitBinding struct {
+	card        domain.ModelCard
+	upstream    domain.Upstream
+	key         domain.APIKey
+	costPerUnit float64
+	complete    bool
+	reason      string
+}
+
+type profitPool struct {
+	row      domain.ProfitPoolRow
+	channels map[string]*domain.ProfitChannelRow
+}
+
+func (p *profitPool) channel(id, name string) *domain.ProfitChannelRow {
+	key := firstNonEmpty(id, name, "unknown")
+	row := p.channels[key]
+	if row == nil {
+		row = &domain.ProfitChannelRow{ChannelID: id, ChannelName: name, Complete: true}
+		p.channels[key] = row
+	}
+	return row
+}
+
+func (s *Service) profitChannelBindings(ctx context.Context) (map[string]profitBinding, error) {
+	cards, err := s.Store.ListCards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]profitBinding{}
+	for _, card := range cards {
+		if card.SchedulerChannelID == "" {
+			continue
+		}
+		binding := profitBinding{card: card, reason: "缺成本绑定"}
+		key, err := s.Store.Key(ctx, card.KeyID)
+		if err != nil {
+			binding.reason = "未绑定上游 Key"
+			out[card.SchedulerChannelID] = binding
+			continue
+		}
+		upstream, err := s.Store.Upstream(ctx, card.UpstreamID)
+		if err != nil {
+			binding.reason = "未绑定上游"
+			out[card.SchedulerChannelID] = binding
+			continue
+		}
+		binding.key, binding.upstream = key, upstream
+		ratio, err := strconv.ParseFloat(strings.TrimSpace(key.GroupRatio), 64)
+		if err != nil || ratio <= 0 || domain.BalanceRate(upstream) <= 0 {
+			binding.reason = "缺成本倍率"
+			out[card.SchedulerChannelID] = binding
+			continue
+		}
+		binding.costPerUnit = ratio * domain.BalanceRate(upstream)
+		binding.complete = true
+		binding.reason = ""
+		out[card.SchedulerChannelID] = binding
+	}
+	return out, nil
+}
+
+func (s *Service) schedulerProfitLogs(ctx context.Context, cfg domain.SchedulerConfig, start, end time.Time, group string) ([]schedulerProfitLog, error) {
+	const pageSize = 200
+	var out []schedulerProfitLog
+	for page := 1; page <= 1000; page++ {
+		values := url.Values{}
+		values.Set("type", "2")
+		values.Set("start_timestamp", strconv.FormatInt(start.Unix(), 10))
+		values.Set("end_timestamp", strconv.FormatInt(end.Unix(), 10))
+		values.Set("group", group)
+		values.Set("p", strconv.Itoa(page))
+		values.Set("page_size", strconv.Itoa(pageSize))
+		var raw map[string]any
+		if err := s.schedulerJSON(ctx, cfg, http.MethodGet, "/api/log/?"+values.Encode(), nil, &raw); err != nil {
+			return nil, err
+		}
+		if ok, exists := raw["success"].(bool); exists && !ok {
+			return nil, errors.New(schedulerMessage(raw))
+		}
+		items := profitLogItems(raw)
+		for _, item := range items {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			other := profitMap(firstScheduler(m, "other"))
+			groupRatio := profitFloat(firstScheduler(other, "group_ratio", "groupRatio", "ratio"))
+			if groupRatio == 0 {
+				groupRatio = profitFloat(firstScheduler(m, "group_ratio", "groupRatio", "ratio"))
+			}
+			out = append(out, schedulerProfitLog{
+				Group:       firstNonEmpty(schedulerString(firstScheduler(m, "group")), group),
+				ChannelID:   schedulerString(firstScheduler(m, "channel", "channel_id", "channelId")),
+				ChannelName: schedulerString(firstScheduler(m, "channel_name", "channelName")),
+				Quota:       profitFloat(firstScheduler(m, "quota")),
+				GroupRatio:  groupRatio,
+			})
+		}
+		if len(items) < pageSize {
+			return out, nil
+		}
+	}
+	return out, errors.New("调度器日志分页超过 1000 页")
+}
+
+func profitUsageUnits(quota, groupRatio float64) (float64, bool) {
+	if groupRatio <= 0 || quota < 0 {
+		return 0, false
+	}
+	return quota / 500000 / groupRatio, true
+}
+
+func profitLogItems(raw map[string]any) []any {
+	for _, key := range []string{"data", "items", "logs", "rows", "records", "list"} {
+		if items := profitArray(raw[key]); len(items) != 0 {
+			return items
+		}
+	}
+	return nil
+}
+
+func profitArray(v any) []any {
+	switch x := v.(type) {
+	case []any:
+		return x
+	case map[string]any:
+		for _, key := range []string{"items", "logs", "rows", "records", "list", "data"} {
+			if items := profitArray(x[key]); len(items) != 0 {
+				return items
+			}
+		}
+	}
+	return nil
+}
+
+func profitMap(v any) map[string]any {
+	switch x := v.(type) {
+	case map[string]any:
+		return x
+	case string:
+		var out map[string]any
+		_ = json.Unmarshal([]byte(x), &out)
+		return out
+	default:
+		return nil
+	}
+}
+
+func profitFloat(v any) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case int:
+		return float64(x)
+	case int64:
+		return float64(x)
+	case json.Number:
+		f, _ := x.Float64()
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(strings.TrimSpace(x), 64)
+		return f
+	default:
+		return 0
+	}
 }
 
 func balanceCost(u domain.Upstream, snaps []domain.BalanceSnapshot) float64 {
