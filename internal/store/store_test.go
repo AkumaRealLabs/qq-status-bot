@@ -33,6 +33,22 @@ func TestMigrateIsRepeatable(t *testing.T) {
 	}
 }
 
+func TestMigrateCreatesSchedulerSnapshotTables(t *testing.T) {
+	s := testStore(t)
+	for _, table := range []string{"scheduler_channel_cost_snapshots", "scheduler_group_sale_snapshots"} {
+		cols, err := s.columns(t.Context(), table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cols["id"] || !cols["effective_at"] {
+			t.Fatalf("%s columns = %#v", table, cols)
+		}
+	}
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProbesForCardSinceNormalizesTimeZone(t *testing.T) {
 	s := testStore(t)
 	if _, err := s.SaveProbe(t.Context(), "u1", "c1", monitor.ProbeResult{Success: true}); err != nil {

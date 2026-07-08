@@ -28,7 +28,137 @@ func (s *Service) SaveSchedulerConfig(ctx context.Context, cfg domain.SchedulerC
 	if err := domain.ValidateSchedulerTiers(cfg.Tiers); err != nil {
 		return domain.SchedulerConfig{}, BadRequest(err)
 	}
-	return s.Store.UpdateSchedulerConfig(ctx, cfg)
+	out, err := s.Store.UpdateSchedulerConfig(ctx, cfg)
+	if err == nil {
+		err = s.recordCurrentSaleSnapshots(ctx)
+	}
+	return out, err
+}
+
+func (s *Service) SeedSchedulerSnapshots(ctx context.Context) error {
+	if err := s.recordCurrentSaleSnapshots(ctx); err != nil {
+		return err
+	}
+	return s.recordCurrentCostSnapshots(ctx)
+}
+
+func (s *Service) recordCurrentSaleSnapshots(ctx context.Context) error {
+	cfg, err := s.Store.SchedulerConfig(ctx)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	current := map[string]bool{}
+	for _, tier := range domain.NormalizeSchedulerTiers(cfg.Tiers) {
+		group := strings.TrimSpace(tier.Group)
+		if group == "" {
+			continue
+		}
+		current[group] = true
+		if _, err := s.Store.SaveSchedulerGroupSaleSnapshot(ctx, domain.SchedulerGroupSaleSnapshot{
+			Group: group, Tag: strings.TrimSpace(tier.Tag), SalePrice: tier.SalePrice, Active: true, EffectiveAt: now,
+		}); err != nil {
+			return err
+		}
+	}
+	groups, err := s.Store.SchedulerSaleSnapshotGroups(ctx, now)
+	if err != nil {
+		return err
+	}
+	for _, group := range groups {
+		if current[group] {
+			continue
+		}
+		latest, ok, err := s.Store.LatestSchedulerGroupSaleSnapshot(ctx, group)
+		if err != nil {
+			return err
+		}
+		if !ok || !latest.Active {
+			continue
+		}
+		if _, err := s.Store.SaveSchedulerGroupSaleSnapshot(ctx, domain.SchedulerGroupSaleSnapshot{
+			Group: group, Tag: latest.Tag, Active: false, EffectiveAt: now,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) recordCurrentCostSnapshots(ctx context.Context) error {
+	cards, err := s.Store.ListCards(ctx)
+	if err != nil {
+		return err
+	}
+	for _, card := range cards {
+		if err := s.recordCardCostSnapshot(ctx, card); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) recordCardCostSnapshot(ctx context.Context, card domain.ModelCard) error {
+	snap := s.cardCostSnapshot(ctx, card)
+	if snap.ChannelID == "" {
+		return nil
+	}
+	_, err := s.Store.SaveSchedulerChannelCostSnapshot(ctx, snap)
+	return err
+}
+
+func (s *Service) recordInactiveCostSnapshot(ctx context.Context, card domain.ModelCard, reason string) error {
+	snap := s.cardCostSnapshot(ctx, card)
+	if snap.ChannelID == "" {
+		return nil
+	}
+	snap.Active, snap.CostPerUnit, snap.MissingReason = false, 0, reason
+	_, err := s.Store.SaveSchedulerChannelCostSnapshot(ctx, snap)
+	return err
+}
+
+func (s *Service) cardCostSnapshot(ctx context.Context, card domain.ModelCard) domain.SchedulerChannelCostSnapshot {
+	snap := domain.SchedulerChannelCostSnapshot{
+		ChannelID: card.SchedulerChannelID, ChannelName: card.SchedulerChannelName,
+		CardID: card.ID, CardName: card.Name, MissingReason: "缺成本绑定", EffectiveAt: time.Now().UTC(),
+	}
+	if snap.ChannelID == "" {
+		return snap
+	}
+	if !card.PoolEnabled {
+		snap.MissingReason = "纯监控"
+		return snap
+	}
+	if card.BaseURL != "" {
+		snap.SourceType = "manual_cost_ratio"
+		ratio, err := strconv.ParseFloat(strings.TrimSpace(card.ManualCostRatio), 64)
+		if err != nil || ratio <= 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+			snap.MissingReason = "缺手动成本"
+			return snap
+		}
+		snap.CostPerUnit, snap.Active, snap.MissingReason = ratio, true, ""
+		return snap
+	}
+	key, err := s.Store.Key(ctx, card.KeyID)
+	if err != nil {
+		snap.MissingReason = "未绑定上游 Key"
+		return snap
+	}
+	upstream, err := s.Store.Upstream(ctx, card.UpstreamID)
+	if err != nil {
+		snap.MissingReason = "未绑定上游"
+		return snap
+	}
+	snap.SourceType = "upstream_key"
+	snap.UpstreamID, snap.UpstreamName = upstream.ID, upstream.Name
+	snap.KeyID, snap.KeyName = key.ID, key.Name
+	ratio, err := strconv.ParseFloat(strings.TrimSpace(key.GroupRatio), 64)
+	if err != nil || ratio <= 0 || domain.BalanceRate(upstream) <= 0 {
+		snap.MissingReason = "缺成本倍率"
+		return snap
+	}
+	snap.CostPerUnit, snap.Active, snap.MissingReason = ratio*domain.BalanceRate(upstream), true, ""
+	return snap
 }
 
 func (s *Service) SchedulerChannels(ctx context.Context, keyword string) ([]domain.SchedulerChannel, error) {

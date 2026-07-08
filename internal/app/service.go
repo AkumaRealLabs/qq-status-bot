@@ -50,6 +50,7 @@ func New(st *store.Store) *Service {
 }
 
 func (s *Service) StartScheduler(ctx context.Context) {
+	_ = s.SeedSchedulerSnapshots(ctx)
 	t := time.NewTicker(time.Minute)
 	go func() {
 		defer t.Stop()
@@ -143,6 +144,9 @@ func (s *Service) SaveUpstream(ctx context.Context, id string, in domain.Upstrea
 	in.CreatedAt = old.CreatedAt
 	out, err := s.Store.UpdateUpstream(ctx, in)
 	if err == nil && domain.BalanceRate(old) != domain.BalanceRate(out) {
+		if err := s.recordCurrentCostSnapshots(ctx); err != nil {
+			return out, err
+		}
 		s.syncSchedulerGroupsBestEffort(ctx)
 	}
 	return out, err
@@ -162,6 +166,9 @@ func (s *Service) SyncKeys(ctx context.Context, upstreamID string) error {
 		return err
 	}
 	if err := s.Store.SaveKeys(ctx, u.ID, result.Keys); err != nil {
+		return err
+	}
+	if err := s.recordCurrentCostSnapshots(ctx); err != nil {
 		return err
 	}
 	s.syncSchedulerGroupsBestEffort(ctx)
@@ -387,6 +394,9 @@ func (s *Service) checkUpstream(ctx context.Context, upstreamID string, syncGrou
 	if err := s.Store.SaveKeys(ctx, u.ID, result.Keys); err != nil {
 		return err
 	}
+	if err := s.recordCurrentCostSnapshots(ctx); err != nil {
+		return err
+	}
 	if syncGroups {
 		s.syncSchedulerGroupsBestEffort(ctx)
 	}
@@ -418,6 +428,11 @@ func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) 
 	}
 	if id == "" {
 		out, err := s.Store.CreateCard(ctx, card)
+		if err == nil {
+			if err := s.recordCardCostSnapshot(ctx, out); err != nil {
+				return out, err
+			}
+		}
 		if err == nil && out.PoolEnabled && out.SchedulerChannelID != "" {
 			s.syncSchedulerGroupsBestEffort(ctx)
 		}
@@ -434,6 +449,16 @@ func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) 
 	card.CreatedAt = old.CreatedAt
 	out, err := s.Store.UpdateCard(ctx, card)
 	changedBinding := old.UpstreamID != out.UpstreamID || old.KeyID != out.KeyID || old.SchedulerChannelID != out.SchedulerChannelID || old.PoolEnabled != out.PoolEnabled || old.ManualCostRatio != out.ManualCostRatio
+	if err == nil && old.SchedulerChannelID != "" && (old.SchedulerChannelID != out.SchedulerChannelID || !out.PoolEnabled) {
+		if err := s.recordInactiveCostSnapshot(ctx, old, "渠道绑定已变更"); err != nil {
+			return out, err
+		}
+	}
+	if err == nil && (changedBinding || old.SchedulerChannelName != out.SchedulerChannelName || old.Name != out.Name) {
+		if err := s.recordCardCostSnapshot(ctx, out); err != nil {
+			return out, err
+		}
+	}
 	if err == nil && out.PoolEnabled && changedBinding && out.SchedulerChannelID != "" {
 		s.syncSchedulerGroupsBestEffort(ctx)
 	}
@@ -518,6 +543,19 @@ func (s *Service) SortCards(ctx context.Context, ids []string) error {
 		seen[id] = struct{}{}
 	}
 	return s.Store.UpdateCardOrder(ctx, ids)
+}
+
+func (s *Service) DeleteCard(ctx context.Context, id string) error {
+	card, err := s.Store.Card(ctx, id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil {
+		if err := s.recordInactiveCostSnapshot(ctx, card, "卡片已删除"); err != nil {
+			return err
+		}
+	}
+	return s.Store.DeleteCard(ctx, id)
 }
 
 func (s *Service) CheckCard(ctx context.Context, cardID string) error {

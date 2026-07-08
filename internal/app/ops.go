@@ -121,76 +121,86 @@ func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitRespo
 	if err != nil {
 		return domain.ProfitResponse{}, err
 	}
-	out := domain.ProfitResponse{Window: label, Complete: true, Note: "按调度器/NewAPI 消费日志计算：原始刀数 × 池子售价 - 原始刀数 × 实际上游成本。"}
+	out := domain.ProfitResponse{Window: label, Complete: true, Note: "按消费日志时间命中当时生效的售价/成本快照；旧日志没有快照覆盖时标为不完整。"}
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
 		return out, ErrBadRequest("请先配置调度器连接")
 	}
 	tiers := domain.NormalizeSchedulerTiers(cfg.Tiers)
-	bindings, err := s.profitChannelBindings(ctx)
+	end := time.Now().UTC()
+	groups, tierMeta, err := s.profitGroups(ctx, tiers, end)
 	if err != nil {
 		return domain.ProfitResponse{}, err
 	}
 	pools := map[string]*profitPool{}
 	upstreamCosts := map[string]domain.ProfitCostRow{}
-	end := time.Now().UTC()
-	for _, tier := range tiers {
-		group := strings.TrimSpace(tier.Group)
-		if group == "" {
-			continue
-		}
+	for _, group := range groups {
 		logs, err := s.schedulerProfitLogs(ctx, cfg, since, end, group)
 		if err != nil {
 			return out, err
 		}
-		if len(logs) == 0 {
-			continue
-		}
-		pool := pools[group]
-		if pool == nil {
-			pool = &profitPool{row: domain.ProfitPoolRow{Group: group, Tag: strings.TrimSpace(tier.Tag), SalePrice: tier.SalePrice, Complete: true}, channels: map[string]*domain.ProfitChannelRow{}}
-			pools[group] = pool
-		}
 		for _, log := range logs {
+			group := strings.TrimSpace(firstNonEmpty(log.Group, group))
+			pool := pools[group]
+			if pool == nil {
+				tier := tierMeta[group]
+				pool = &profitPool{row: domain.ProfitPoolRow{Group: group, Tag: strings.TrimSpace(tier.Tag), SalePrice: tier.SalePrice, Complete: true}, channels: map[string]*domain.ProfitChannelRow{}}
+				pools[group] = pool
+			}
 			units, ok := profitUsageUnits(log.Quota, log.GroupRatio)
 			row := pool.channel(log.ChannelID, log.ChannelName)
 			if !ok {
-				row.Complete = false
-				row.MissingReason = firstNonEmpty(row.MissingReason, "缺 group_ratio")
-				pool.row.Complete = false
-				out.Complete = false
+				markProfitIncomplete(row, pool, &out, "缺 group_ratio")
 				continue
 			}
-			revenue := units * tier.SalePrice
 			row.Usage += units
-			row.Revenue += revenue
 			pool.row.Usage += units
-			binding, matched := bindings[log.ChannelID]
-			if matched {
-				row.CardID, row.CardName = binding.card.ID, binding.card.Name
-				row.UpstreamID, row.UpstreamName = binding.upstream.ID, binding.upstream.Name
-				row.KeyID, row.KeyName = binding.key.ID, binding.key.Name
+			if log.LogTime.IsZero() {
+				markProfitIncomplete(row, pool, &out, "缺日志时间")
+				continue
 			}
-			if !matched || !binding.complete {
-				row.Complete = false
-				row.MissingReason = firstNonEmpty(row.MissingReason, binding.reason, "缺成本绑定")
+			sale, ok, err := s.Store.SchedulerGroupSaleSnapshotAt(ctx, group, log.LogTime)
+			if err != nil {
+				return out, err
+			}
+			if !ok || !sale.Active || sale.SalePrice <= 0 {
+				markProfitIncomplete(row, pool, &out, "缺售价快照")
+				continue
+			}
+			pool.row.Tag = firstNonEmpty(pool.row.Tag, sale.Tag)
+			pool.row.SalePrice = sale.SalePrice
+			row.SaleEffective = mergeProfitMeta(row.SaleEffective, sale.EffectiveAt.Format(time.RFC3339Nano))
+			revenue := units * sale.SalePrice
+			row.Revenue += revenue
+			costSnap, ok, err := s.Store.SchedulerChannelCostSnapshotAt(ctx, log.ChannelID, log.LogTime)
+			if err != nil {
+				return out, err
+			}
+			if !ok || !costSnap.Active || costSnap.CostPerUnit <= 0 {
+				markProfitIncomplete(row, pool, &out, firstNonEmpty(costSnap.MissingReason, "缺成本快照"))
 				pool.row.MissingRevenue += revenue
 				out.MissingRevenue += revenue
-				pool.row.Complete = false
-				out.Complete = false
 				continue
 			}
-			row.CostPerUnit = binding.costPerUnit
-			cost := units * binding.costPerUnit
+			row.ChannelName = firstNonEmpty(row.ChannelName, costSnap.ChannelName)
+			row.CardID, row.CardName = costSnap.CardID, costSnap.CardName
+			row.UpstreamID, row.UpstreamName = costSnap.UpstreamID, costSnap.UpstreamName
+			row.KeyID, row.KeyName = costSnap.KeyID, costSnap.KeyName
+			row.CostPerUnit = costSnap.CostPerUnit
+			row.CostSource = mergeProfitMeta(row.CostSource, costSnap.SourceType)
+			row.CostEffective = mergeProfitMeta(row.CostEffective, costSnap.EffectiveAt.Format(time.RFC3339Nano))
+			cost := units * costSnap.CostPerUnit
 			row.Cost += cost
 			row.Profit = row.Revenue - row.Cost
 			pool.row.Revenue += revenue
 			pool.row.Cost += cost
 			out.Revenue += revenue
 			out.Cost += cost
-			costRow := upstreamCosts[binding.upstream.ID]
-			costRow.UpstreamID, costRow.Name = binding.upstream.ID, binding.upstream.Name
-			costRow.Cost += cost
-			upstreamCosts[binding.upstream.ID] = costRow
+			if costSnap.UpstreamID != "" {
+				costRow := upstreamCosts[costSnap.UpstreamID]
+				costRow.UpstreamID, costRow.Name = costSnap.UpstreamID, costSnap.UpstreamName
+				costRow.Cost += cost
+				upstreamCosts[costSnap.UpstreamID] = costRow
+			}
 		}
 	}
 	for _, pool := range pools {
@@ -216,20 +226,56 @@ type schedulerProfitLog struct {
 	ChannelName string
 	Quota       float64
 	GroupRatio  float64
-}
-
-type profitBinding struct {
-	card        domain.ModelCard
-	upstream    domain.Upstream
-	key         domain.APIKey
-	costPerUnit float64
-	complete    bool
-	reason      string
+	LogTime     time.Time
 }
 
 type profitPool struct {
 	row      domain.ProfitPoolRow
 	channels map[string]*domain.ProfitChannelRow
+}
+
+func (s *Service) profitGroups(ctx context.Context, tiers []domain.SchedulerTier, end time.Time) ([]string, map[string]domain.SchedulerTier, error) {
+	seen := map[string]bool{}
+	meta := map[string]domain.SchedulerTier{}
+	for _, tier := range tiers {
+		group := strings.TrimSpace(tier.Group)
+		if group == "" {
+			continue
+		}
+		seen[group] = true
+		meta[group] = tier
+	}
+	snapshotGroups, err := s.Store.SchedulerSaleSnapshotGroups(ctx, end)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, group := range snapshotGroups {
+		seen[group] = true
+	}
+	out := make([]string, 0, len(seen))
+	for group := range seen {
+		out = append(out, group)
+	}
+	sort.Strings(out)
+	return out, meta, nil
+}
+
+func markProfitIncomplete(row *domain.ProfitChannelRow, pool *profitPool, out *domain.ProfitResponse, reason string) {
+	row.Complete = false
+	row.MissingReason = firstNonEmpty(row.MissingReason, reason)
+	pool.row.Complete = false
+	out.Complete = false
+}
+
+func mergeProfitMeta(old, next string) string {
+	next = strings.TrimSpace(next)
+	if old == "" {
+		return next
+	}
+	if next == "" || old == next {
+		return old
+	}
+	return "mixed"
 }
 
 func (p *profitPool) channel(id, name string) *domain.ProfitChannelRow {
@@ -240,56 +286,6 @@ func (p *profitPool) channel(id, name string) *domain.ProfitChannelRow {
 		p.channels[key] = row
 	}
 	return row
-}
-
-func (s *Service) profitChannelBindings(ctx context.Context) (map[string]profitBinding, error) {
-	cards, err := s.Store.ListCards(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]profitBinding{}
-	for _, card := range cards {
-		if !card.PoolEnabled || card.SchedulerChannelID == "" {
-			continue
-		}
-		binding := profitBinding{card: card, reason: "缺成本绑定"}
-		if card.BaseURL != "" {
-			ratio, err := strconv.ParseFloat(strings.TrimSpace(card.ManualCostRatio), 64)
-			if err != nil || ratio <= 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
-				out[card.SchedulerChannelID] = binding
-				continue
-			}
-			binding.costPerUnit = ratio
-			binding.complete = true
-			binding.reason = ""
-			out[card.SchedulerChannelID] = binding
-			continue
-		}
-		key, err := s.Store.Key(ctx, card.KeyID)
-		if err != nil {
-			binding.reason = "未绑定上游 Key"
-			out[card.SchedulerChannelID] = binding
-			continue
-		}
-		upstream, err := s.Store.Upstream(ctx, card.UpstreamID)
-		if err != nil {
-			binding.reason = "未绑定上游"
-			out[card.SchedulerChannelID] = binding
-			continue
-		}
-		binding.key, binding.upstream = key, upstream
-		ratio, err := strconv.ParseFloat(strings.TrimSpace(key.GroupRatio), 64)
-		if err != nil || ratio <= 0 || domain.BalanceRate(upstream) <= 0 {
-			binding.reason = "缺成本倍率"
-			out[card.SchedulerChannelID] = binding
-			continue
-		}
-		binding.costPerUnit = ratio * domain.BalanceRate(upstream)
-		binding.complete = true
-		binding.reason = ""
-		out[card.SchedulerChannelID] = binding
-	}
-	return out, nil
 }
 
 func (s *Service) schedulerProfitLogs(ctx context.Context, cfg domain.SchedulerConfig, start, end time.Time, group string) ([]schedulerProfitLog, error) {
@@ -327,6 +323,7 @@ func (s *Service) schedulerProfitLogs(ctx context.Context, cfg domain.SchedulerC
 				ChannelName: schedulerString(firstScheduler(m, "channel_name", "channelName")),
 				Quota:       profitFloat(firstScheduler(m, "quota")),
 				GroupRatio:  groupRatio,
+				LogTime:     profitTime(firstScheduler(m, "created_at", "createdAt", "created_time", "createdTime", "timestamp", "time", "created")),
 			})
 		}
 		if len(items) < pageSize {
@@ -396,6 +393,47 @@ func profitFloat(v any) float64 {
 	default:
 		return 0
 	}
+}
+
+func profitTime(v any) time.Time {
+	switch x := v.(type) {
+	case float64:
+		return unixProfitTime(x)
+	case int:
+		return unixProfitTime(float64(x))
+	case int64:
+		return unixProfitTime(float64(x))
+	case json.Number:
+		f, _ := x.Float64()
+		return unixProfitTime(f)
+	case string:
+		x = strings.TrimSpace(x)
+		if x == "" {
+			return time.Time{}
+		}
+		if f, err := strconv.ParseFloat(x, 64); err == nil {
+			return unixProfitTime(f)
+		}
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.000Z"} {
+			if t, err := time.Parse(layout, x); err == nil {
+				return t.UTC()
+			}
+		}
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", x, appLocation()); err == nil {
+			return t.UTC()
+		}
+	}
+	return time.Time{}
+}
+
+func unixProfitTime(v float64) time.Time {
+	if v <= 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return time.Time{}
+	}
+	if v > 1e12 {
+		return time.UnixMilli(int64(v)).UTC()
+	}
+	return time.Unix(int64(v), int64((v-math.Floor(v))*1e9)).UTC()
 }
 
 func balanceCost(u domain.Upstream, snaps []domain.BalanceSnapshot) float64 {

@@ -227,9 +227,19 @@ function ProfitTab() {
                       <td className="px-3 py-2">{row.channel_name || row.channel_id || '-'}</td>
                       <td className="px-3 py-2">{row.card_name || '-'}</td>
                       <td className="px-3 py-2">{[row.upstream_name, row.key_name].filter(Boolean).join(' / ') || '-'}</td>
-                      <td className="px-3 py-2">{row.complete ? num(row.cost_per_unit) : '-'}</td>
+                      <td className="px-3 py-2">
+                        {row.complete ? (
+                          <div>
+                            <div>{num(row.cost_per_unit)}</div>
+                            <div className="text-xs text-muted-foreground">{costSourceLabel(row.cost_source)} · {effectiveLabel(row.cost_effective_from)}</div>
+                          </div>
+                        ) : '-'}
+                      </td>
                       <td className="px-3 py-2">{num(row.usage)}</td>
-                      <td className="px-3 py-2">{num(row.revenue)}</td>
+                      <td className="px-3 py-2">
+                        <div>{num(row.revenue)}</div>
+                        {row.sale_effective_from && <div className="text-xs text-muted-foreground">售价 {effectiveLabel(row.sale_effective_from)}</div>}
+                      </td>
                       <td className="px-3 py-2">{row.complete ? num(row.cost) : '-'}</td>
                       <td className="px-3 py-2">{row.complete ? num(row.profit) : '-'}</td>
                       <td className="px-3 py-2">{row.complete ? <Badge variant="success">已确认</Badge> : <Badge variant="amber">{row.missing_reason || '缺成本绑定'}</Badge>}</td>
@@ -252,6 +262,17 @@ function ProfitMini({ label, value }: { label: string; value: string }) {
       <div className="mt-1 font-medium">{value}</div>
     </div>
   )
+}
+
+function costSourceLabel(value?: string) {
+  if (value === 'manual_cost_ratio') return '手动成本'
+  if (value === 'upstream_key') return '上游 Key'
+  if (value === 'mixed') return '多段来源'
+  return value || '-'
+}
+
+function effectiveLabel(value?: string) {
+  return value === 'mixed' ? '多段' : fmtTime(value)
 }
 
 function SelfCheckTab() {

@@ -274,6 +274,32 @@ type SchedulerLog struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+type SchedulerChannelCostSnapshot struct {
+	ID            string    `json:"id"`
+	ChannelID     string    `json:"channel_id"`
+	ChannelName   string    `json:"channel_name,omitempty"`
+	CardID        string    `json:"card_id,omitempty"`
+	CardName      string    `json:"card_name,omitempty"`
+	SourceType    string    `json:"source_type,omitempty"`
+	UpstreamID    string    `json:"upstream_id,omitempty"`
+	UpstreamName  string    `json:"upstream_name,omitempty"`
+	KeyID         string    `json:"key_id,omitempty"`
+	KeyName       string    `json:"key_name,omitempty"`
+	CostPerUnit   float64   `json:"cost_per_unit,omitempty"`
+	Active        bool      `json:"active"`
+	MissingReason string    `json:"missing_reason,omitempty"`
+	EffectiveAt   time.Time `json:"effective_at"`
+}
+
+type SchedulerGroupSaleSnapshot struct {
+	ID          string    `json:"id"`
+	Group       string    `json:"group"`
+	Tag         string    `json:"tag,omitempty"`
+	SalePrice   float64   `json:"sale_price,omitempty"`
+	Active      bool      `json:"active"`
+	EffectiveAt time.Time `json:"effective_at"`
+}
+
 type RevenueCard struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`

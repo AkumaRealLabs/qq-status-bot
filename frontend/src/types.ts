@@ -425,6 +425,9 @@ export type ProfitChannelRow = {
   key_id?: string
   key_name?: string
   cost_per_unit?: number
+  cost_source?: string
+  cost_effective_from?: string
+  sale_effective_from?: string
   usage: number
   revenue: number
   cost: number

@@ -616,7 +616,7 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteCard(w http.ResponseWriter, r *http.Request) {
-	writeNoContentOrError(w, s.App.Store.DeleteCard(r.Context(), r.PathValue("id")))
+	writeNoContentOrError(w, s.App.DeleteCard(r.Context(), r.PathValue("id")))
 }
 
 func (s *Server) sortCards(w http.ResponseWriter, r *http.Request) {

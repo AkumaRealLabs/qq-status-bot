@@ -723,6 +723,7 @@ func TestProfitUsageUnitsUsesOriginalQuota(t *testing.T) {
 }
 
 func TestProfitFromSchedulerLogs(t *testing.T) {
+	var logTime time.Time
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/log/" || r.URL.Query().Get("type") != "2" || r.URL.Query().Get("p") != "1" || r.URL.Query().Get("page_size") != "100" {
 			t.Fatalf("bad log request: %s?%s", r.URL.Path, r.URL.RawQuery)
@@ -730,12 +731,12 @@ func TestProfitFromSchedulerLogs(t *testing.T) {
 		switch r.URL.Query().Get("group") {
 		case "gpt_low":
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
-				{"quota": 100 * 500000 * 0.1, "channel": 9, "group": "gpt_low", "other": map[string]any{"group_ratio": 0.1}},
-				{"quota": 10 * 500000 * 0.1, "channel": 99, "group": "gpt_low", "other": `{"group_ratio":0.1}`},
+				{"quota": 100 * 500000 * 0.1, "channel": 9, "group": "gpt_low", "created_at": logTime.Format(time.RFC3339Nano), "other": map[string]any{"group_ratio": 0.1}},
+				{"quota": 10 * 500000 * 0.1, "channel": 99, "group": "gpt_low", "created_at": logTime.Format(time.RFC3339Nano), "other": `{"group_ratio":0.1}`},
 			}}})
 		case "gpt_stable":
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
-				{"quota": 100 * 500000 * 0.2, "channel": "10", "group": "gpt_stable", "other": map[string]any{"group_ratio": 0.2}},
+				{"quota": 100 * 500000 * 0.2, "channel": "10", "group": "gpt_stable", "created_at": logTime.Format(time.RFC3339Nano), "other": map[string]any{"group_ratio": 0.2}},
 			}}})
 		default:
 			t.Fatalf("unexpected group %q", r.URL.Query().Get("group"))
@@ -784,7 +785,11 @@ func TestProfitFromSchedulerLogs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := svc.Profit(t.Context(), "today")
+	if err := svc.SeedSchedulerSnapshots(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	logTime = time.Now().UTC().Add(time.Millisecond)
+	out, err := svc.Profit(t.Context(), "24h")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -802,6 +807,192 @@ func TestProfitFromSchedulerLogs(t *testing.T) {
 	missing := profitTestChannel(lowPool.Channels, "99")
 	if missing.Complete || !closeEnough(missing.Revenue, 1) || missing.Cost != 0 || missing.MissingReason == "" {
 		t.Fatalf("missing channel = %+v", missing)
+	}
+}
+
+func TestSeedSchedulerSnapshotsIsIdempotentAndSkipsMonitorOnlyActiveCost(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "U", Type: "newapi", BaseURL: "https://api.example.test", BalanceRate: 2, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveKeys(t.Context(), u.ID, []monitor.APIKey{{RemoteID: "k", Name: "K", GroupRatio: "0.05"}}); err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := st.ListKeys(t.Context(), u.ID)
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "池子", UpstreamID: u.ID, KeyID: keys[0].ID, SchedulerChannelID: "9", PoolEnabled: true, PoolEnabledSet: true, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "监控", BaseURL: "https://monitor.example.test", APIKey: "sk", SchedulerChannelID: "10", PoolEnabled: false, PoolEnabledSet: true, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: "https://scheduler.example.test", UserID: "1", AccessToken: "token", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 0.1, SalePrice: 0.1}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SeedSchedulerSnapshots(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SeedSchedulerSnapshots(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var activeCost, monitorActive, saleRows int
+	if err := st.DB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM scheduler_channel_cost_snapshots WHERE active=1`).Scan(&activeCost); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM scheduler_channel_cost_snapshots WHERE channel_id='10' AND active=1`).Scan(&monitorActive); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM scheduler_group_sale_snapshots WHERE active=1`).Scan(&saleRows); err != nil {
+		t.Fatal(err)
+	}
+	if activeCost != 1 || monitorActive != 0 || saleRows != 1 {
+		t.Fatalf("activeCost=%d monitorActive=%d saleRows=%d", activeCost, monitorActive, saleRows)
+	}
+}
+
+func TestProfitUsesManualCostSnapshotsByLogTime(t *testing.T) {
+	var oldLog, newLog time.Time
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/log/" {
+			t.Fatalf("bad path: %s", r.URL.Path)
+		}
+		items := []map[string]any{}
+		if r.URL.Query().Get("group") == "gpt_low" {
+			items = []map[string]any{
+				{"quota": 10 * 500000 * 0.1, "channel": "9", "group": "gpt_low", "created_at": oldLog.Format(time.RFC3339Nano), "other": map[string]any{"group_ratio": 0.1}},
+				{"quota": 10 * 500000 * 0.1, "channel": "9", "group": "gpt_low", "created_at": newLog.Format(time.RFC3339Nano), "other": map[string]any{"group_ratio": 0.1}},
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": items}})
+	}))
+	defer ts.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	card, err := svc.SaveCard(t.Context(), "", domain.ModelCard{Name: "自建", BaseURL: "https://api.example.test", APIKey: "sk", ManualCostRatio: "0.10", SchedulerChannelID: "9", SchedulerChannelName: "ch", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, ok, err := st.LatestSchedulerChannelCostSnapshot(t.Context(), "9")
+	if err != nil || !ok {
+		t.Fatalf("first snapshot ok=%v err=%v", ok, err)
+	}
+	time.Sleep(time.Millisecond)
+	if _, err := svc.SaveCard(t.Context(), card.ID, domain.ModelCard{Name: "自建", BaseURL: "https://api.example.test", APIKey: "sk", ManualCostRatio: "0.14", SchedulerChannelID: "9", SchedulerChannelName: "ch", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	second, ok, err := st.LatestSchedulerChannelCostSnapshot(t.Context(), "9")
+	if err != nil || !ok {
+		t.Fatalf("second snapshot ok=%v err=%v", ok, err)
+	}
+	if _, err := st.SaveSchedulerGroupSaleSnapshot(t.Context(), domain.SchedulerGroupSaleSnapshot{Group: "gpt_low", Tag: "low", SalePrice: 0.2, Active: true, EffectiveAt: first.EffectiveAt.Add(-time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	oldLog, newLog = first.EffectiveAt.Add(time.Nanosecond), second.EffectiveAt.Add(time.Nanosecond)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 1, SalePrice: 0.2}}}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := svc.Profit(t.Context(), "24h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := profitTestPool(out.Pools, "gpt_low")
+	row := profitTestChannel(pool.Channels, "9")
+	if !out.Complete || !closeEnough(out.Revenue, 4) || !closeEnough(out.Cost, 2.4) || !closeEnough(out.Profit, 1.6) || row.CostEffective != "mixed" {
+		t.Fatalf("profit=%+v row=%+v", out, row)
+	}
+}
+
+func TestProfitMarksLogsBeforeSnapshotsIncomplete(t *testing.T) {
+	logTime := time.Now().UTC().Add(-time.Hour)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
+			{"quota": 10 * 500000 * 0.1, "channel": "9", "group": "gpt_low", "created_at": logTime.Format(time.RFC3339Nano), "other": map[string]any{"group_ratio": 0.1}},
+		}}})
+	}))
+	defer ts.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	if _, err := svc.SaveCard(t.Context(), "", domain.ModelCard{Name: "自建", BaseURL: "https://api.example.test", APIKey: "sk", ManualCostRatio: "0.10", SchedulerChannelID: "9", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 1, SalePrice: 0.2}}}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := svc.Profit(t.Context(), "24h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := profitTestChannel(profitTestPool(out.Pools, "gpt_low").Channels, "9")
+	if out.Complete || row.Complete || row.MissingReason == "" || out.Revenue != 0 || out.Cost != 0 {
+		t.Fatalf("profit=%+v row=%+v", out, row)
+	}
+}
+
+func TestProfitIncludesDeletedGroupFromSaleSnapshots(t *testing.T) {
+	base := time.Now().UTC().Add(-time.Hour)
+	logTime := base.Add(time.Minute)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("group") != "old_group" {
+			t.Fatalf("unexpected group %q", r.URL.Query().Get("group"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
+			{"quota": 5 * 500000 * 0.1, "channel": "9", "group": "old_group", "created_at": logTime.Format(time.RFC3339Nano), "other": map[string]any{"group_ratio": 0.1}},
+		}}})
+	}))
+	defer ts.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveSchedulerGroupSaleSnapshot(t.Context(), domain.SchedulerGroupSaleSnapshot{Group: "old_group", Tag: "old", SalePrice: 0.2, Active: true, EffectiveAt: base}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveSchedulerGroupSaleSnapshot(t.Context(), domain.SchedulerGroupSaleSnapshot{Group: "old_group", Tag: "old", Active: false, EffectiveAt: base.Add(30 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveSchedulerChannelCostSnapshot(t.Context(), domain.SchedulerChannelCostSnapshot{ChannelID: "9", ChannelName: "old", CardName: "old-card", SourceType: "manual_cost_ratio", CostPerUnit: 0.1, Active: true, EffectiveAt: base}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", Tiers: []domain.SchedulerTier{}}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := svc.Profit(t.Context(), "24h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := profitTestPool(out.Pools, "old_group")
+	if !out.Complete || pool.Group != "old_group" || !closeEnough(out.Revenue, 1) || !closeEnough(out.Cost, 0.5) {
+		t.Fatalf("profit=%+v pool=%+v", out, pool)
 	}
 }
 

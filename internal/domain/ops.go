@@ -105,6 +105,9 @@ type ProfitChannelRow struct {
 	KeyID         string  `json:"key_id,omitempty"`
 	KeyName       string  `json:"key_name,omitempty"`
 	CostPerUnit   float64 `json:"cost_per_unit,omitempty"`
+	CostSource    string  `json:"cost_source,omitempty"`
+	CostEffective string  `json:"cost_effective_from,omitempty"`
+	SaleEffective string  `json:"sale_effective_from,omitempty"`
 	Usage         float64 `json:"usage"`
 	Revenue       float64 `json:"revenue"`
 	Cost          float64 `json:"cost"`
