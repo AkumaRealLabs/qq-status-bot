@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"database/sql"
@@ -99,14 +98,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/ops/notifications", s.auth(s.notificationRules))
 	mux.HandleFunc("PATCH /api/ops/notifications", s.auth(s.updateNotificationRules))
 	mux.HandleFunc("POST /api/ops/notifications/test", s.auth(s.testNotification))
-	mux.HandleFunc("GET /api/ops/trends", s.auth(s.opsTrends))
 	mux.HandleFunc("GET /api/ops/profit", s.auth(s.opsProfit))
 	mux.HandleFunc("GET /api/ops/self-check", s.auth(s.opsSelfCheck))
-	mux.HandleFunc("POST /api/ops/bulk/cards/check", s.auth(s.bulkCheckCards))
-	mux.HandleFunc("POST /api/ops/bulk/upstreams/refresh", s.auth(s.bulkRefreshUpstreams))
-	mux.HandleFunc("POST /api/ops/bulk/cliproxy/download", s.auth(s.bulkDownloadCLIProxyAccounts))
-	mux.HandleFunc("POST /api/ops/bulk/scheduler/bind", s.auth(s.bulkBindScheduler))
-	mux.HandleFunc("POST /api/ops/bulk/scheduler/unbind", s.auth(s.bulkUnbindScheduler))
 	mux.HandleFunc("GET /api/monitor/status", s.auth(s.monitorStatus))
 	mux.HandleFunc("GET /api/monitor/balances", s.auth(s.balances))
 	mux.HandleFunc("POST /api/monitor/balances/refresh", s.auth(s.refreshBalances))
@@ -135,6 +128,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/websockify", s.auth(s.proxyBrowser))
 	mux.HandleFunc("GET /admin", redirectTo("/admin/status"))
 	mux.HandleFunc("GET /admin/merchant-balance", redirectTo("/admin/revenue"))
+	mux.HandleFunc("GET /admin/ops", redirectTo("/admin/events"))
 	mux.HandleFunc("GET /status", redirectTo("/admin/status"))
 	mux.HandleFunc("GET /balances", redirectTo("/admin/balances"))
 	mux.HandleFunc("GET /revenue", redirectTo("/admin/revenue"))
@@ -143,7 +137,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /upstreams", redirectTo("/admin/upstreams"))
 	mux.HandleFunc("GET /scheduler", redirectTo("/admin/scheduler"))
 	mux.HandleFunc("GET /pools", redirectTo("/admin/pools"))
-	mux.HandleFunc("GET /ops", redirectTo("/admin/ops"))
+	mux.HandleFunc("GET /ops", redirectTo("/admin/events"))
 	mux.HandleFunc("GET /settings", redirectTo("/admin/settings"))
 	mux.Handle("/", s.static())
 	return s.checkOrigin(mux)
@@ -810,11 +804,6 @@ func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 	writeNoContentOrError(w, s.App.TestNotification(r.Context()))
 }
 
-func (s *Server) opsTrends(w http.ResponseWriter, r *http.Request) {
-	out, err := s.App.OpsTrends(r.Context(), r.URL.Query().Get("window"))
-	writeJSONOrError(w, out, err)
-}
-
 func (s *Server) opsProfit(w http.ResponseWriter, r *http.Request) {
 	out, err := s.App.Profit(r.Context(), r.URL.Query().Get("window"))
 	writeJSONOrError(w, out, err)
@@ -823,139 +812,6 @@ func (s *Server) opsProfit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) opsSelfCheck(w http.ResponseWriter, r *http.Request) {
 	out, err := s.App.SelfCheck(r.Context())
 	writeJSONOrError(w, out, err)
-}
-
-type bulkResult struct {
-	ID     string `json:"id,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
-}
-
-func (s *Server) bulkCheckCards(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		IDs []string `json:"ids"`
-	}
-	if !decode(w, r, &body) {
-		return
-	}
-	out := make([]bulkResult, 0, len(body.IDs))
-	for _, id := range body.IDs {
-		err := s.App.CheckCard(r.Context(), id)
-		out = append(out, bulkStatus(id, "", err))
-	}
-	writeJSON(w, out)
-}
-
-func (s *Server) bulkRefreshUpstreams(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		IDs  []string `json:"ids"`
-		Mode string   `json:"mode"`
-	}
-	if !decode(w, r, &body) {
-		return
-	}
-	out := make([]bulkResult, 0, len(body.IDs))
-	for _, id := range body.IDs {
-		var err error
-		if body.Mode == "" || body.Mode == "both" || body.Mode == "sync_keys" {
-			err = s.App.SyncKeys(r.Context(), id)
-		}
-		if err == nil && (body.Mode == "" || body.Mode == "both" || body.Mode == "refresh_balance") {
-			err = s.App.CheckUpstream(r.Context(), id)
-		}
-		out = append(out, bulkStatus(id, "", err))
-	}
-	writeJSON(w, out)
-}
-
-func (s *Server) bulkDownloadCLIProxyAccounts(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Names []string `json:"names"`
-	}
-	if !decode(w, r, &body) {
-		return
-	}
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for _, name := range body.Names {
-		b, _, err := s.App.DownloadCLIProxyAccount(r.Context(), name)
-		if err != nil {
-			_ = zw.Close()
-			writeJSONOrError(w, nil, err)
-			return
-		}
-		f, err := zw.Create(filepath.Base(name))
-		if err != nil {
-			_ = zw.Close()
-			writeJSONOrError(w, nil, err)
-			return
-		}
-		_, _ = f.Write(b)
-	}
-	if err := zw.Close(); err != nil {
-		writeJSONOrError(w, nil, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="cliproxy-auth-files.zip"`)
-	_, _ = w.Write(buf.Bytes())
-}
-
-func (s *Server) bulkBindScheduler(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Bindings []struct {
-			CardID      string `json:"card_id"`
-			Group       string `json:"scheduler_group"`
-			ChannelID   string `json:"channel_id"`
-			ChannelName string `json:"channel_name"`
-		} `json:"bindings"`
-	}
-	if !decode(w, r, &body) {
-		return
-	}
-	out := make([]bulkResult, 0, len(body.Bindings))
-	for _, binding := range body.Bindings {
-		card, err := s.App.Store.Card(r.Context(), binding.CardID)
-		if err == nil {
-			card.SchedulerGroup = binding.Group
-			card.SchedulerChannelID = binding.ChannelID
-			card.SchedulerChannelName = binding.ChannelName
-			card.SchedulerAutoDisabled = false
-			_, err = s.App.SaveCard(r.Context(), card.ID, card)
-		}
-		out = append(out, bulkStatus(binding.CardID, binding.ChannelName, err))
-	}
-	writeJSON(w, out)
-}
-
-func (s *Server) bulkUnbindScheduler(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		IDs []string `json:"ids"`
-	}
-	if !decode(w, r, &body) {
-		return
-	}
-	out := make([]bulkResult, 0, len(body.IDs))
-	for _, id := range body.IDs {
-		card, err := s.App.Store.Card(r.Context(), id)
-		if err == nil {
-			card.SchedulerGroup, card.SchedulerChannelID, card.SchedulerChannelName = "", "", ""
-			card.SchedulerAutoDisabled = false
-			_, err = s.App.SaveCard(r.Context(), card.ID, card)
-		}
-		out = append(out, bulkStatus(id, "", err))
-	}
-	writeJSON(w, out)
-}
-
-func bulkStatus(id, name string, err error) bulkResult {
-	out := bulkResult{ID: id, Name: name, Status: "ok"}
-	if err != nil {
-		out.Status = "error"
-		out.Error = err.Error()
-	}
-	return out
 }
 
 func (s *Server) monitorStatus(w http.ResponseWriter, r *http.Request) {

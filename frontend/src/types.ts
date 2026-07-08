@@ -154,7 +154,7 @@ export type SettingsData = {
 
 export type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>
 
-export type TabID = 'status' | 'balances' | 'revenue' | 'messages' | 'upstreams' | 'scheduler' | 'pools' | 'ops' | 'settings'
+export type TabID = 'status' | 'balances' | 'revenue' | 'profit' | 'messages' | 'upstreams' | 'scheduler' | 'pools' | 'events' | 'audit' | 'notifications' | 'self-check' | 'settings'
 
 export type NavTab = { id: TabID; label: string; short: string; icon: ElementType }
 
@@ -384,52 +384,6 @@ export type AuditLog = {
   created_at: string
 }
 
-export type OpsProbeTrendPoint = {
-  at: string
-  total: number
-  success: number
-  failed: number
-  success_rate: number
-  avg_latency: number
-}
-
-export type OpsBalanceTrendPoint = {
-  at: string
-  upstream_id: string
-  name: string
-  remain: number
-  error?: string
-}
-
-export type RevenueSnapshot = {
-  id: string
-  source_id: string
-  source_name: string
-  source_type: string
-  checked_at: string
-  revenue: number
-  error?: string
-}
-
-export type CLIProxyQuotaSnapshot = {
-  id: string
-  account_name: string
-  auth_index?: string
-  checked_at: string
-  ok: boolean
-  plan_type?: string
-  summary?: string
-  error?: string
-}
-
-export type OpsTrendResponse = {
-  window: string
-  probes: OpsProbeTrendPoint[]
-  balances: OpsBalanceTrendPoint[]
-  revenue: RevenueSnapshot[]
-  cliproxy_quotas: CLIProxyQuotaSnapshot[]
-}
-
 export type ProfitResponse = {
   window: string
   revenue: number
@@ -442,11 +396,4 @@ export type ProfitResponse = {
 export type SelfCheckResponse = {
   checked_at: string
   items: { name: string; status: 'ok' | 'warn' | 'error' | 'safe_mode' | string; message?: string }[]
-}
-
-export type BulkResult = {
-  id?: string
-  name?: string
-  status: 'ok' | 'error' | string
-  error?: string
 }

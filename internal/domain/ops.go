@@ -89,31 +89,6 @@ type CLIProxyQuotaSnapshot struct {
 	Error       string    `json:"error,omitempty"`
 }
 
-type OpsProbeTrendPoint struct {
-	At          time.Time `json:"at"`
-	Total       int       `json:"total"`
-	Success     int       `json:"success"`
-	Failed      int       `json:"failed"`
-	SuccessRate float64   `json:"success_rate"`
-	AvgLatency  int       `json:"avg_latency"`
-}
-
-type OpsBalanceTrendPoint struct {
-	At         time.Time `json:"at"`
-	UpstreamID string    `json:"upstream_id"`
-	Name       string    `json:"name"`
-	Remain     float64   `json:"remain"`
-	Error      string    `json:"error,omitempty"`
-}
-
-type OpsTrendResponse struct {
-	Window         string                  `json:"window"`
-	Probes         []OpsProbeTrendPoint    `json:"probes"`
-	Balances       []OpsBalanceTrendPoint  `json:"balances"`
-	Revenue        []RevenueSnapshot       `json:"revenue"`
-	CLIProxyQuotas []CLIProxyQuotaSnapshot `json:"cliproxy_quotas"`
-}
-
 type ProfitCostRow struct {
 	UpstreamID string  `json:"upstream_id"`
 	Name       string  `json:"name"`

@@ -429,7 +429,7 @@ func TestLegacyAdminPathsRedirect(t *testing.T) {
 	client := ts.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	for path, want := range map[string]string{"/status": "/admin/status", "/balances": "/admin/balances", "/revenue": "/admin/revenue", "/merchant-balance": "/admin/revenue", "/admin/merchant-balance": "/admin/revenue", "/upstreams": "/admin/upstreams", "/scheduler": "/admin/scheduler", "/settings": "/admin/settings"} {
+	for path, want := range map[string]string{"/status": "/admin/status", "/balances": "/admin/balances", "/revenue": "/admin/revenue", "/merchant-balance": "/admin/revenue", "/admin/merchant-balance": "/admin/revenue", "/admin/ops": "/admin/events", "/upstreams": "/admin/upstreams", "/scheduler": "/admin/scheduler", "/settings": "/admin/settings", "/ops": "/admin/events"} {
 		resp, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)

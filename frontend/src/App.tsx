@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, BarChart3, Database, ExternalLink, KeyRound, Loader2, LogOut, MessageSquare, Settings, ShieldCheck, SlidersHorizontal, WalletCards } from 'lucide-react'
+import { Activity, BarChart3, Bell, Database, ExternalLink, FileText, KeyRound, Loader2, LogOut, MessageSquare, Settings, ShieldCheck, SlidersHorizontal, TrendingUp, WalletCards } from 'lucide-react'
 import { BrandIcon, MobileTabs, NavItem, ShellLoading } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { LoginPage, SetupPage } from '@/features/auth/AuthPages'
 import { BalancesPage } from '@/features/balances/BalancesPage'
 import { MessagesPage } from '@/features/messages/MessagesPage'
-import { OpsPage } from '@/features/ops/OpsPage'
+import { AuditPage, EventsPage, NotificationsPage, ProfitPage, SelfCheckPage } from '@/features/ops/OpsPage'
 import { CLIProxyPoolPage } from '@/features/pools/CLIProxyPoolPage'
 import { RevenuePage } from '@/features/revenue/RevenuePage'
 import { SchedulerPage } from '@/features/scheduler/SchedulerPage'
@@ -21,11 +21,15 @@ const tabs: NavTab[] = [
   { id: 'status', label: '状态监控', short: '状态', icon: Activity },
   { id: 'balances', label: '余额监控', short: '余额', icon: WalletCards },
   { id: 'revenue', label: '今日收入', short: '收入', icon: BarChart3 },
+  { id: 'profit', label: '利润估算', short: '利润', icon: TrendingUp },
   { id: 'messages', label: '最新消息', short: '消息', icon: MessageSquare },
   { id: 'upstreams', label: '上游管理', short: '上游', icon: Database },
   { id: 'scheduler', label: '调度器', short: '调度', icon: SlidersHorizontal },
   { id: 'pools', label: '号池管理', short: '号池', icon: KeyRound },
-  { id: 'ops', label: 'Ops', short: 'Ops', icon: ShieldCheck },
+  { id: 'events', label: '事件中心', short: '事件', icon: Activity },
+  { id: 'audit', label: '审计日志', short: '审计', icon: FileText },
+  { id: 'notifications', label: '通知规则', short: '通知', icon: Bell },
+  { id: 'self-check', label: '系统自检', short: '自检', icon: ShieldCheck },
   { id: 'settings', label: '设置', short: '设置', icon: Settings },
 ]
 
@@ -33,21 +37,32 @@ const tabPaths: Record<TabID, string> = {
   status: '/admin/status',
   balances: '/admin/balances',
   revenue: '/admin/revenue',
+  profit: '/admin/profit',
   messages: '/admin/messages',
   upstreams: '/admin/upstreams',
   scheduler: '/admin/scheduler',
   pools: '/admin/pools',
-  ops: '/admin/ops',
+  events: '/admin/events',
+  audit: '/admin/audit',
+  notifications: '/admin/notifications',
+  'self-check': '/admin/self-check',
   settings: '/admin/settings',
 }
 
+function normalizePath(pathname: string) {
+  if (pathname === '/admin/merchant-balance') return '/admin/revenue'
+  if (pathname === '/admin/ops' || pathname === '/ops') return '/admin/events'
+  return pathname
+}
+
 function tabFromPath(pathname: string): TabID {
-  if (pathname === '/admin/merchant-balance') return 'revenue'
-  return tabs.find((item) => tabPaths[item.id] === pathname)?.id ?? 'status'
+  const path = normalizePath(pathname)
+  return tabs.find((item) => tabPaths[item.id] === path)?.id ?? 'status'
 }
 
 function adminPath(pathname: string) {
-  return pathname === '/admin' || pathname.startsWith('/admin/')
+  const path = normalizePath(pathname)
+  return path === '/admin' || path.startsWith('/admin/')
 }
 
 export default function App() {
@@ -67,9 +82,14 @@ export default function App() {
   const site = settings.data ?? publicSettings.data
 
   useEffect(() => {
-    const onPopState = () => setTab(tabFromPath(location.pathname))
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
+    const syncLocation = () => {
+      const path = normalizePath(location.pathname)
+      if (path !== location.pathname) window.history.replaceState(null, '', path)
+      setTab(tabFromPath(path))
+    }
+    syncLocation()
+    window.addEventListener('popstate', syncLocation)
+    return () => window.removeEventListener('popstate', syncLocation)
   }, [])
 
   useEffect(() => {
@@ -123,7 +143,7 @@ export default function App() {
             <div className="truncate font-display text-xl font-normal leading-none text-foreground">{siteName}</div>
           </div>
         </div>
-        <nav className="grid gap-1 p-3">
+        <nav className="grid min-h-0 flex-1 content-start gap-1 overflow-y-auto p-3">
           {tabs.map((item) => (
             <NavItem key={item.id} item={item} active={tab === item.id} onClick={() => navigate(item.id)} />
           ))}
@@ -166,11 +186,15 @@ export default function App() {
           {tab === 'status' && <AdminStatusPage />}
           {tab === 'balances' && <BalancesPage />}
           {tab === 'revenue' && <RevenuePage />}
+          {tab === 'profit' && <ProfitPage />}
           {tab === 'messages' && <MessagesPage />}
           {tab === 'upstreams' && <UpstreamsPage />}
           {tab === 'scheduler' && <SchedulerPage />}
           {tab === 'pools' && <CLIProxyPoolPage />}
-          {tab === 'ops' && <OpsPage />}
+          {tab === 'events' && <EventsPage />}
+          {tab === 'audit' && <AuditPage />}
+          {tab === 'notifications' && <NotificationsPage />}
+          {tab === 'self-check' && <SelfCheckPage />}
           {tab === 'settings' && <SettingsPage />}
         </main>
       </div>

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -39,7 +38,7 @@ func (s *Service) TestNotification(ctx context.Context) error {
 	if strings.TrimSpace(cfg.TelegramBotToken) == "" || strings.TrimSpace(cfg.TelegramChatID) == "" {
 		return ErrBadRequest("请先配置 Telegram Bot Token 和 Chat ID")
 	}
-	return s.sendTelegram(ctx, "Ops 通知测试")
+	return s.sendTelegram(ctx, "通知规则测试")
 }
 
 func (s *Service) createAlertOpsEvent(ctx context.Context, u domain.Upstream, kind string, recover bool, message string) {
@@ -109,88 +108,6 @@ func alertOpsActions(eventType string) []string {
 	default:
 		return nil
 	}
-}
-
-func (s *Service) OpsTrends(ctx context.Context, window string) (domain.OpsTrendResponse, error) {
-	since, label, duration := opsWindow(window)
-	probes, err := s.Store.ProbesSince(ctx, since)
-	if err != nil {
-		return domain.OpsTrendResponse{}, err
-	}
-	upstreams, err := s.Store.ListUpstreams(ctx)
-	if err != nil {
-		return domain.OpsTrendResponse{}, err
-	}
-	upstreamByID := map[string]domain.Upstream{}
-	for _, u := range upstreams {
-		upstreamByID[u.ID] = u
-	}
-	balances, err := s.Store.BalanceSnapshotsSince(ctx, "", since)
-	if err != nil {
-		return domain.OpsTrendResponse{}, err
-	}
-	revenue, err := s.Store.RevenueSnapshotsSince(ctx, since)
-	if err != nil {
-		return domain.OpsTrendResponse{}, err
-	}
-	quotas, err := s.Store.CLIProxyQuotaSnapshotsSince(ctx, since)
-	if err != nil {
-		return domain.OpsTrendResponse{}, err
-	}
-	out := domain.OpsTrendResponse{
-		Window:         label,
-		Probes:         probeTrend(probes, trendBucket(duration)),
-		Revenue:        revenue,
-		CLIProxyQuotas: quotas,
-	}
-	for _, snap := range balances {
-		u := upstreamByID[snap.UpstreamID]
-		_, _, remain := domain.ConvertedBalanceValues(u.Type, domain.BalanceRate(u), snap.Balance, snap.Used, snap.Remain)
-		out.Balances = append(out.Balances, domain.OpsBalanceTrendPoint{At: snap.CheckedAt, UpstreamID: snap.UpstreamID, Name: u.Name, Remain: remain, Error: snap.Error})
-	}
-	return out, nil
-}
-
-func probeTrend(probes []domain.ProbeRun, bucket time.Duration) []domain.OpsProbeTrendPoint {
-	type acc struct {
-		total, success, latency, samples int
-	}
-	rows := map[time.Time]*acc{}
-	for _, probe := range probes {
-		at := probe.CheckedAt.UTC().Truncate(bucket)
-		if rows[at] == nil {
-			rows[at] = &acc{}
-		}
-		rows[at].total++
-		if probe.Success {
-			rows[at].success++
-		}
-		if probe.LatencyMS > 0 {
-			rows[at].latency += probe.LatencyMS
-			rows[at].samples++
-		}
-	}
-	keys := make([]time.Time, 0, len(rows))
-	for at := range rows {
-		keys = append(keys, at)
-	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i].Before(keys[j]) })
-	out := make([]domain.OpsProbeTrendPoint, 0, len(keys))
-	for _, at := range keys {
-		row := rows[at]
-		out = append(out, domain.OpsProbeTrendPoint{
-			At: at, Total: row.total, Success: row.success, Failed: row.total - row.success,
-			SuccessRate: percent(row.success, row.total), AvgLatency: avg(row.latency, row.samples),
-		})
-	}
-	return out
-}
-
-func trendBucket(duration time.Duration) time.Duration {
-	if duration > 24*time.Hour {
-		return 6 * time.Hour
-	}
-	return time.Hour
 }
 
 func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitResponse, error) {

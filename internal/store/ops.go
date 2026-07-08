@@ -217,45 +217,6 @@ func (s *Store) SaveCLIProxyQuotaSnapshot(ctx context.Context, snap domain.CLIPr
 	return err
 }
 
-func (s *Store) CLIProxyQuotaSnapshotsSince(ctx context.Context, since time.Time) ([]domain.CLIProxyQuotaSnapshot, error) {
-	rows, err := s.query(ctx, `SELECT id, account_name, auth_index, checked_at, ok, plan_type, summary, error FROM cliproxy_quota_snapshots WHERE `+timeWhere(s.Driver, "checked_at")+` ORDER BY checked_at`, since.UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []domain.CLIProxyQuotaSnapshot{}
-	for rows.Next() {
-		var snap domain.CLIProxyQuotaSnapshot
-		var checked string
-		var ok int
-		if err := rows.Scan(&snap.ID, &snap.AccountName, &snap.AuthIndex, &checked, &ok, &snap.PlanType, &snap.Summary, &snap.Error); err != nil {
-			return nil, err
-		}
-		snap.CheckedAt = parseTime(checked)
-		snap.OK = boolFromInt(ok)
-		out = append(out, snap)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) ProbesSince(ctx context.Context, since time.Time) ([]domain.ProbeRun, error) {
-	rows, err := s.query(ctx, `SELECT id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error
-		FROM probe_runs WHERE `+timeWhere(s.Driver, "checked_at")+` ORDER BY checked_at`, since.UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []domain.ProbeRun{}
-	for rows.Next() {
-		run, err := scanProbeRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, run)
-	}
-	return out, rows.Err()
-}
-
 func (s *Store) BalanceSnapshotsSince(ctx context.Context, upstreamID string, since time.Time) ([]domain.BalanceSnapshot, error) {
 	where := []string{timeWhere(s.Driver, "checked_at")}
 	args := []any{since.UTC().Format(time.RFC3339Nano)}
