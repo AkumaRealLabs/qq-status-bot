@@ -176,7 +176,7 @@ grep -q 'env_key = "AUM_CODEX_API_KEY"' "$config" || exit 11
 ! grep -q 'sk-card-secret' "$config" || { echo "key leaked" >&2; exit 12; }
 instr=$(grep '^model_instructions_file = ' "$config" | sed 's/model_instructions_file = "\(.*\)"/\1/')
 [ -f "$instr" ] || { echo "missing instructions" >&2; exit 16; }
-[ ! -s "$instr" ] || { echo "instructions not empty" >&2; exit 17; }
+grep -qx 'Answer briefly\.' "$instr" || { cat "$instr" >&2; exit 17; }
 {
   printf 'args:%s\n' "$*"
   cat "$config"

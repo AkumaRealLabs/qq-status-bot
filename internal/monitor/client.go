@@ -330,7 +330,7 @@ func (c Client) probeCodexCLI(ctx context.Context, baseURL, key, model string) P
 	}
 
 	instructionsPath := filepath.Join(codexHome, "instructions.txt")
-	if err := os.WriteFile(instructionsPath, nil, 0600); err != nil {
+	if err := os.WriteFile(instructionsPath, []byte("Answer briefly.\n"), 0600); err != nil {
 		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: probeInput, Error: err.Error()}
 	}
 	config := fmt.Sprintf(`model_provider = "aum_card"
