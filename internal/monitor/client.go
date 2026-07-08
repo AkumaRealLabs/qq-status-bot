@@ -392,9 +392,16 @@ env_key = %q
 }
 
 func codexCLIError(err error, output []byte, key string) string {
+	text := string(output)
+	if key != "" {
+		text = strings.ReplaceAll(text, key, "[redacted]")
+	}
+	if msg := upstreamErrorMessage(text); msg != "" {
+		return err.Error() + ": " + msg
+	}
 	var lines []string
-	for _, line := range strings.Split(strings.ReplaceAll(string(output), "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(strings.ReplaceAll(line, key, "[redacted]"))
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
 		lower := strings.ToLower(line)
 		if line == "" || strings.HasPrefix(lower, "warning:") || strings.HasPrefix(lower, "tip:") || strings.HasPrefix(lower, "usage:") || strings.HasPrefix(lower, "for more information") {
 			continue
@@ -407,6 +414,33 @@ func codexCLIError(err error, output []byte, key string) string {
 		return limitText(err.Error()+": "+lines[len(lines)-1], 2000)
 	}
 	return err.Error()
+}
+
+func upstreamErrorMessage(text string) string {
+	for i, r := range text {
+		if r != '{' {
+			continue
+		}
+		var raw map[string]any
+		if err := json.NewDecoder(strings.NewReader(text[i:])).Decode(&raw); err != nil {
+			continue
+		}
+		return strings.TrimSpace(firstErrorMessage(raw))
+	}
+	return ""
+}
+
+func firstErrorMessage(raw map[string]any) string {
+	if msg := strings.TrimSpace(str(first(raw, "message", "msg", "detail"))); msg != "" {
+		return msg
+	}
+	if errText := strings.TrimSpace(str(raw["error"])); errText != "" {
+		return errText
+	}
+	if errObj := obj(raw["error"]); len(errObj) != 0 {
+		return firstErrorMessage(errObj)
+	}
+	return ""
 }
 
 func limitText(s string, n int) string {

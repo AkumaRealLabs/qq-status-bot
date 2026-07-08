@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -222,6 +223,20 @@ exit 42
 	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.5")
 	if got.Success || got.Status != StatusError || !strings.Contains(got.Error, "429 Too Many Requests") || !strings.Contains(got.Error, "[redacted]") || strings.Contains(got.Error, "sk-card-secret") || strings.Contains(got.Error, "ping") || strings.Contains(got.Error, "bubblewrap") {
 		t.Fatalf("got=%+v", got)
+	}
+}
+
+func TestCodexCLIErrorKeepsUpstreamMessage(t *testing.T) {
+	output := []byte(`ERROR: {
+  "error": {
+    "message": "Unsupported value: 'minimal' is not supported with the 'gpt-5.5' model. Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'.",
+    "type": "invalid_request_error",
+    "param": "reasoning.effort"
+  }
+}`)
+	got := codexCLIError(errors.New("exit status 1"), output, "")
+	if !strings.Contains(got, "Unsupported value: 'minimal'") || strings.Contains(got, "invalid_request_error") {
+		t.Fatalf("got=%q", got)
 	}
 }
 
