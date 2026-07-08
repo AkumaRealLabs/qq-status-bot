@@ -154,6 +154,28 @@ func TestNewDefaultsToCodexCLIProbeWithHTTPFallback(t *testing.T) {
 	}
 }
 
+func TestCheckBrowserCDPFallsBackToJSONList(t *testing.T) {
+	var sawVersion, sawList bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/json/version":
+			sawVersion = true
+			http.Error(w, "cdp version unavailable", http.StatusInternalServerError)
+		case "/json":
+			sawList = true
+			_, _ = w.Write([]byte("[]"))
+		default:
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	got := checkBrowserCDP(t.Context(), ts.Client(), ts.URL)
+	if got.Status != "ok" || !sawVersion || !sawList {
+		t.Fatalf("got=%+v sawVersion=%v sawList=%v", got, sawVersion, sawList)
+	}
+}
+
 func TestSchedulerConfigAndChannelsProxy(t *testing.T) {
 	var sawAuth, sawUser, sawQuery, sawPageSize string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

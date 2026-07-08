@@ -253,7 +253,7 @@ func (s *Service) SelfCheck(ctx context.Context) (domain.SelfCheckResponse, erro
 	out.Items = append(out.Items, domain.SelfCheckItem{Name: "build_version", Status: "ok", Message: firstNonEmpty(os.Getenv("VITE_BUILD_VERSION"), "dev")})
 	out.Items = append(out.Items, domain.SelfCheckItem{Name: "container_restart_count", Status: "safe_mode", Message: "安全模式未读取容器重启次数"})
 	out.Items = append(out.Items, checkHTTP(ctx, s.Client.HTTP, "browser_http", envDefault("BROWSER_PROXY_URL", "http://127.0.0.1:6080")))
-	out.Items = append(out.Items, checkHTTP(ctx, s.Client.HTTP, "browser_cdp", strings.TrimRight(envDefault("BROWSER_DEBUG_URL", "http://127.0.0.1:19222"), "/")+"/json/version"))
+	out.Items = append(out.Items, checkBrowserCDP(ctx, s.Client.HTTP, envDefault("BROWSER_DEBUG_URL", "http://127.0.0.1:19222")))
 	out.Items = append(out.Items, s.cliProxySelfCheck(ctx))
 	out.Items = append(out.Items, domain.SelfCheckItem{Name: "database_backup", Status: "warn", Message: "未配置自动备份时间"})
 	return out, nil
@@ -271,6 +271,14 @@ func diskCheck() domain.SelfCheckItem {
 		status = "warn"
 	}
 	return domain.SelfCheckItem{Name: "disk_space", Status: status, Message: fmt.Sprintf("可用 %.1f GB", float64(free)/(1<<30))}
+}
+
+func checkBrowserCDP(ctx context.Context, hc *http.Client, baseURL string) domain.SelfCheckItem {
+	baseURL = strings.TrimRight(baseURL, "/")
+	if item := checkHTTP(ctx, hc, "browser_cdp", baseURL+"/json/version"); item.Status == "ok" {
+		return item
+	}
+	return checkHTTP(ctx, hc, "browser_cdp", baseURL+"/json")
 }
 
 func checkHTTP(ctx context.Context, hc *http.Client, name, rawurl string) domain.SelfCheckItem {
