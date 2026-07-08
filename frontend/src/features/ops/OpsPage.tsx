@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bell, Check, CheckCircle2, Loader2, Play, RefreshCcw, ShieldCheck } from 'lucide-react'
+import { Bell, Check, Loader2, RefreshCcw, ShieldCheck } from 'lucide-react'
 import { EmptyPanel, Field, FormError, Metric } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
@@ -29,7 +29,7 @@ const eventLabels: Record<string, string> = {
 }
 
 export function EventsPage() {
-  return <Page title="事件中心" description="集中处理未读、未确认的运维事件"><EventsTab /></Page>
+  return <Page title="事件中心" description="查看最新运维事件"><EventsTab /></Page>
 }
 
 export function AuditPage() {
@@ -49,60 +49,27 @@ export function SelfCheckPage() {
 }
 
 function EventsTab() {
-  const qc = useQueryClient()
-  const [state, setState] = useState('unacked')
-  const q = useQuery({ queryKey: ['ops', 'events', state], queryFn: () => api<OpsEvent[]>(`/api/ops/events?state=${state}`), refetchInterval: 30000 })
-  const markRead = useMutation({ mutationFn: (id: string) => api(`/api/ops/events/${id}/read`, { method: 'POST', body: '{}' }), onSuccess: () => qc.invalidateQueries({ queryKey: ['ops', 'events'] }) })
-  const ack = useMutation({ mutationFn: (id: string) => api(`/api/ops/events/${id}/ack`, { method: 'POST', body: '{}' }), onSuccess: () => qc.invalidateQueries({ queryKey: ['ops', 'events'] }) })
-  const action = useMutation({
-    mutationFn: ({ event, action }: { event: OpsEvent; action: string }) => runEventAction(event, action),
-    onSuccess: async (_, vars) => {
-      await api(`/api/ops/events/${vars.event.id}/ack`, { method: 'POST', body: '{}' })
-      await qc.invalidateQueries({ queryKey: ['ops', 'events'] })
-    },
-    onError: (error) => window.alert(errorMessage(error)),
-  })
+  const q = useQuery({ queryKey: ['ops', 'events'], queryFn: () => api<OpsEvent[]>('/api/ops/events'), refetchInterval: 30000 })
   return (
     <section className="grid min-w-0 gap-3">
       <div className="flex flex-wrap items-center gap-2">
         {q.isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-        <Select value={state} onValueChange={setState}>
-          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="unacked">未确认</SelectItem>
-            <SelectItem value="unread">未读</SelectItem>
-            <SelectItem value="acked">已确认</SelectItem>
-            <SelectItem value="all">全部</SelectItem>
-          </SelectContent>
-        </Select>
         <Button variant="outline" size="sm" onClick={() => void q.refetch()}><RefreshCcw className="size-4" />刷新</Button>
       </div>
-      <FormError error={q.error || markRead.error || ack.error} />
+      <FormError error={q.error} />
       {q.isLoading && <EmptyPanel text="加载中..." />}
       {!q.isLoading && (q.data?.length ?? 0) === 0 && <EmptyPanel text="暂无事件" />}
       <div className="grid min-w-0 gap-3">
         {(q.data ?? []).map((event) => (
-          <Card key={event.id} className={cn('bg-card', !event.read && 'border-primary/40')}>
+          <Card key={event.id} className="bg-card">
             <CardContent className="grid gap-3">
-              <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <SeverityBadge severity={event.severity} />
-                    <span className="font-medium text-foreground">{event.title || eventLabels[event.type] || event.type}</span>
-                    <span className="text-xs text-muted-foreground">{fmtTime(event.created_at)}</span>
-                  </div>
-                  <div className="mt-1 break-words text-sm text-muted-foreground">{event.message}</div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <SeverityBadge severity={event.severity} />
+                  <span className="font-medium text-foreground">{event.title || eventLabels[event.type] || event.type}</span>
+                  <span className="text-xs text-muted-foreground">{fmtTime(event.created_at)}</span>
                 </div>
-                <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
-                  {event.actions.map((item) => (
-                    <Button key={item} variant="outline" size="sm" onClick={() => action.mutate({ event, action: item })} disabled={action.isPending}>
-                      {action.isPending ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
-                      {actionLabel(item)}
-                    </Button>
-                  ))}
-                  {!event.read && <Button variant="outline" size="sm" onClick={() => markRead.mutate(event.id)}><Check className="size-4" />已读</Button>}
-                  {!event.acked && <Button size="sm" onClick={() => ack.mutate(event.id)}><CheckCircle2 className="size-4" />确认</Button>}
-                </div>
+                <div className="mt-1 break-words text-sm text-muted-foreground">{event.message}</div>
               </div>
             </CardContent>
           </Card>
@@ -110,15 +77,6 @@ function EventsTab() {
       </div>
     </section>
   )
-}
-
-async function runEventAction(event: OpsEvent, action: string) {
-  if (action === 'check_card' && event.target_id) return api(`/api/cards/${event.target_id}/check`, { method: 'POST', body: '{}' })
-  if (action === 'check_upstream' && event.target_id) return api(`/api/upstreams/${event.target_id}/check`, { method: 'POST', body: '{}' })
-  if (action === 'sync_keys' && event.target_id) return api(`/api/upstreams/${event.target_id}/sync-keys`, { method: 'POST', body: '{}' })
-  if (action === 'scheduler_restore' && event.target_id) return api(`/api/cards/${event.target_id}/scheduler/status`, { method: 'POST', body: JSON.stringify({ status: 1 }) })
-  if (action === 'refresh_cliproxy_accounts') return api('/api/pools/cliproxy/accounts')
-  throw new Error('该动作缺少目标')
 }
 
 function AuditTab() {
@@ -287,8 +245,4 @@ function SeverityBadge({ severity }: { severity: string }) {
   if (severity === 'success') return <Badge variant="success">恢复</Badge>
   if (severity === 'warning') return <Badge variant="destructive">告警</Badge>
   return <Badge variant="secondary">{severity || 'info'}</Badge>
-}
-
-function actionLabel(action: string) {
-  return ({ check_card: '重测卡片', check_upstream: '刷新上游', sync_keys: '同步 Key', scheduler_restore: '恢复调度', refresh_cliproxy_accounts: '刷新号池' } as Record<string, string>)[action] ?? action
 }
