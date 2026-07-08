@@ -13,9 +13,6 @@ import (
 )
 
 func TestProbeSendsFixedModelPayload(t *testing.T) {
-	old := newChallenge
-	newChallenge = func() challenge { return challenge{Prompt: "Which fruit? banana or car", ExpectedAnswer: "banana"} }
-	defer func() { newChallenge = old }()
 	var saw bool
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/responses" {
@@ -41,15 +38,15 @@ func TestProbeSendsFixedModelPayload(t *testing.T) {
 			body.Input[0].Role == "user" &&
 			len(body.Input[0].Content) == 1 &&
 			body.Input[0].Content[0].Type == "input_text" &&
-			body.Input[0].Content[0].Text == "Which fruit? banana or car" &&
-			body.MaxOutputTokens == 16 &&
+			body.Input[0].Content[0].Text == "ping" &&
+			body.MaxOutputTokens == 2 &&
 			!body.Stream
-		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "banana"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "pong"})
 	}))
 	defer s.Close()
 
 	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
-	if !saw || !got.Success || got.Status != StatusOperational || got.Input == "ping" {
+	if !saw || !got.Success || got.Status != StatusOperational || got.Input != "ping" {
 		t.Fatalf("saw=%v got=%+v", saw, got)
 	}
 }
@@ -71,9 +68,6 @@ func TestApplySub2TokensPreservesRefreshWhenMissing(t *testing.T) {
 }
 
 func TestProbeExtractsNestedResponseText(t *testing.T) {
-	old := newChallenge
-	newChallenge = func() challenge { return challenge{Prompt: "Where? lake", ExpectedAnswer: "lake"} }
-	defer func() { newChallenge = old }()
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"output": []any{map[string]any{
@@ -90,40 +84,34 @@ func TestProbeExtractsNestedResponseText(t *testing.T) {
 }
 
 func TestProbeExtractsSSEText(t *testing.T) {
-	old := newChallenge
-	newChallenge = func() challenge { return challenge{Prompt: "Which fruit?", ExpectedAnswer: "banana"} }
-	defer func() { newChallenge = old }()
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
-		_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"banana"}` + "\n\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"pong"}` + "\n\n"))
 		_, _ = w.Write([]byte("event: response.output_text.done\n"))
-		_, _ = w.Write([]byte(`data: {"type":"response.output_text.done","text":"banana"}` + "\n\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.output_text.done","text":"pong"}` + "\n\n"))
 	}))
 	defer s.Close()
 
 	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
-	if got.Status != StatusOperational || got.Output != "banana" || !got.Success {
+	if got.Status != StatusOperational || got.Output != "pong" || !got.Success {
 		t.Fatalf("got=%+v", got)
 	}
 }
 
 func TestProbeClassifiesFailures(t *testing.T) {
-	oldChallenge := newChallenge
 	oldDegraded := degradedAfter
-	newChallenge = func() challenge { return challenge{Prompt: "Which fruit? banana or car", ExpectedAnswer: "banana"} }
 	defer func() {
-		newChallenge = oldChallenge
 		degradedAfter = oldDegraded
 	}()
 
-	t.Run("validation failed", func(t *testing.T) {
+	t.Run("non empty reply succeeds", func(t *testing.T) {
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "blue"})
 		}))
 		defer s.Close()
 		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
-		if got.Status != StatusValidationFailed || got.Success || got.Error == "" {
+		if got.Status != StatusOperational || !got.Success || got.Output != "blue" {
 			t.Fatalf("got=%+v", got)
 		}
 	})
@@ -165,7 +153,7 @@ func TestProbeClassifiesFailures(t *testing.T) {
 	t.Run("degraded", func(t *testing.T) {
 		degradedAfter = -time.Nanosecond
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "banana"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "pong"})
 		}))
 		defer s.Close()
 		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
@@ -176,10 +164,6 @@ func TestProbeClassifiesFailures(t *testing.T) {
 }
 
 func TestProbeCodexCLIUsesTempConfigAndEnvKey(t *testing.T) {
-	old := newChallenge
-	newChallenge = func() challenge { return challenge{Prompt: "Which fruit? banana or car", ExpectedAnswer: "banana"} }
-	defer func() { newChallenge = old }()
-
 	logPath := filepath.Join(t.TempDir(), "fake.log")
 	t.Setenv("AUM_FAKE_CODEX_LOG", logPath)
 	fake := fakeCodex(t, `#!/bin/sh
@@ -190,6 +174,9 @@ config="$CODEX_HOME/config.toml"
 grep -q 'base_url = "https://codex.example.test/v1"' "$config" || { cat "$config" >&2; exit 10; }
 grep -q 'env_key = "AUM_CODEX_API_KEY"' "$config" || exit 11
 ! grep -q 'sk-card-secret' "$config" || { echo "key leaked" >&2; exit 12; }
+instr=$(grep '^model_instructions_file = ' "$config" | sed 's/model_instructions_file = "\(.*\)"/\1/')
+[ -f "$instr" ] || { echo "missing instructions" >&2; exit 16; }
+[ ! -s "$instr" ] || { echo "instructions not empty" >&2; exit 17; }
 {
   printf 'args:%s\n' "$*"
   cat "$config"
@@ -204,11 +191,11 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 [ -n "$out" ] || exit 14
-printf 'banana\n' > "$out"
+printf 'pong\n' > "$out"
 `)
 
 	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.5")
-	if !got.Success || got.Status != StatusOperational || got.HTTPStatus != 0 || got.Output != "banana" {
+	if !got.Success || got.Status != StatusOperational || got.HTTPStatus != 0 || got.Output != "pong" || got.Input != "ping" {
 		t.Fatalf("got=%+v", got)
 	}
 	logBytes, err := os.ReadFile(logPath)
@@ -216,7 +203,7 @@ printf 'banana\n' > "$out"
 		t.Fatal(err)
 	}
 	logText := string(logBytes)
-	for _, want := range []string{"args:exec", "approval_policy=\"never\"", "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "model_provider = \"aum_card\"", "wire_api = \"responses\""} {
+	for _, want := range []string{"args:exec", " ping", "approval_policy=\"never\"", "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "model_provider = \"aum_card\"", "model_instructions_file = ", "project_doc_max_bytes = 0", "web_search = \"disabled\"", "model_reasoning_effort = \"minimal\"", "model_verbosity = \"low\"", "model_reasoning_summary = \"none\"", "inherit = \"none\"", "disable_response_storage = true", "wire_api = \"responses\""} {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("fake codex log missing %q:\n%s", want, logText)
 		}
@@ -224,20 +211,16 @@ printf 'banana\n' > "$out"
 }
 
 func TestProbeCodexCLIFailureIsRecordedAndRedacted(t *testing.T) {
-	old := newChallenge
-	newChallenge = func() challenge { return challenge{Prompt: "Which fruit? banana or car", ExpectedAnswer: "banana"} }
-	defer func() { newChallenge = old }()
-
 	fake := fakeCodex(t, `#!/bin/sh
 echo "user" >&2
-echo "Which fruit? banana or car" >&2
+echo "ping" >&2
 echo "warning: Codex could not find bubblewrap on PATH." >&2
 echo "ERROR: exceeded retry limit, last status: 429 Too Many Requests, request id: req-1 sk-card-secret" >&2
 echo "ERROR: exceeded retry limit, last status: 429 Too Many Requests, request id: req-1 sk-card-secret" >&2
 exit 42
 `)
 	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.5")
-	if got.Success || got.Status != StatusError || !strings.Contains(got.Error, "429 Too Many Requests") || !strings.Contains(got.Error, "[redacted]") || strings.Contains(got.Error, "sk-card-secret") || strings.Contains(got.Error, "Which fruit") || strings.Contains(got.Error, "bubblewrap") {
+	if got.Success || got.Status != StatusError || !strings.Contains(got.Error, "429 Too Many Requests") || !strings.Contains(got.Error, "[redacted]") || strings.Contains(got.Error, "sk-card-secret") || strings.Contains(got.Error, "ping") || strings.Contains(got.Error, "bubblewrap") {
 		t.Fatalf("got=%+v", got)
 	}
 }

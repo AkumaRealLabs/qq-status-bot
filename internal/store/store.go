@@ -116,7 +116,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS probe_runs (
 			id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, card_id TEXT NOT NULL DEFAULT '', checked_at TEXT NOT NULL,
 			model TEXT NOT NULL, input TEXT NOT NULL DEFAULT 'ping', status TEXT NOT NULL DEFAULT '',
-			expected_answer TEXT NOT NULL DEFAULT '', output TEXT NOT NULL DEFAULT '', http_status INTEGER NOT NULL DEFAULT 0,
+			output TEXT NOT NULL DEFAULT '', http_status INTEGER NOT NULL DEFAULT 0,
 			latency_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS alert_events (
@@ -235,7 +235,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "probe_runs", "output", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := s.addColumnIfMissing(ctx, "probe_runs", "expected_answer", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := s.dropColumnIfExists(ctx, "probe_runs", "expected_answer"); err != nil {
 		return err
 	}
 	if err := s.addColumnIfMissing(ctx, "model_cards", "base_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -314,6 +314,18 @@ func (s *Store) addColumnIfMissing(ctx context.Context, table, column, def strin
 		return nil
 	}
 	_, err = s.DB.ExecContext(ctx, `ALTER TABLE `+quoteIdent(table)+` ADD COLUMN `+quoteIdent(column)+` `+def)
+	return err
+}
+
+func (s *Store) dropColumnIfExists(ctx context.Context, table, column string) error {
+	cols, err := s.columns(ctx, table)
+	if err != nil {
+		return err
+	}
+	if !cols[column] {
+		return nil
+	}
+	_, err = s.DB.ExecContext(ctx, `ALTER TABLE `+quoteIdent(table)+` DROP COLUMN `+quoteIdent(column))
 	return err
 }
 
@@ -1237,22 +1249,21 @@ func (s *Store) SaveProbe(ctx context.Context, upstreamID, cardID string, p moni
 	}
 	success := status == monitor.StatusOperational || status == monitor.StatusDegraded
 	run := domain.ProbeRun{
-		ID:             NewID(),
-		UpstreamID:     upstreamID,
-		CardID:         cardID,
-		CheckedAt:      time.Now().UTC(),
-		Model:          domain.ProbeModel,
-		Input:          p.Input,
-		ExpectedAnswer: p.ExpectedAnswer,
-		Status:         status,
-		Output:         p.Output,
-		HTTPStatus:     p.HTTPStatus,
-		LatencyMS:      int(p.Latency.Milliseconds()),
-		Success:        success,
-		Error:          p.Error,
+		ID:         NewID(),
+		UpstreamID: upstreamID,
+		CardID:     cardID,
+		CheckedAt:  time.Now().UTC(),
+		Model:      domain.ProbeModel,
+		Input:      p.Input,
+		Status:     status,
+		Output:     p.Output,
+		HTTPStatus: p.HTTPStatus,
+		LatencyMS:  int(p.Latency.Milliseconds()),
+		Success:    success,
+		Error:      p.Error,
 	}
-	_, err := s.exec(ctx, `INSERT INTO probe_runs (id, upstream_id, card_id, checked_at, model, input, expected_answer, status, output, http_status, latency_ms, success, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.UpstreamID, run.CardID, run.CheckedAt.Format(time.RFC3339Nano), run.Model, run.Input, run.ExpectedAnswer, run.Status, run.Output, run.HTTPStatus, run.LatencyMS, boolInt(run.Success), run.Error)
+	_, err := s.exec(ctx, `INSERT INTO probe_runs (id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.UpstreamID, run.CardID, run.CheckedAt.Format(time.RFC3339Nano), run.Model, run.Input, run.Status, run.Output, run.HTTPStatus, run.LatencyMS, boolInt(run.Success), run.Error)
 	return run, err
 }
 
@@ -1267,7 +1278,7 @@ func (s *Store) UpdateCardSchedulerAutoDisabled(ctx context.Context, id string, 
 }
 
 func (s *Store) RecentProbesForCard(ctx context.Context, cardID string, limit int) ([]domain.ProbeRun, error) {
-	rows, err := s.query(ctx, `SELECT id, upstream_id, card_id, checked_at, model, input, expected_answer, status, output, http_status, latency_ms, success, error
+	rows, err := s.query(ctx, `SELECT id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error
 		FROM probe_runs WHERE card_id=? ORDER BY checked_at DESC LIMIT ?`, cardID, limit)
 	if err != nil {
 		return nil, err
@@ -1289,7 +1300,7 @@ func (s *Store) ProbesForCardSince(ctx context.Context, cardID string, since tim
 	if s.Driver == "sqlite" {
 		timeFilter = "unixepoch(checked_at)>=unixepoch(?)"
 	}
-	query := `SELECT id, upstream_id, card_id, checked_at, model, input, expected_answer, status, output, http_status, latency_ms, success, error
+	query := `SELECT id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error
 		FROM probe_runs WHERE card_id=? AND ` + timeFilter + ` ORDER BY checked_at DESC`
 	args := []any{cardID, since.UTC().Format(time.RFC3339Nano)}
 	if limit > 0 {
@@ -1316,7 +1327,7 @@ func scanProbeRows(rows *sql.Rows) (domain.ProbeRun, error) {
 	var p domain.ProbeRun
 	var checked string
 	var success int
-	err := rows.Scan(&p.ID, &p.UpstreamID, &p.CardID, &checked, &p.Model, &p.Input, &p.ExpectedAnswer, &p.Status, &p.Output, &p.HTTPStatus, &p.LatencyMS, &success, &p.Error)
+	err := rows.Scan(&p.ID, &p.UpstreamID, &p.CardID, &checked, &p.Model, &p.Input, &p.Status, &p.Output, &p.HTTPStatus, &p.LatencyMS, &success, &p.Error)
 	p.CheckedAt = parseTime(checked)
 	if p.Status == "" {
 		p.Status = legacyProbeStatus(boolFromInt(success))

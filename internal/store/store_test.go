@@ -87,16 +87,14 @@ func TestProbesForCardSinceReadsLegacyTimestampFormat(t *testing.T) {
 	}
 }
 
-func TestSaveProbeStoresChallengeFields(t *testing.T) {
+func TestSaveProbeStoresPingFields(t *testing.T) {
 	s := testStore(t)
 	run, err := s.SaveProbe(t.Context(), "u1", "c1", monitor.ProbeResult{
-		Status:         monitor.StatusValidationFailed,
-		Input:          "Which fruit? banana or car",
-		ExpectedAnswer: "banana",
-		Output:         "blue",
-		HTTPStatus:     200,
-		Latency:        123 * time.Millisecond,
-		Error:          "回复验证失败",
+		Status:     monitor.StatusOperational,
+		Input:      "ping",
+		Output:     "pong",
+		HTTPStatus: 200,
+		Latency:    123 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +103,7 @@ func TestSaveProbeStoresChallengeFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Success || len(rows) != 1 || rows[0].Status != monitor.StatusValidationFailed || rows[0].Input == "ping" || rows[0].ExpectedAnswer != "banana" || rows[0].Output != "blue" {
+	if !run.Success || len(rows) != 1 || rows[0].Status != monitor.StatusOperational || rows[0].Input != "ping" || rows[0].Output != "pong" {
 		t.Fatalf("run=%+v rows=%+v", run, rows)
 	}
 }
@@ -133,7 +131,33 @@ func TestMigrateAddsProbeStatusColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cols["status"] || !cols["output"] || !cols["expected_answer"] {
+	if !cols["status"] || !cols["output"] {
+		t.Fatalf("columns = %#v", cols)
+	}
+}
+
+func TestMigrateDropsProbeExpectedAnswer(t *testing.T) {
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "old.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.exec(t.Context(), `CREATE TABLE probe_runs (
+		id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, card_id TEXT NOT NULL DEFAULT '', checked_at TEXT NOT NULL,
+		model TEXT NOT NULL, input TEXT NOT NULL DEFAULT 'ping', status TEXT NOT NULL DEFAULT '',
+		expected_answer TEXT NOT NULL DEFAULT '', output TEXT NOT NULL DEFAULT '', http_status INTEGER NOT NULL DEFAULT 0,
+		latency_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT ''
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cols, err := s.columns(t.Context(), "probe_runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols["expected_answer"] {
 		t.Fatalf("columns = %#v", cols)
 	}
 }

@@ -88,14 +88,13 @@ type RevenueOrder struct {
 }
 
 type ProbeResult struct {
-	HTTPStatus     int
-	Latency        time.Duration
-	Status         string
-	Input          string
-	ExpectedAnswer string
-	Output         string
-	Success        bool
-	Error          string
+	HTTPStatus int
+	Latency    time.Duration
+	Status     string
+	Input      string
+	Output     string
+	Success    bool
+	Error      string
 }
 
 type CheckResult struct {

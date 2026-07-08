@@ -67,7 +67,6 @@ export type Probe = {
   checked_at: string
   status: string
   input?: string
-  expected_answer?: string
   output?: string
   success: boolean
   latency_ms: number

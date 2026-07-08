@@ -233,7 +233,7 @@ func (s *Store) CLIProxyQuotaSnapshotsSince(ctx context.Context, since time.Time
 }
 
 func (s *Store) ProbesSince(ctx context.Context, since time.Time) ([]domain.ProbeRun, error) {
-	rows, err := s.query(ctx, `SELECT id, upstream_id, card_id, checked_at, model, input, expected_answer, status, output, http_status, latency_ms, success, error
+	rows, err := s.query(ctx, `SELECT id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error
 		FROM probe_runs WHERE `+timeWhere(s.Driver, "checked_at")+` ORDER BY checked_at`, since.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err

@@ -517,7 +517,6 @@ function probeStatusLabel(status: string) {
   return ({
     operational: '正常',
     degraded: '延迟偏高',
-    validation_failed: '验证失败',
     failed: '请求失败',
     error: '探测异常',
     正常: '正常',
@@ -535,10 +534,8 @@ function ProbeTooltip({ probe }: { probe: Probe }) {
     ['延迟', `${probe.latency_ms} ms`],
     ['HTTP 状态', probe.http_status || '-'],
     ['测什么', probePurpose(probe)],
-    ['测试题目', probe.input || '-'],
-    ['期望答案', probe.expected_answer || '-'],
+    ['探活输入', probe.input || '-'],
     ['模型回答', probe.output || '-'],
-    ['模型验证', ok ? '通过' : '未通过', ok ? 'text-success' : 'text-destructive'],
     ['检查时间', fmtTime(probe.checked_at)],
     probe.error ? ['详情', probe.error, 'text-destructive'] : undefined,
   ].filter(Boolean) as string[][]
@@ -558,12 +555,19 @@ function ProbeTooltip({ probe }: { probe: Probe }) {
 }
 
 function probeHoverTitle(probe: Probe) {
-  const ok = probeOK(probe)
-  return `状态：${probeStatusLabel(probeStatus(probe))}\n延迟：${probe.latency_ms} ms\nHTTP 状态：${probe.http_status || '-'}\n测什么：${probePurpose(probe)}\n测试题目：${probe.input || '-'}\n期望答案：${probe.expected_answer || '-'}\n模型回答：${probe.output || '-'}\n模型验证：${ok ? '通过' : '未通过'}\n检查时间：${fmtTime(probe.checked_at)}`
+  return [
+    `状态：${probeStatusLabel(probeStatus(probe))}`,
+    `延迟：${probe.latency_ms} ms`,
+    `HTTP 状态：${probe.http_status || '-'}`,
+    `测什么：${probePurpose(probe)}`,
+    `探活输入：${probe.input || '-'}`,
+    `模型回答：${probe.output || '-'}`,
+    `检查时间：${fmtTime(probe.checked_at)}`,
+  ].filter(Boolean).join('\n')
 }
 
-function probePurpose(probe: Probe) {
-  return probe.expected_answer ? '检查 gpt-5.5 是否能按题目返回指定的一词答案' : '检查 gpt-5.5 响应与连通性'
+function probePurpose(_probe: Probe) {
+  return '检查 gpt-5.5 响应与连通性'
 }
 
 function keysOf(row: UpstreamRow | undefined) {

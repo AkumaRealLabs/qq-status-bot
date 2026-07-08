@@ -27,13 +27,13 @@ const (
 	ProbeModeHTTP = "http"
 	ProbeModeCLI  = "cli"
 
-	StatusOperational      = "operational"
-	StatusDegraded         = "degraded"
-	StatusValidationFailed = "validation_failed"
-	StatusFailed           = "failed"
-	StatusError            = "error"
+	StatusOperational = "operational"
+	StatusDegraded    = "degraded"
+	StatusFailed      = "failed"
+	StatusError       = "error"
 
 	codexAPIKeyEnv = "AUM_CODEX_API_KEY"
+	probeInput     = "ping"
 )
 
 var degradedAfter = 6 * time.Second
@@ -280,14 +280,13 @@ func (c Client) sub2apiGroups(ctx context.Context, u *Upstream) map[string]upstr
 }
 
 func (c Client) Probe(ctx context.Context, baseURL, key, model string) ProbeResult {
-	challenge := newChallenge()
 	if strings.EqualFold(c.ProbeMode, ProbeModeCLI) {
-		return c.probeCodexCLI(ctx, baseURL, key, model, challenge)
+		return c.probeCodexCLI(ctx, baseURL, key, model)
 	}
-	return c.probeHTTP(ctx, baseURL, key, model, challenge)
+	return c.probeHTTP(ctx, baseURL, key, model)
 }
 
-func (c Client) probeHTTP(ctx context.Context, baseURL, key, model string, challenge challenge) ProbeResult {
+func (c Client) probeHTTP(ctx context.Context, baseURL, key, model string) ProbeResult {
 	start := time.Now()
 	var raw map[string]any
 	err := c.doJSON(ctx, http.MethodPost, joinURL(baseURL, "/v1/responses"), map[string]any{
@@ -296,28 +295,28 @@ func (c Client) probeHTTP(ctx context.Context, baseURL, key, model string, chall
 			"role": "user",
 			"content": []map[string]string{{
 				"type": "input_text",
-				"text": challenge.Prompt,
+				"text": probeInput,
 			}},
 		}},
-		"max_output_tokens": 16,
+		"max_output_tokens": 2,
 		"stream":            false,
 	}, bearer(key), &raw)
 	latency := time.Since(start)
 	if err != nil {
 		var httpErr httpStatusError
 		if errors.As(err, &httpErr) {
-			return ProbeResult{HTTPStatus: httpErr.Status, Latency: latency, Status: StatusFailed, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: httpErr.Error()}
+			return ProbeResult{HTTPStatus: httpErr.Status, Latency: latency, Status: StatusFailed, Input: probeInput, Error: httpErr.Error()}
 		}
-		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
+		return ProbeResult{Latency: latency, Status: StatusError, Input: probeInput, Error: err.Error()}
 	}
-	return probeResultFromOutput(challenge, responseText(raw), http.StatusOK, latency)
+	return probeResultFromOutput(responseText(raw), http.StatusOK, latency)
 }
 
-func (c Client) probeCodexCLI(ctx context.Context, baseURL, key, model string, challenge challenge) ProbeResult {
+func (c Client) probeCodexCLI(ctx context.Context, baseURL, key, model string) ProbeResult {
 	start := time.Now()
 	dir, err := os.MkdirTemp("", "aum-codex-probe-*")
 	if err != nil {
-		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
+		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: probeInput, Error: err.Error()}
 	}
 	defer os.RemoveAll(dir)
 
@@ -326,13 +325,23 @@ func (c Client) probeCodexCLI(ctx context.Context, baseURL, key, model string, c
 	homeDir := filepath.Join(dir, "home")
 	for _, path := range []string{codexHome, workDir, homeDir} {
 		if err := os.MkdirAll(path, 0700); err != nil {
-			return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
+			return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: probeInput, Error: err.Error()}
 		}
 	}
 
+	instructionsPath := filepath.Join(codexHome, "instructions.txt")
+	if err := os.WriteFile(instructionsPath, nil, 0600); err != nil {
+		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: probeInput, Error: err.Error()}
+	}
 	config := fmt.Sprintf(`model_provider = "aum_card"
 model = %q
+model_instructions_file = %q
 disable_response_storage = true
+project_doc_max_bytes = 0
+web_search = "disabled"
+model_reasoning_effort = "minimal"
+model_verbosity = "low"
+model_reasoning_summary = "none"
 
 [shell_environment_policy]
 inherit = "none"
@@ -342,9 +351,9 @@ name = "AUM Card"
 base_url = %q
 wire_api = "responses"
 env_key = %q
-`, model, codexProviderBaseURL(baseURL), codexAPIKeyEnv)
+`, model, instructionsPath, codexProviderBaseURL(baseURL), codexAPIKeyEnv)
 	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(config), 0600); err != nil {
-		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
+		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: probeInput, Error: err.Error()}
 	}
 
 	answerPath := filepath.Join(dir, "answer.txt")
@@ -362,7 +371,7 @@ env_key = %q
 		"--sandbox", "read-only",
 		"-C", workDir,
 		"-o", answerPath,
-		challenge.Prompt,
+		probeInput,
 	)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
@@ -373,13 +382,13 @@ env_key = %q
 	output, err := cmd.CombinedOutput()
 	latency := time.Since(start)
 	if err != nil {
-		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: codexCLIError(err, output, key)}
+		return ProbeResult{Latency: latency, Status: StatusError, Input: probeInput, Error: codexCLIError(err, output, key)}
 	}
 	answer, err := os.ReadFile(answerPath)
 	if err != nil {
-		return ProbeResult{Latency: latency, Status: StatusError, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: err.Error()}
+		return ProbeResult{Latency: latency, Status: StatusError, Input: probeInput, Error: err.Error()}
 	}
-	return probeResultFromOutput(challenge, strings.TrimSpace(string(answer)), 0, latency)
+	return probeResultFromOutput(strings.TrimSpace(string(answer)), 0, latency)
 }
 
 func codexCLIError(err error, output []byte, key string) string {
@@ -407,27 +416,15 @@ func limitText(s string, n int) string {
 	return s
 }
 
-func probeResultFromOutput(challenge challenge, output string, httpStatus int, latency time.Duration) ProbeResult {
+func probeResultFromOutput(output string, httpStatus int, latency time.Duration) ProbeResult {
 	if output == "" {
-		return ProbeResult{HTTPStatus: httpStatus, Latency: latency, Status: StatusFailed, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Error: "回复为空"}
-	}
-	validation := validateResponse(output, challenge.ExpectedAnswer)
-	if !validation.Valid {
-		return ProbeResult{
-			HTTPStatus:     httpStatus,
-			Latency:        latency,
-			Status:         StatusValidationFailed,
-			Input:          challenge.Prompt,
-			ExpectedAnswer: challenge.ExpectedAnswer,
-			Output:         output,
-			Error:          fmt.Sprintf("回复验证失败: 期望 %q, 实际: %q", challenge.ExpectedAnswer, validation.Normalized),
-		}
+		return ProbeResult{HTTPStatus: httpStatus, Latency: latency, Status: StatusFailed, Input: probeInput, Error: "回复为空"}
 	}
 	status := StatusOperational
 	if latency > degradedAfter {
 		status = StatusDegraded
 	}
-	return ProbeResult{HTTPStatus: httpStatus, Latency: latency, Status: status, Input: challenge.Prompt, ExpectedAnswer: challenge.ExpectedAnswer, Output: output, Success: true}
+	return ProbeResult{HTTPStatus: httpStatus, Latency: latency, Status: status, Input: probeInput, Output: output, Success: true}
 }
 
 func codexProviderBaseURL(baseURL string) string {

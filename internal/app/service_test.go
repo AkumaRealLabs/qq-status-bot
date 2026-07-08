@@ -740,7 +740,7 @@ func TestMonitorStatusCountsProbeStatuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, status := range []string{monitor.StatusOperational, monitor.StatusDegraded, monitor.StatusValidationFailed} {
+	for _, status := range []string{monitor.StatusOperational, monitor.StatusDegraded, monitor.StatusFailed} {
 		if _, err := st.SaveProbe(t.Context(), u.ID, card.ID, monitor.ProbeResult{Status: status, Latency: time.Millisecond}); err != nil {
 			t.Fatal(err)
 		}
@@ -824,7 +824,7 @@ func TestCheckCustomCardUsesOwnURLKeyAndFixedModel(t *testing.T) {
 			t.Fatal(err)
 		}
 		model, _ = body["model"].(string)
-		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "banana"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "pong"})
 	}))
 	defer ts.Close()
 
@@ -1025,7 +1025,7 @@ func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := st.SaveProbe(t.Context(), "", public.ID, monitor.ProbeResult{
-		Status: monitor.StatusValidationFailed, Input: "公开测试题目", ExpectedAnswer: "banana", Output: "wrong", Error: `回复验证失败: 期望 "banana", 实际: "wrong"`,
+		Status: monitor.StatusFailed, Input: "ping", Output: "", Error: "回复为空",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1047,7 +1047,7 @@ func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 	if !strings.Contains(text, `"name":"公开"`) || !strings.Contains(text, `"name":"暂停"`) || strings.Contains(text, "私有") || strings.Contains(text, "sk-public") {
 		t.Fatalf("public body = %s", body)
 	}
-	for _, visible := range []string{"公开测试题目", "banana", "wrong"} {
+	for _, visible := range []string{"ping", "请求失败"} {
 		if !strings.Contains(text, visible) {
 			t.Fatalf("public body missing %s: %s", visible, body)
 		}
@@ -1068,7 +1068,7 @@ func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 	if _, ok := parsed.Rows[0].History[0]["success"]; ok {
 		t.Fatalf("public history leaked success: %s", body)
 	}
-	if !strings.Contains(text, "验证失败") || strings.Contains(text, monitor.StatusValidationFailed) {
+	if !strings.Contains(text, "请求失败") || strings.Contains(text, `"status":"`+monitor.StatusFailed+`"`) {
 		t.Fatalf("bad public status summary: %s", body)
 	}
 }

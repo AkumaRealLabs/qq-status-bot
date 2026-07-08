@@ -652,7 +652,7 @@ func publicCards(cards []domain.ModelCard) []domain.PublicModelCard {
 			p.Status = probeStatusLabel(p.Status)
 			p.Error = publicProbeError(p)
 			card.History = append(card.History, domain.PublicProbeRun{
-				CheckedAt: p.CheckedAt, Status: p.Status, Input: p.Input, ExpectedAnswer: p.ExpectedAnswer,
+				CheckedAt: p.CheckedAt, Status: p.Status, Input: p.Input,
 				Output: p.Output, HTTPStatus: p.HTTPStatus, LatencyMS: p.LatencyMS, Success: p.Success, Error: p.Error,
 			})
 		}
@@ -671,8 +671,6 @@ func publicLastError(c domain.PublicModelCard) string {
 
 func publicProbeError(p domain.ProbeRun) string {
 	switch p.Status {
-	case monitor.StatusValidationFailed, "验证失败":
-		return "验证失败"
 	case monitor.StatusError, "探测异常":
 		return "探测异常"
 	case monitor.StatusFailed, "请求失败":
@@ -691,8 +689,6 @@ func probeStatusLabel(status string) string {
 		return "正常"
 	case monitor.StatusDegraded:
 		return "延迟偏高"
-	case monitor.StatusValidationFailed:
-		return "验证失败"
 	case monitor.StatusFailed:
 		return "请求失败"
 	case monitor.StatusError:

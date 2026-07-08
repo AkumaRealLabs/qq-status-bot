@@ -232,7 +232,6 @@ export function SchedulerPage() {
                     const channel = channelForCard(list, card)
                     const canToggle = channel?.status === 1 || channel?.status === 2
                     const nextStatus = channel?.status === 2 ? 1 : 2
-                    const detail = channelDetail(channel)
                     const badge = schedulerChannelBadge(card, channel)
                     return (
                       <Card key={card.id} className="grid h-full min-w-0 grid-rows-[auto_1fr] bg-card">
@@ -240,18 +239,15 @@ export function SchedulerPage() {
                           <div className="flex min-w-0 items-start justify-between gap-3">
                             <div className="min-w-0">
                               <CardTitle className="truncate">{card.name}</CardTitle>
-                              <CardDescription>{card.scheduler_channel_name || '未绑定渠道'}</CardDescription>
                             </div>
                             <StatusBadge ok={badge.ok} okText={badge.text} failText={badge.text} />
                           </div>
                         </CardHeader>
                         <CardContent className="grid h-full content-start gap-3">
                           <div className="grid grid-cols-2 gap-2">
-                            <InfoCell label="展示分组" value={displayGroupName(card)} />
                             <InfoCell label="上游 Key 原始分组" value={originalKeyGroup(card)} />
                             <InfoCell label="上游成本" value={upstreamCost(card)} />
                             <InfoCell label="自动命中分组" value={matchedTierLabel(card, tiers)} />
-                            <InfoCell label="调度器渠道" value={schedulerChannelName(card, channel)} />
                             <InfoCell label="自动恢复" value={schedulerRestoreState(card, channel)} />
                           </div>
                           <Field label="绑定渠道">
@@ -272,16 +268,6 @@ export function SchedulerPage() {
                               </SelectContent>
                             </Select>
                           </Field>
-                          <div className="min-h-5 text-xs leading-relaxed text-muted-foreground">
-                            {channel ? (
-                              <>
-                                <span className={cn('font-medium', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
-                                  {schedulerStatus(channel.status)}
-                                </span>
-                                {detail && ` · ${detail}`}
-                              </>
-                            ) : '先刷新渠道，再选择要绑定的渠道'}
-                          </div>
                           <Button
                             variant={!canToggle ? 'outline' : nextStatus === 1 ? 'default' : 'danger'}
                             size="sm"
@@ -506,11 +492,6 @@ function InfoCell({ label, value }: { label: string; value: string }) {
   )
 }
 
-function channelDetail(channel?: SchedulerChannel) {
-  if (!channel) return '先刷新渠道，再选择要绑定的渠道'
-  return [channel.type, channel.tag, channel.models?.join(', ')].filter(Boolean).join(' · ')
-}
-
 function channelsForCard(channels: SchedulerChannel[], card: ModelCard, cards: ModelCard[]) {
   const used = new Set(cards.filter((item) => item.id !== card.id).map((item) => item.scheduler_channel_id).filter(Boolean))
   const available = channels.filter((channel) => !used.has(channel.id))
@@ -568,10 +549,6 @@ function channelGroups(channel: SchedulerChannel) {
   return (channel.group ?? '').split(/[,，、;；\s]+/).map((item) => item.trim()).filter(Boolean)
 }
 
-function displayGroupName(card: ModelCard) {
-  return card.display_group?.trim() || '其他'
-}
-
 function originalKeyGroup(card: ModelCard) {
   return card.key_group || (card.base_url ? '自定义' : '-')
 }
@@ -595,10 +572,6 @@ function matchedTierLabel(card: ModelCard, tiers: SchedulerTier[]) {
     const group = tier.group.trim()
     return tag && tag !== group ? `${tag} (${group})` : group
   }).join('，')
-}
-
-function schedulerChannelName(card: ModelCard, channel?: SchedulerChannel) {
-  return channel?.name || card.scheduler_channel_name || card.scheduler_channel_id || '未绑定'
 }
 
 function schedulerChannelBadge(card: ModelCard, channel?: SchedulerChannel) {
