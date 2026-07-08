@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -1113,11 +1114,13 @@ func (s *Service) sendTelegram(ctx context.Context, message string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.TelegramBotToken == "" || cfg.TelegramChatID == "" {
+	token := strings.TrimSpace(cfg.TelegramBotToken)
+	chatID := strings.TrimSpace(cfg.TelegramChatID)
+	if token == "" || chatID == "" {
 		return nil
 	}
-	form := url.Values{"chat_id": {cfg.TelegramChatID}, "text": {message}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+cfg.TelegramBotToken+"/sendMessage", bytes.NewBufferString(form.Encode()))
+	form := url.Values{"chat_id": {chatID}, "text": {message}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+token+"/sendMessage", bytes.NewBufferString(form.Encode()))
 	if err != nil {
 		return err
 	}
@@ -1131,7 +1134,12 @@ func (s *Service) sendTelegram(ctx context.Context, message string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := strings.TrimSpace(string(b))
+		if msg != "" {
+			return fmt.Errorf("telegram status %d: %s", resp.StatusCode, msg)
+		}
 		return fmt.Errorf("telegram status %d", resp.StatusCode)
 	}
 	return nil

@@ -280,7 +280,7 @@ func (s *Service) profitChannelBindings(ctx context.Context) (map[string]profitB
 }
 
 func (s *Service) schedulerProfitLogs(ctx context.Context, cfg domain.SchedulerConfig, start, end time.Time, group string) ([]schedulerProfitLog, error) {
-	const pageSize = 200
+	const pageSize = 100
 	var out []schedulerProfitLog
 	for page := 1; page <= 1000; page++ {
 		values := url.Values{}

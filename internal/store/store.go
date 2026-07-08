@@ -514,6 +514,8 @@ func (s *Store) UpdateSettings(ctx context.Context, cfg domain.Settings) (domain
 	if cfg.SiteName == "" {
 		cfg.SiteName = "AI 上游监控"
 	}
+	cfg.TelegramBotToken = strings.TrimSpace(cfg.TelegramBotToken)
+	cfg.TelegramChatID = strings.TrimSpace(cfg.TelegramChatID)
 	cfg.EpayBaseURL = strings.TrimRight(strings.TrimSpace(cfg.EpayBaseURL), "/")
 	cfg.EpayPID = strings.TrimSpace(cfg.EpayPID)
 	cfg.EpayKey = strings.TrimSpace(cfg.EpayKey)

@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -195,6 +196,48 @@ func TestCheckBrowserCDPUsesLocalChromeHostHeader(t *testing.T) {
 	}
 }
 
+func TestSendTelegramIncludesUpstreamError(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := st.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.TelegramBotToken = " token "
+	cfg.TelegramChatID = " 100 "
+	if _, err := st.UpdateSettings(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotPath, gotBody string
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Status:     "400 Bad Request",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}`)),
+			Request:    r,
+		}, nil
+	})}}
+	err = svc.sendTelegram(t.Context(), "hi")
+	if err == nil || !strings.Contains(err.Error(), "Bad Request: chat not found") {
+		t.Fatalf("err = %v", err)
+	}
+	if gotPath != "/bottoken/sendMessage" || !strings.Contains(gotBody, "chat_id=100") {
+		t.Fatalf("request path=%q body=%q", gotPath, gotBody)
+	}
+}
+
 func TestSchedulerConfigAndChannelsProxy(t *testing.T) {
 	var sawAuth, sawUser, sawQuery, sawPageSize string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -315,7 +358,7 @@ func TestProfitUsageUnitsUsesOriginalQuota(t *testing.T) {
 
 func TestProfitFromSchedulerLogs(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/log/" || r.URL.Query().Get("type") != "2" || r.URL.Query().Get("p") != "1" || r.URL.Query().Get("page_size") != "200" {
+		if r.URL.Path != "/api/log/" || r.URL.Query().Get("type") != "2" || r.URL.Query().Get("p") != "1" || r.URL.Query().Get("page_size") != "100" {
 			t.Fatalf("bad log request: %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
 		switch r.URL.Query().Get("group") {
@@ -416,6 +459,34 @@ func profitTestChannel(rows []domain.ProfitChannelRow, id string) domain.ProfitC
 
 func closeEnough(a, b float64) bool {
 	return math.Abs(a-b) < 1e-9
+}
+
+func TestSchedulerProfitLogsUsesNewAPICappedPageSize(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page_size") != "100" {
+			t.Fatalf("page_size = %q", r.URL.Query().Get("page_size"))
+		}
+		items := []map[string]any{}
+		count := 1
+		if r.URL.Query().Get("p") == "1" {
+			count = 100
+		}
+		for range count {
+			items = append(items, map[string]any{"quota": 500000, "channel": 9, "other": map[string]any{"group_ratio": 1}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": items}})
+	}))
+	defer ts.Close()
+
+	svc := New(nil)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	logs, err := svc.schedulerProfitLogs(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token"}, time.Unix(1, 0), time.Unix(2, 0), "gpt_low")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 101 {
+		t.Fatalf("logs = %d", len(logs))
+	}
 }
 
 func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
