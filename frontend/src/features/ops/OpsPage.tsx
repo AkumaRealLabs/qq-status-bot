@@ -180,13 +180,14 @@ function AuditTab() {
 }
 
 function AuditRow({ row }: { row: AuditLog }) {
+  const fields = row.fields ?? []
   return (
     <tr className="border-t border-border align-top">
       <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{fmtTime(row.created_at)}</td>
       <td className="px-3 py-2">{row.actor || '-'}</td>
       <td className="px-3 py-2">{row.action}</td>
       <td className="px-3 py-2">{[row.target_type, row.target_id].filter(Boolean).join(' / ') || '-'}</td>
-      <td className="max-w-72 px-3 py-2 text-muted-foreground">{row.fields.join(', ') || '-'}</td>
+      <td className="max-w-72 px-3 py-2 text-muted-foreground">{fields.join(', ') || '-'}</td>
       <td className="px-3 py-2 text-muted-foreground">{row.summary}</td>
     </tr>
   )

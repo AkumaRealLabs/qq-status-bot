@@ -380,7 +380,7 @@ export type AuditLog = {
   target_type?: string
   target_id?: string
   summary: string
-  fields: string[]
+  fields?: string[]
   created_at: string
 }
 

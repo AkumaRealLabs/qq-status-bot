@@ -124,6 +124,9 @@ func (s *Store) CreateAudit(ctx context.Context, log domain.AuditLog) error {
 	if log.CreatedAt.IsZero() {
 		log.CreatedAt = time.Now().UTC()
 	}
+	if log.Fields == nil {
+		log.Fields = []string{}
+	}
 	fields, err := json.Marshal(log.Fields)
 	if err != nil {
 		return err
@@ -162,6 +165,9 @@ func (s *Store) AuditLogs(ctx context.Context, action, target string, limit int)
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(fields), &log.Fields)
+		if log.Fields == nil {
+			log.Fields = []string{}
+		}
 		log.CreatedAt = parseTime(created)
 		out = append(out, log)
 	}

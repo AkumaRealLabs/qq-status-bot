@@ -294,6 +294,16 @@ func TestOpsStoreCRUD(t *testing.T) {
 	if len(audit) != 1 || audit[0].Fields[0] != "telegram_bot_token" {
 		t.Fatalf("audit = %+v", audit)
 	}
+	if err := s.CreateAudit(t.Context(), domain.AuditLog{Actor: "admin", Action: "PATCH /api/cards"}); err != nil {
+		t.Fatal(err)
+	}
+	audit, err = s.AuditLogs(t.Context(), "cards", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit) != 1 || audit[0].Fields == nil {
+		t.Fatalf("audit = %+v", audit)
+	}
 	if err := s.CheckWritable(t.Context()); err != nil {
 		t.Fatal(err)
 	}
