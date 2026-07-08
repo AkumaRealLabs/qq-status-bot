@@ -188,14 +188,14 @@ func TestMigrateAddsCardPublicAndCustomColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cols["base_url"] || !cols["api_key"] || !cols["public_enabled"] || !cols["display_group"] || !cols["scheduler_group"] || !cols["sort_order"] {
+	if !cols["base_url"] || !cols["api_key"] || !cols["public_enabled"] || !cols["display_group"] || !cols["pool_enabled"] || !cols["manual_cost_ratio"] || !cols["scheduler_group"] || !cols["sort_order"] {
 		t.Fatalf("columns = %#v", cols)
 	}
 	card, err := s.Card(t.Context(), "c1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if card.PublicEnabled || card.BaseURL != "" || card.APIKey != "" || card.DisplayGroup != "" || card.SchedulerGroup != "" {
+	if !card.PoolEnabled || card.ManualCostRatio != "" || card.PublicEnabled || card.BaseURL != "" || card.APIKey != "" || card.DisplayGroup != "" || card.SchedulerGroup != "" {
 		t.Fatalf("card = %+v", card)
 	}
 }
@@ -515,7 +515,7 @@ func TestBalanceRechargeLogs(t *testing.T) {
 func TestCardStoresCustomFields(t *testing.T) {
 	s := testStore(t)
 	card, err := s.CreateCard(t.Context(), domain.ModelCard{
-		Name: "自定义", BaseURL: "https://api.example.test", APIKey: "sk-test", DisplayGroup: "生产", SchedulerGroup: "gpt_low", Enabled: true, PublicEnabled: true,
+		Name: "自定义", BaseURL: "https://api.example.test", APIKey: "sk-test", DisplayGroup: "生产", PoolEnabled: true, PoolEnabledSet: true, ManualCostRatio: "0.14", SchedulerGroup: "gpt_low", Enabled: true, PublicEnabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -524,7 +524,7 @@ func TestCardStoresCustomFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "自定义" || got.BaseURL != "https://api.example.test" || got.APIKey != "sk-test" || got.DisplayGroup != "生产" || got.SchedulerGroup != "gpt_low" || !got.PublicEnabled {
+	if got.Name != "自定义" || got.BaseURL != "https://api.example.test" || got.APIKey != "sk-test" || got.DisplayGroup != "生产" || !got.PoolEnabled || got.ManualCostRatio != "0.14" || got.SchedulerGroup != "gpt_low" || !got.PublicEnabled {
 		t.Fatalf("card = %+v", got)
 	}
 }

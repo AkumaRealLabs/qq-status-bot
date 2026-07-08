@@ -87,7 +87,7 @@ export function SchedulerPage() {
     },
     onSuccess: (data) => {
       setCfgDraft(null)
-      setMessage(`已更新 ${data.updated} 个渠道，跳过 ${data.skipped} 个`)
+      setMessage(`更新 ${data.updated} 个，保持 ${data.unchanged} 个，跳过 ${data.skipped} 个`)
       void groups.refetch()
       void channels.refetch()
     },
@@ -95,6 +95,7 @@ export function SchedulerPage() {
   })
   if (!form) return <ShellLoading />
   const rows = cards.data ?? []
+  const poolRows = rows.filter((card) => card.pool_enabled ?? true)
   const list = channels.data ?? []
   const tiers = schedulerTiers(form)
   const groupRows = schedulerTierRows(tiers, groups.data ?? [], list)
@@ -220,15 +221,15 @@ export function SchedulerPage() {
 
       <Section title="卡片绑定">
         {cards.isLoading && <EmptyPanel text="加载中..." />}
-        {!cards.isLoading && rows.length === 0 && <EmptyPanel text="暂无状态卡片" />}
-        {!cards.isLoading && rows.length > 0 && (
+        {!cards.isLoading && poolRows.length === 0 && <EmptyPanel text="暂无号池卡片" />}
+        {!cards.isLoading && poolRows.length > 0 && (
           <div className="grid min-w-0 gap-5">
-            {groupCards(rows).map((group) => (
+            {groupCards(poolRows).map((group) => (
               <section key={group.name} className="grid min-w-0 gap-2">
                 <div className="text-sm font-medium text-foreground">展示分组 · {group.name}</div>
                 <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {group.cards.map((card) => {
-                    const options = channelsForCard(list, card, rows)
+                    const options = channelsForCard(list, card, poolRows)
                     const channel = channelForCard(list, card)
                     const canToggle = channel?.status === 1 || channel?.status === 2
                     const nextStatus = channel?.status === 2 ? 1 : 2
@@ -605,6 +606,7 @@ function schedulerStatus(status: number) {
 }
 
 function logAction(action: SchedulerLog['action']) {
+  if (action === 'group_sync') return '分组同步'
   return action === 'restore' ? '恢复' : '关闭'
 }
 

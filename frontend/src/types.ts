@@ -50,6 +50,8 @@ export type ModelCard = {
   key_group_ratio?: string
   effective_ratio?: string
   display_group: string
+  pool_enabled: boolean
+  manual_cost_ratio?: string
   scheduler_group?: string
   scheduler_channel_id?: string
   scheduler_channel_name?: string
@@ -253,6 +255,8 @@ export type CardForm = {
   upstream_id: string
   key_id: string
   display_group: string
+  pool_enabled: boolean
+  manual_cost_ratio: string
   enabled: boolean
   public_enabled: boolean
 }
@@ -294,7 +298,7 @@ export type SchedulerLog = {
   card_name: string
   channel_id: string
   channel_name: string
-  action: 'disable' | 'restore'
+  action: 'disable' | 'restore' | 'group_sync'
   status: 'success' | 'error' | 'skipped'
   message: string
   created_at: string
@@ -302,6 +306,7 @@ export type SchedulerLog = {
 
 export type SchedulerApplyResult = {
   updated: number
+  unchanged: number
   skipped: number
 }
 

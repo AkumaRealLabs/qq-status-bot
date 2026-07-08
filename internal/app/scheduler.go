@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -38,23 +39,35 @@ func (s *Service) SchedulerChannels(ctx context.Context, keyword string) ([]doma
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
 		return nil, ErrBadRequest("请先配置调度器连接")
 	}
-	values := url.Values{}
-	values.Set("page_size", "1000")
-	if strings.TrimSpace(keyword) != "" {
-		values.Set("keyword", strings.TrimSpace(keyword))
+	return s.fetchSchedulerChannels(ctx, cfg, keyword)
+}
+
+func (s *Service) fetchSchedulerChannels(ctx context.Context, cfg domain.SchedulerConfig, keyword string) ([]domain.SchedulerChannel, error) {
+	var out []domain.SchedulerChannel
+	for p := 1; ; p++ {
+		values := url.Values{}
+		values.Set("page_size", "100")
+		values.Set("p", strconv.Itoa(p))
+		if strings.TrimSpace(keyword) != "" {
+			values.Set("keyword", strings.TrimSpace(keyword))
+		}
+		path := "/api/channel/"
+		if encoded := values.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+		var raw map[string]any
+		if err := s.schedulerJSON(ctx, cfg, http.MethodGet, path, nil, &raw); err != nil {
+			return nil, err
+		}
+		if ok, exists := raw["success"].(bool); exists && !ok {
+			return nil, errors.New(schedulerMessage(raw))
+		}
+		page := schedulerChannels(raw)
+		out = append(out, page...)
+		if len(page) < 100 {
+			return out, nil
+		}
 	}
-	path := "/api/channel/"
-	if encoded := values.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-	var raw map[string]any
-	if err := s.schedulerJSON(ctx, cfg, http.MethodGet, path, nil, &raw); err != nil {
-		return nil, err
-	}
-	if ok, exists := raw["success"].(bool); exists && !ok {
-		return nil, errors.New(schedulerMessage(raw))
-	}
-	return schedulerChannels(raw), nil
 }
 
 func (s *Service) SchedulerGroups(ctx context.Context) ([]domain.SchedulerGroup, error) {
@@ -100,11 +113,34 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 		return domain.SchedulerApplyResult{}, err
 	}
 	var out domain.SchedulerApplyResult
+	poolCards := make([]domain.ModelCard, 0, len(cards))
 	for _, card := range cards {
+		if card.PoolEnabled {
+			poolCards = append(poolCards, card)
+		}
+	}
+	if len(poolCards) == 0 {
+		return out, nil
+	}
+	channels, err := s.fetchSchedulerChannels(ctx, cfg, "")
+	if err != nil {
+		return domain.SchedulerApplyResult{}, err
+	}
+	channelGroups := make(map[string]string, len(channels))
+	for _, channel := range channels {
+		channelGroups[channel.ID] = channel.Group
+	}
+	managed := schedulerManagedGroups(tiers)
+	for _, card := range poolCards {
 		price, ok := s.cardPrice(ctx, card)
-		groups := schedulerGroupsForPrice(tiers, price)
-		if !ok || card.SchedulerChannelID == "" || len(groups) == 0 {
+		current, found := channelGroups[strings.TrimSpace(card.SchedulerChannelID)]
+		if !ok || card.SchedulerChannelID == "" || !found {
 			out.Skipped++
+			continue
+		}
+		groups := schedulerTargetGroups(tiers, managed, price, current)
+		if schedulerSameGroups(schedulerSplitGroups(current), groups) {
+			out.Unchanged++
 			continue
 		}
 		group := strings.Join(groups, ",")
@@ -116,6 +152,16 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 	return out, nil
 }
 
+func (s *Service) syncSchedulerGroupsBestEffort(ctx context.Context) {
+	if _, err := s.ApplySchedulerGroups(ctx); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
+		_ = s.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
+			Action:  "group_sync",
+			Status:  "error",
+			Message: err.Error(),
+		})
+	}
+}
+
 func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID string, status int) (domain.ModelCard, error) {
 	if status != 1 && status != 2 {
 		return domain.ModelCard{}, ErrBadRequest("status must be 1 or 2")
@@ -123,6 +169,9 @@ func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID stri
 	card, err := s.Store.Card(ctx, cardID)
 	if err != nil {
 		return domain.ModelCard{}, err
+	}
+	if !card.PoolEnabled {
+		return domain.ModelCard{}, ErrBadRequest("card is monitor-only")
 	}
 	if card.SchedulerChannelID == "" {
 		return domain.ModelCard{}, ErrBadRequest("scheduler channel required")
@@ -141,7 +190,7 @@ func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID stri
 }
 
 func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {
-	if card.SchedulerChannelID == "" {
+	if !card.PoolEnabled || card.SchedulerChannelID == "" {
 		return nil
 	}
 	if !success && failures >= 2 {
@@ -231,6 +280,13 @@ func (s *Service) lastTwoProbesSucceeded(ctx context.Context, cardID string) boo
 }
 
 func (s *Service) cardPrice(ctx context.Context, card domain.ModelCard) (float64, bool) {
+	if card.BaseURL != "" {
+		price, err := strconv.ParseFloat(strings.TrimSpace(card.ManualCostRatio), 64)
+		if err != nil || price < 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+			return 0, false
+		}
+		return price, true
+	}
 	if card.KeyID == "" {
 		return 0, false
 	}
@@ -262,6 +318,63 @@ func schedulerGroupsForPrice(tiers []domain.SchedulerTier, price float64) []stri
 		groups = append(groups, group)
 	}
 	return groups
+}
+
+func schedulerManagedGroups(tiers []domain.SchedulerTier) map[string]bool {
+	out := map[string]bool{}
+	for _, tier := range tiers {
+		if group := strings.TrimSpace(tier.Group); group != "" {
+			out[group] = true
+		}
+	}
+	return out
+}
+
+func schedulerTargetGroups(tiers []domain.SchedulerTier, managed map[string]bool, price float64, current string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, group := range schedulerSplitGroups(current) {
+		if !managed[group] {
+			seen[group] = true
+			out = append(out, group)
+		}
+	}
+	for _, group := range schedulerGroupsForPrice(tiers, price) {
+		if !seen[group] {
+			seen[group] = true
+			out = append(out, group)
+		}
+	}
+	return out
+}
+
+func schedulerSplitGroups(raw string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, item := range strings.Split(raw, ",") {
+		group := strings.TrimSpace(item)
+		if group != "" && !seen[group] {
+			seen[group] = true
+			out = append(out, group)
+		}
+	}
+	return out
+}
+
+func schedulerSameGroups(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, group := range a {
+		seen[group] = true
+	}
+	for _, group := range b {
+		if !seen[group] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) setSchedulerChannelStatus(ctx context.Context, channelID string, status int) error {

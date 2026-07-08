@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -140,7 +141,11 @@ func (s *Service) SaveUpstream(ctx context.Context, id string, in domain.Upstrea
 	in.LastError = old.LastError
 	in.FailureCount = old.FailureCount
 	in.CreatedAt = old.CreatedAt
-	return s.Store.UpdateUpstream(ctx, in)
+	out, err := s.Store.UpdateUpstream(ctx, in)
+	if err == nil && domain.BalanceRate(old) != domain.BalanceRate(out) {
+		s.syncSchedulerGroupsBestEffort(ctx)
+	}
+	return out, err
 }
 
 func (s *Service) SyncKeys(ctx context.Context, upstreamID string) error {
@@ -156,7 +161,11 @@ func (s *Service) SyncKeys(ctx context.Context, upstreamID string) error {
 	if err := s.Store.SaveUpstreamTokens(ctx, u.ID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken); err != nil {
 		return err
 	}
-	return s.Store.SaveKeys(ctx, u.ID, result.Keys)
+	if err := s.Store.SaveKeys(ctx, u.ID, result.Keys); err != nil {
+		return err
+	}
+	s.syncSchedulerGroupsBestEffort(ctx)
+	return nil
 }
 
 func (s *Service) CheckDue(ctx context.Context) error {
@@ -186,10 +195,15 @@ func (s *Service) CheckAll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	checked := false
 	for _, u := range upstreams {
 		if u.Enabled {
-			_ = s.CheckUpstream(ctx, u.ID)
+			_ = s.checkUpstream(ctx, u.ID, false)
+			checked = true
 		}
+	}
+	if checked {
+		s.syncSchedulerGroupsBestEffort(ctx)
 	}
 	cards, err := s.Store.ListCards(ctx)
 	if err != nil {
@@ -345,6 +359,10 @@ func (s *Service) DeleteBalanceRechargeLog(ctx context.Context, upstreamID, logI
 }
 
 func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
+	return s.checkUpstream(ctx, upstreamID, true)
+}
+
+func (s *Service) checkUpstream(ctx context.Context, upstreamID string, syncGroups bool) error {
 	u, err := s.Store.Upstream(ctx, upstreamID)
 	if err != nil {
 		return err
@@ -369,6 +387,9 @@ func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
 	if err := s.Store.SaveKeys(ctx, u.ID, result.Keys); err != nil {
 		return err
 	}
+	if syncGroups {
+		s.syncSchedulerGroupsBestEffort(ctx)
+	}
 	snap, err := s.Store.SaveBalance(ctx, u.ID, result.Balance, "", int(time.Since(start).Milliseconds()))
 	if err != nil {
 		return err
@@ -384,19 +405,23 @@ func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) 
 	if err != nil {
 		return domain.ModelCard{}, err
 	}
-	if card.SchedulerChannelID != "" {
+	if card.PoolEnabled && card.SchedulerChannelID != "" {
 		cards, err := s.Store.ListCards(ctx)
 		if err != nil {
 			return domain.ModelCard{}, err
 		}
 		for _, item := range cards {
-			if item.ID != id && item.SchedulerChannelID == card.SchedulerChannelID {
+			if item.PoolEnabled && item.ID != id && item.SchedulerChannelID == card.SchedulerChannelID {
 				return domain.ModelCard{}, ErrBadRequest("scheduler channel already bound to another card")
 			}
 		}
 	}
 	if id == "" {
-		return s.Store.CreateCard(ctx, card)
+		out, err := s.Store.CreateCard(ctx, card)
+		if err == nil && out.PoolEnabled && out.SchedulerChannelID != "" {
+			s.syncSchedulerGroupsBestEffort(ctx)
+		}
+		return out, err
 	}
 	old, err := s.Store.Card(ctx, id)
 	if err != nil {
@@ -407,7 +432,12 @@ func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) 
 	card.FailureCount = old.FailureCount
 	card.SortOrder = old.SortOrder
 	card.CreatedAt = old.CreatedAt
-	return s.Store.UpdateCard(ctx, card)
+	out, err := s.Store.UpdateCard(ctx, card)
+	changedBinding := old.UpstreamID != out.UpstreamID || old.KeyID != out.KeyID || old.SchedulerChannelID != out.SchedulerChannelID || old.PoolEnabled != out.PoolEnabled || old.ManualCostRatio != out.ManualCostRatio
+	if err == nil && out.PoolEnabled && changedBinding && out.SchedulerChannelID != "" {
+		s.syncSchedulerGroupsBestEffort(ctx)
+	}
+	return out, err
 }
 
 func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domain.ModelCard, error) {
@@ -419,6 +449,9 @@ func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domai
 		KeyID:                 strings.TrimSpace(in.KeyID),
 		Model:                 domain.ProbeModel,
 		DisplayGroup:          strings.TrimSpace(in.DisplayGroup),
+		PoolEnabled:           in.PoolEnabled,
+		PoolEnabledSet:        true,
+		ManualCostRatio:       strings.TrimSpace(in.ManualCostRatio),
 		SchedulerGroup:        strings.TrimSpace(in.SchedulerGroup),
 		SchedulerChannelID:    strings.TrimSpace(in.SchedulerChannelID),
 		SchedulerChannelName:  strings.TrimSpace(in.SchedulerChannelName),
@@ -427,7 +460,21 @@ func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domai
 		PublicEnabled:         in.PublicEnabled,
 		SortOrder:             in.SortOrder,
 	}
+	if !in.PoolEnabledSet {
+		card.PoolEnabled = true
+	}
 	custom := card.BaseURL != "" || card.APIKey != ""
+	if !card.PoolEnabled {
+		card.ManualCostRatio, card.SchedulerGroup, card.SchedulerChannelID, card.SchedulerChannelName = "", "", "", ""
+		card.SchedulerAutoDisabled = false
+	} else if !custom {
+		card.ManualCostRatio = ""
+	} else if card.ManualCostRatio != "" {
+		ratio, err := strconv.ParseFloat(card.ManualCostRatio, 64)
+		if err != nil || ratio < 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+			return card, ErrBadRequest("manual_cost_ratio is invalid")
+		}
+	}
 	if custom {
 		if card.Name == "" || card.BaseURL == "" || card.APIKey == "" {
 			return card, ErrBadRequest("name, base_url and api_key are required")
@@ -727,6 +774,8 @@ func (s *Service) enrichedCards(ctx context.Context, since time.Time, probeLimit
 				cards[i].KeyRatio = k.GroupRatio
 				cards[i].EffectiveRatio = effectiveRatio(k.GroupRatio, domain.BalanceRate(u))
 			}
+		} else if cards[i].BaseURL != "" && cards[i].ManualCostRatio != "" {
+			cards[i].EffectiveRatio = cards[i].ManualCostRatio
 		}
 		history, err := s.Store.ProbesForCardSince(ctx, cards[i].ID, since, probeLimit)
 		if err != nil {

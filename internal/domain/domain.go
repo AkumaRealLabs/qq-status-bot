@@ -59,6 +59,9 @@ type ModelCard struct {
 	EffectiveRatio        string     `json:"effective_ratio,omitempty"`
 	Model                 string     `json:"model"`
 	DisplayGroup          string     `json:"display_group"`
+	PoolEnabled           bool       `json:"pool_enabled"`
+	PoolEnabledSet        bool       `json:"-"`
+	ManualCostRatio       string     `json:"manual_cost_ratio,omitempty"`
 	SchedulerGroup        string     `json:"scheduler_group,omitempty"`
 	SchedulerChannelID    string     `json:"scheduler_channel_id,omitempty"`
 	SchedulerChannelName  string     `json:"scheduler_channel_name,omitempty"`
@@ -170,8 +173,9 @@ type SchedulerTier struct {
 }
 
 type SchedulerApplyResult struct {
-	Updated int `json:"updated"`
-	Skipped int `json:"skipped"`
+	Updated   int `json:"updated"`
+	Unchanged int `json:"unchanged"`
+	Skipped   int `json:"skipped"`
 }
 
 func DefaultSchedulerTiers() []SchedulerTier {

@@ -26,6 +26,8 @@ const emptyCardForm: CardForm = {
   upstream_id: '',
   key_id: '',
   display_group: '',
+  pool_enabled: true,
+  manual_cost_ratio: '',
   enabled: true,
   public_enabled: false,
 }
@@ -400,13 +402,24 @@ function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCa
             <Input value={form.name} onChange={(e) => update({ name: e.target.value })} />
           </Field>
           <Field label="来源模式">
-            <Select value={form.source} onValueChange={(value) => update({ source: value as CardForm['source'], key_id: value === 'custom' ? '' : form.key_id })}>
+            <Select value={form.source} onValueChange={(value) => update({ source: value as CardForm['source'], key_id: value === 'custom' ? '' : form.key_id, manual_cost_ratio: value === 'custom' ? form.manual_cost_ratio : '' })}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="custom">自定义</SelectItem>
                 <SelectItem value="upstream">选择上游 Key</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="用途">
+            <Select value={form.pool_enabled ? 'pool' : 'monitor'} onValueChange={(value) => update({ pool_enabled: value === 'pool' })}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pool">号池</SelectItem>
+                <SelectItem value="monitor">纯监控</SelectItem>
               </SelectContent>
             </Select>
           </Field>
@@ -426,6 +439,11 @@ function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCa
               <Field label="Key">
                 <Input value={form.api_key} onChange={(e) => update({ api_key: e.target.value })} />
               </Field>
+              {form.pool_enabled && (
+                <Field label="手动成本">
+                  <Input type="number" min="0" step="0.01" value={form.manual_cost_ratio} onChange={(e) => update({ manual_cost_ratio: e.target.value })} />
+                </Field>
+              )}
             </>
           ) : (
             <>
@@ -600,6 +618,8 @@ function cardToForm(card?: ModelCard): CardForm {
     upstream_id: card.upstream_id || '',
     key_id: card.key_id || '',
     display_group: card.display_group || '',
+    pool_enabled: card.pool_enabled ?? true,
+    manual_cost_ratio: card.manual_cost_ratio || '',
     enabled: card.enabled,
     public_enabled: card.public_enabled,
   }
@@ -613,6 +633,8 @@ function cardPayload(form: CardForm) {
     upstream_id: form.source === 'upstream' ? form.upstream_id : '',
     key_id: form.source === 'upstream' ? form.key_id : '',
     display_group: form.display_group,
+    pool_enabled: form.pool_enabled,
+    manual_cost_ratio: form.source === 'custom' && form.pool_enabled ? form.manual_cost_ratio : '',
     enabled: form.enabled,
     public_enabled: form.public_enabled,
   }

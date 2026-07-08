@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -248,10 +249,22 @@ func (s *Service) profitChannelBindings(ctx context.Context) (map[string]profitB
 	}
 	out := map[string]profitBinding{}
 	for _, card := range cards {
-		if card.SchedulerChannelID == "" {
+		if !card.PoolEnabled || card.SchedulerChannelID == "" {
 			continue
 		}
 		binding := profitBinding{card: card, reason: "缺成本绑定"}
+		if card.BaseURL != "" {
+			ratio, err := strconv.ParseFloat(strings.TrimSpace(card.ManualCostRatio), 64)
+			if err != nil || ratio <= 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+				out[card.SchedulerChannelID] = binding
+				continue
+			}
+			binding.costPerUnit = ratio
+			binding.complete = true
+			binding.reason = ""
+			out[card.SchedulerChannelID] = binding
+			continue
+		}
 		key, err := s.Store.Key(ctx, card.KeyID)
 		if err != nil {
 			binding.reason = "未绑定上游 Key"

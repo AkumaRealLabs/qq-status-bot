@@ -84,48 +84,48 @@ export function CLIProxyPoolPage() {
         <Card className="min-w-0 bg-card">
           <CardContent>
             <div className="overflow-x-auto rounded-sm border border-border">
-              <table className="w-full min-w-[1100px] text-left text-sm">
+              <table className="w-full min-w-[1360px] text-left text-sm">
                 <thead className="bg-secondary text-xs text-muted-foreground">
                   <tr>
-                    <th className="px-3 py-2 font-medium">文件</th>
-                    <th className="px-3 py-2 font-medium">状态</th>
-                    <th className="px-3 py-2 font-medium">账号</th>
-                    <th className="px-3 py-2 font-medium">类型</th>
-                    <th className="px-3 py-2 font-medium">额度</th>
-                    <th className="px-3 py-2 font-medium">成功/失败</th>
-                    <th className="px-3 py-2 font-medium">更新时间</th>
-                    <th className="px-3 py-2 text-right font-medium">操作</th>
+                    <th className="w-64 whitespace-nowrap px-3 py-2 font-medium">文件</th>
+                    <th className="w-28 whitespace-nowrap px-3 py-2 font-medium">状态</th>
+                    <th className="w-64 whitespace-nowrap px-3 py-2 font-medium">账号</th>
+                    <th className="w-32 whitespace-nowrap px-3 py-2 font-medium">类型</th>
+                    <th className="w-72 whitespace-nowrap px-3 py-2 font-medium">额度</th>
+                    <th className="w-24 whitespace-nowrap px-3 py-2 font-medium">成功/失败</th>
+                    <th className="w-40 whitespace-nowrap px-3 py-2 font-medium">更新时间</th>
+                    <th className="w-36 whitespace-nowrap px-3 py-2 text-right font-medium">操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((account) => (
                     <tr key={account.name} className="border-t border-border align-top">
-                      <td className="max-w-56 px-3 py-2">
+                      <td className="w-64 max-w-64 px-3 py-2">
                         <div className="truncate font-medium text-foreground">{account.name}</div>
                         <div className="truncate text-xs text-muted-foreground">{account.auth_index ? `#${account.auth_index}` : sizeText(account.size)}</div>
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="w-28 whitespace-nowrap px-3 py-2">
                         <AccountBadge account={account} />
                         {account.status_message && <div className="mt-1 max-w-56 truncate text-xs text-muted-foreground">{account.status_message}</div>}
                       </td>
-                      <td className="max-w-60 px-3 py-2">
+                      <td className="w-64 max-w-64 px-3 py-2">
                         <div className="truncate">{account.email || account.account || '-'}</div>
                         {account.source && <div className="truncate text-xs text-muted-foreground">{account.source}</div>}
                       </td>
-                      <td className="px-3 py-2">
-                        <div>{account.provider || account.type || '-'}</div>
-                        <div className="text-xs text-muted-foreground">{account.account_type || '-'}</div>
+                      <td className="w-32 whitespace-nowrap px-3 py-2">
+                        <div className="truncate">{account.provider || account.type || '-'}</div>
+                        <div className="truncate text-xs text-muted-foreground">{account.account_type || '-'}</div>
                       </td>
-                      <td className="w-64 px-3 py-2">
+                      <td className="w-72 px-3 py-2">
                         <AccountQuota account={account} refreshToken={quotaRefreshToken} />
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="w-24 whitespace-nowrap px-3 py-2">
                         <span className="text-success">{account.success ?? 0}</span>
                         <span className="text-muted-foreground"> / </span>
                         <span className={cn((account.failed ?? 0) > 0 && 'text-destructive')}>{account.failed ?? 0}</span>
                       </td>
-                      <td className="px-3 py-2 text-muted-foreground">{fmtTime(account.updated_at || account.modtime || account.last_refresh)}</td>
-                      <td className="px-3 py-2">
+                      <td className="w-40 whitespace-nowrap px-3 py-2 text-muted-foreground">{fmtTime(account.updated_at || account.modtime || account.last_refresh)}</td>
+                      <td className="w-36 whitespace-nowrap px-3 py-2">
                         <div className="flex justify-end gap-1.5">
                           <IconAction title="下载" icon={Download} pending={false} onClick={() => void downloadAccount(account.name).catch((error) => window.alert(errorMessage(error)))} />
                           <IconAction

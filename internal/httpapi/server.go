@@ -509,6 +509,8 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 		UpstreamID           string `json:"upstream_id"`
 		KeyID                string `json:"key_id"`
 		DisplayGroup         string `json:"display_group"`
+		PoolEnabled          *bool  `json:"pool_enabled"`
+		ManualCostRatio      string `json:"manual_cost_ratio"`
 		SchedulerGroup       string `json:"scheduler_group"`
 		SchedulerChannelID   string `json:"scheduler_channel_id"`
 		SchedulerChannelName string `json:"scheduler_channel_name"`
@@ -526,9 +528,14 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 	if body.PublicEnabled != nil {
 		publicEnabled = *body.PublicEnabled
 	}
+	poolEnabled := true
+	if body.PoolEnabled != nil {
+		poolEnabled = *body.PoolEnabled
+	}
 	card, err := s.App.SaveCard(r.Context(), "", domain.ModelCard{
 		Name: body.Name, BaseURL: body.BaseURL, APIKey: body.APIKey, UpstreamID: body.UpstreamID, KeyID: body.KeyID,
-		DisplayGroup: body.DisplayGroup, SchedulerGroup: body.SchedulerGroup, SchedulerChannelID: body.SchedulerChannelID, SchedulerChannelName: body.SchedulerChannelName, Enabled: enabled, PublicEnabled: publicEnabled,
+		DisplayGroup: body.DisplayGroup, PoolEnabled: poolEnabled, PoolEnabledSet: true, ManualCostRatio: body.ManualCostRatio,
+		SchedulerGroup: body.SchedulerGroup, SchedulerChannelID: body.SchedulerChannelID, SchedulerChannelName: body.SchedulerChannelName, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
 	writeJSONOrError(w, card, err)
 }
@@ -541,6 +548,8 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 		UpstreamID           string  `json:"upstream_id"`
 		KeyID                string  `json:"key_id"`
 		DisplayGroup         *string `json:"display_group"`
+		PoolEnabled          *bool   `json:"pool_enabled"`
+		ManualCostRatio      *string `json:"manual_cost_ratio"`
 		SchedulerGroup       *string `json:"scheduler_group"`
 		SchedulerChannelID   *string `json:"scheduler_channel_id"`
 		SchedulerChannelName *string `json:"scheduler_channel_name"`
@@ -571,6 +580,13 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	if body.DisplayGroup != nil {
 		displayGroup = *body.DisplayGroup
 	}
+	poolEnabled, manualCostRatio := old.PoolEnabled, old.ManualCostRatio
+	if body.PoolEnabled != nil {
+		poolEnabled = *body.PoolEnabled
+	}
+	if body.ManualCostRatio != nil {
+		manualCostRatio = *body.ManualCostRatio
+	}
 	schedulerGroup, schedulerChannelID, schedulerChannelName, schedulerAutoDisabled := old.SchedulerGroup, old.SchedulerChannelID, old.SchedulerChannelName, old.SchedulerAutoDisabled
 	if body.SchedulerGroup != nil {
 		schedulerGroup = *body.SchedulerGroup
@@ -593,7 +609,8 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	}
 	card, err := s.App.SaveCard(r.Context(), r.PathValue("id"), domain.ModelCard{
 		Name: name, BaseURL: baseURL, APIKey: apiKey, UpstreamID: upstreamID, KeyID: keyID,
-		DisplayGroup: displayGroup, SchedulerGroup: schedulerGroup, SchedulerChannelID: schedulerChannelID, SchedulerChannelName: schedulerChannelName, SchedulerAutoDisabled: schedulerAutoDisabled, Enabled: enabled, PublicEnabled: publicEnabled,
+		DisplayGroup: displayGroup, PoolEnabled: poolEnabled, PoolEnabledSet: true, ManualCostRatio: manualCostRatio,
+		SchedulerGroup: schedulerGroup, SchedulerChannelID: schedulerChannelID, SchedulerChannelName: schedulerChannelName, SchedulerAutoDisabled: schedulerAutoDisabled, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
 	writeJSONOrError(w, card, err)
 }
