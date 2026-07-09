@@ -359,21 +359,29 @@ function SchedulerConfigDialog({
             />
           </Field>
           <Field label="未分配分组">
-            <Input
-              list="scheduler-unassigned-groups"
-              value={unassigned}
-              placeholder="例如 unassigned（须在调度器中已存在）"
-              onChange={(e) => onChange({ scheduler_unassigned_group: e.target.value })}
-            />
-            <datalist id="scheduler-unassigned-groups">
-              {unassignedOptions.map((group) => (
-                <option key={group} value={group} />
-              ))}
-            </datalist>
+            <Select
+              value={unassigned || none}
+              onValueChange={(value) => onChange({ scheduler_unassigned_group: value === none ? '' : value })}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择调度器中的分组" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={none}>未设置</SelectItem>
+                {unassigned && !unassignedOptions.includes(unassigned) && (
+                  <SelectItem value={unassigned}>{unassigned}</SelectItem>
+                )}
+                {unassignedOptions.map((group) => (
+                  <SelectItem key={group} value={group}>
+                    {group}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
         </div>
         <p className="text-xs text-muted-foreground">
-          价格未命中任何托管档位时，渠道会写入此分组（new-api 不支持空分组）。保存与自动分组前必填；请先在调度器中创建同名分组，且勿与价格档位重名。
+          价格未命中任何托管档位时，渠道会写入此分组（new-api 不支持空分组）。选项来自调度器已有分组，并排除价格档位已占用的组；保存与自动分组前必填。
         </p>
         <FeedbackBanner message={message} error={saveError} />
         <ActionRow>
