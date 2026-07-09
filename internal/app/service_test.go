@@ -361,6 +361,13 @@ func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 	if out.Updated != 2 || out.Unchanged != 0 || updated[9] != "gpt_low,gpt_stable" || updated[10] != "gpt_stable" {
 		t.Fatalf("out=%+v updated=%+v", out, updated)
 	}
+	logs, err := svc.SchedulerLogs(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].Action != "group_sync" || logs[0].Status != "success" || !strings.Contains(logs[0].Message, "更新 2 个") {
+		t.Fatalf("logs = %+v", logs)
+	}
 }
 
 func TestApplySchedulerGroupsUsesCustomManualCostAndSkipsMonitorOnly(t *testing.T) {
@@ -883,26 +890,18 @@ func TestProfitUsesManualCostSnapshotsByLogTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := New(st)
-	card, err := svc.SaveCard(t.Context(), "", domain.ModelCard{Name: "自建", BaseURL: "https://api.example.test", APIKey: "sk", ManualCostRatio: "0.10", SchedulerChannelID: "9", SchedulerChannelName: "ch", Enabled: true})
-	if err != nil {
+	first := time.Now().UTC().Add(-2 * time.Hour)
+	second := first.Add(time.Minute)
+	if _, err := st.SaveSchedulerChannelCostSnapshot(t.Context(), domain.SchedulerChannelCostSnapshot{ChannelID: "9", ChannelName: "ch", CardName: "自建", SourceType: "manual_cost_ratio", CostPerUnit: 0.10, Active: true, EffectiveAt: first}); err != nil {
 		t.Fatal(err)
 	}
-	first, ok, err := st.LatestSchedulerChannelCostSnapshot(t.Context(), "9")
-	if err != nil || !ok {
-		t.Fatalf("first snapshot ok=%v err=%v", ok, err)
-	}
-	time.Sleep(time.Millisecond)
-	if _, err := svc.SaveCard(t.Context(), card.ID, domain.ModelCard{Name: "自建", BaseURL: "https://api.example.test", APIKey: "sk", ManualCostRatio: "0.14", SchedulerChannelID: "9", SchedulerChannelName: "ch", Enabled: true}); err != nil {
+	if _, err := st.SaveSchedulerChannelCostSnapshot(t.Context(), domain.SchedulerChannelCostSnapshot{ChannelID: "9", ChannelName: "ch", CardName: "自建", SourceType: "manual_cost_ratio", CostPerUnit: 0.14, Active: true, EffectiveAt: second}); err != nil {
 		t.Fatal(err)
 	}
-	second, ok, err := st.LatestSchedulerChannelCostSnapshot(t.Context(), "9")
-	if err != nil || !ok {
-		t.Fatalf("second snapshot ok=%v err=%v", ok, err)
-	}
-	if _, err := st.SaveSchedulerGroupSaleSnapshot(t.Context(), domain.SchedulerGroupSaleSnapshot{Group: "gpt_low", Tag: "low", SalePrice: 0.2, Active: true, EffectiveAt: first.EffectiveAt.Add(-time.Second)}); err != nil {
+	if _, err := st.SaveSchedulerGroupSaleSnapshot(t.Context(), domain.SchedulerGroupSaleSnapshot{Group: "gpt_low", Tag: "low", SalePrice: 0.2, Active: true, EffectiveAt: first.Add(-time.Second)}); err != nil {
 		t.Fatal(err)
 	}
-	oldLog, newLog = first.EffectiveAt.Add(time.Nanosecond), second.EffectiveAt.Add(time.Nanosecond)
+	oldLog, newLog = first.Add(time.Nanosecond), second.Add(time.Nanosecond)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 1, SalePrice: 0.2}}}); err != nil {
 		t.Fatal(err)
@@ -918,7 +917,7 @@ func TestProfitUsesManualCostSnapshotsByLogTime(t *testing.T) {
 	}
 }
 
-func TestProfitMarksLogsBeforeSnapshotsIncomplete(t *testing.T) {
+func TestProfitUsesFirstSnapshotsForEarlierLogs(t *testing.T) {
 	logTime := time.Now().UTC().Add(-time.Hour)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
@@ -947,7 +946,7 @@ func TestProfitMarksLogsBeforeSnapshotsIncomplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := profitTestChannel(profitTestPool(out.Pools, "gpt_low").Channels, "9")
-	if out.Complete || row.Complete || row.MissingReason == "" || out.Revenue != 0 || out.Cost != 0 {
+	if !out.Complete || !row.Complete || !closeEnough(out.Revenue, 2) || !closeEnough(out.Cost, 1) || !closeEnough(out.Profit, 1) {
 		t.Fatalf("profit=%+v row=%+v", out, row)
 	}
 }

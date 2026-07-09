@@ -135,7 +135,7 @@ func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitRespo
 	if err != nil {
 		return domain.ProfitResponse{}, err
 	}
-	out := domain.ProfitResponse{Window: label, Complete: true, Note: "按消费日志时间命中当时生效的售价/成本快照；旧日志没有快照覆盖时标为不完整。"}
+	out := domain.ProfitResponse{Window: label, Complete: true, Note: "按消费日志时间命中当时生效的售价/成本快照；早于首个快照的日志用首个快照向前兜底。"}
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
 		return out, ErrBadRequest("请先配置调度器连接")
 	}
@@ -172,7 +172,7 @@ func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitRespo
 				markProfitIncomplete(row, pool, &out, "缺日志时间")
 				continue
 			}
-			sale, ok, err := s.Store.SchedulerGroupSaleSnapshotAt(ctx, group, log.LogTime)
+			sale, ok, err := s.profitSaleSnapshot(ctx, group, log.LogTime)
 			if err != nil {
 				return out, err
 			}
@@ -185,7 +185,7 @@ func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitRespo
 			row.SaleEffective = mergeProfitMeta(row.SaleEffective, sale.EffectiveAt.Format(time.RFC3339Nano))
 			revenue := units * sale.SalePrice
 			row.Revenue += revenue
-			costSnap, ok, err := s.Store.SchedulerChannelCostSnapshotAt(ctx, log.ChannelID, log.LogTime)
+			costSnap, ok, err := s.profitCostSnapshot(ctx, log.ChannelID, log.LogTime)
 			if err != nil {
 				return out, err
 			}
@@ -272,6 +272,22 @@ func (s *Service) profitGroups(ctx context.Context, tiers []domain.SchedulerTier
 	}
 	sort.Strings(out)
 	return out, meta, nil
+}
+
+func (s *Service) profitSaleSnapshot(ctx context.Context, group string, at time.Time) (domain.SchedulerGroupSaleSnapshot, bool, error) {
+	snap, ok, err := s.Store.SchedulerGroupSaleSnapshotAt(ctx, group, at)
+	if err != nil || ok {
+		return snap, ok, err
+	}
+	return s.Store.FirstSchedulerGroupSaleSnapshot(ctx, group)
+}
+
+func (s *Service) profitCostSnapshot(ctx context.Context, channelID string, at time.Time) (domain.SchedulerChannelCostSnapshot, bool, error) {
+	snap, ok, err := s.Store.SchedulerChannelCostSnapshotAt(ctx, channelID, at)
+	if err != nil || ok {
+		return snap, ok, err
+	}
+	return s.Store.FirstSchedulerChannelCostSnapshot(ctx, channelID)
 }
 
 func markProfitIncomplete(row *domain.ProfitChannelRow, pool *profitPool, out *domain.ProfitResponse, reason string) {

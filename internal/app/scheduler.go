@@ -257,10 +257,13 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 		return domain.SchedulerApplyResult{}, err
 	}
 	channelGroups := make(map[string]string, len(channels))
+	channelNames := make(map[string]string, len(channels))
 	for _, channel := range channels {
 		channelGroups[channel.ID] = channel.Group
+		channelNames[channel.ID] = channel.Name
 	}
 	managed := schedulerManagedGroups(tiers)
+	var changes []string
 	for _, card := range poolCards {
 		price, ok := s.cardPrice(ctx, card)
 		current, found := channelGroups[strings.TrimSpace(card.SchedulerChannelID)]
@@ -277,9 +280,28 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 		if err := s.setSchedulerChannelGroup(ctx, cfg, card.SchedulerChannelID, group); err != nil {
 			return out, err
 		}
+		changes = append(changes, fmt.Sprintf("%s: %s -> %s", firstNonEmpty(channelNames[card.SchedulerChannelID], card.SchedulerChannelName, card.SchedulerChannelID), firstNonEmpty(current, "-"), group))
 		out.Updated++
 	}
+	if out.Updated > 0 {
+		_ = s.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
+			Action:  "group_sync",
+			Status:  "success",
+			Message: schedulerGroupSyncMessage(out, changes),
+		})
+	}
 	return out, nil
+}
+
+func schedulerGroupSyncMessage(out domain.SchedulerApplyResult, changes []string) string {
+	msg := fmt.Sprintf("自动分组：更新 %d 个，保持 %d 个，跳过 %d 个", out.Updated, out.Unchanged, out.Skipped)
+	if len(changes) == 0 {
+		return msg
+	}
+	if len(changes) > 6 {
+		changes = append(changes[:6], fmt.Sprintf("还有 %d 个", len(changes)-6))
+	}
+	return msg + "；" + strings.Join(changes, "；")
 }
 
 func (s *Service) syncSchedulerGroupsBestEffort(ctx context.Context) {

@@ -90,6 +90,7 @@ export function SchedulerPage() {
       setMessage(`更新 ${data.updated} 个，保持 ${data.unchanged} 个，跳过 ${data.skipped} 个`)
       void groups.refetch()
       void channels.refetch()
+      void logs.refetch()
     },
     onError: (error) => setMessage(errorMessage(error)),
   })
@@ -296,7 +297,7 @@ export function SchedulerPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <CardTitle>调度日志</CardTitle>
-                <CardDescription>自动关闭和恢复渠道的执行记录</CardDescription>
+                <CardDescription>自动分组、自动关闭和恢复渠道的执行记录</CardDescription>
               </div>
               <Button variant="outline" size="sm" onClick={() => void logs.refetch()} disabled={logs.isFetching}>
                 <RefreshCcw className={cn('size-4', logs.isFetching && 'animate-spin')} />
@@ -312,7 +313,7 @@ export function SchedulerPage() {
               <div key={log.id} className="grid min-w-0 gap-1 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm md:grid-cols-[140px_1fr_auto] md:items-center">
                 <span className="text-xs text-muted-foreground">{fmtTime(log.created_at)}</span>
                 <div className="min-w-0">
-                  <div className="truncate font-medium">{log.card_name || log.card_id || '未知卡片'} · {log.channel_name || log.channel_id || '未知渠道'}</div>
+                  <div className="truncate font-medium">{schedulerLogTitle(log)}</div>
                   <div className="truncate text-xs text-muted-foreground">{log.message}</div>
                 </div>
                 <span className={cn('text-xs font-medium', log.status === 'success' ? 'text-emerald-600' : log.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
@@ -608,6 +609,14 @@ function schedulerStatus(status: number) {
 function logAction(action: SchedulerLog['action']) {
   if (action === 'group_sync') return '分组同步'
   return action === 'restore' ? '恢复' : '关闭'
+}
+
+function schedulerLogTitle(log: SchedulerLog) {
+  if (log.action === 'group_sync') return '自动分组'
+  const card = log.card_name || log.card_id
+  const channel = log.channel_name || log.channel_id
+  if (card && channel && card !== channel) return `${card} · ${channel}`
+  return card || channel || '未知渠道'
 }
 
 function logStatus(status: SchedulerLog['status']) {

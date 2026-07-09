@@ -677,12 +677,20 @@ func (s *Store) SchedulerChannelCostSnapshotAt(ctx context.Context, channelID st
 	return s.schedulerChannelCostSnapshot(ctx, `channel_id=? AND effective_at<=?`, channelID, at.UTC().Format(time.RFC3339Nano))
 }
 
+func (s *Store) FirstSchedulerChannelCostSnapshot(ctx context.Context, channelID string) (domain.SchedulerChannelCostSnapshot, bool, error) {
+	return s.schedulerChannelCostSnapshotOrder(ctx, `channel_id=?`, `effective_at ASC`, channelID)
+}
+
 func (s *Store) schedulerChannelCostSnapshot(ctx context.Context, where string, args ...any) (domain.SchedulerChannelCostSnapshot, bool, error) {
+	return s.schedulerChannelCostSnapshotOrder(ctx, where, `effective_at DESC`, args...)
+}
+
+func (s *Store) schedulerChannelCostSnapshotOrder(ctx context.Context, where, order string, args ...any) (domain.SchedulerChannelCostSnapshot, bool, error) {
 	var snap domain.SchedulerChannelCostSnapshot
 	var active int
 	var effective string
 	err := s.row(ctx, `SELECT id, channel_id, channel_name, card_id, card_name, source_type, upstream_id, upstream_name, key_id, key_name, cost_per_unit, active, missing_reason, effective_at
-		FROM scheduler_channel_cost_snapshots WHERE `+where+` ORDER BY effective_at DESC LIMIT 1`, args...).
+		FROM scheduler_channel_cost_snapshots WHERE `+where+` ORDER BY `+order+` LIMIT 1`, args...).
 		Scan(&snap.ID, &snap.ChannelID, &snap.ChannelName, &snap.CardID, &snap.CardName, &snap.SourceType, &snap.UpstreamID, &snap.UpstreamName,
 			&snap.KeyID, &snap.KeyName, &snap.CostPerUnit, &active, &snap.MissingReason, &effective)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -729,11 +737,19 @@ func (s *Store) SchedulerGroupSaleSnapshotAt(ctx context.Context, group string, 
 	return s.schedulerGroupSaleSnapshot(ctx, `group_name=? AND effective_at<=?`, group, at.UTC().Format(time.RFC3339Nano))
 }
 
+func (s *Store) FirstSchedulerGroupSaleSnapshot(ctx context.Context, group string) (domain.SchedulerGroupSaleSnapshot, bool, error) {
+	return s.schedulerGroupSaleSnapshotOrder(ctx, `group_name=?`, `effective_at ASC`, group)
+}
+
 func (s *Store) schedulerGroupSaleSnapshot(ctx context.Context, where string, args ...any) (domain.SchedulerGroupSaleSnapshot, bool, error) {
+	return s.schedulerGroupSaleSnapshotOrder(ctx, where, `effective_at DESC`, args...)
+}
+
+func (s *Store) schedulerGroupSaleSnapshotOrder(ctx context.Context, where, order string, args ...any) (domain.SchedulerGroupSaleSnapshot, bool, error) {
 	var snap domain.SchedulerGroupSaleSnapshot
 	var active int
 	var effective string
-	err := s.row(ctx, `SELECT id, group_name, tag, sale_price, active, effective_at FROM scheduler_group_sale_snapshots WHERE `+where+` ORDER BY effective_at DESC LIMIT 1`, args...).
+	err := s.row(ctx, `SELECT id, group_name, tag, sale_price, active, effective_at FROM scheduler_group_sale_snapshots WHERE `+where+` ORDER BY `+order+` LIMIT 1`, args...).
 		Scan(&snap.ID, &snap.Group, &snap.Tag, &snap.SalePrice, &active, &effective)
 	if errors.Is(err, sql.ErrNoRows) {
 		return snap, false, nil
