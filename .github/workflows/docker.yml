@@ -1,10 +1,15 @@
 name: Docker
 
+# 仅发版：测试由 ci.yml 负责，此处不再 host 侧 pnpm/go test（避免前端双构建）
 on:
   push:
     branches: [main]
     tags: ["v*"]
-  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "DESIGN.md"
+      - "AGENTS.md"
+      - ".gitignore"
 
 concurrency:
   group: docker-${{ github.ref }}
@@ -26,31 +31,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.33.4
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          # 供 browser 变更检测对比上一提交；无需全历史
+          fetch-depth: 2
+
       - name: Prepare build version
         shell: bash
         run: echo "BUILD_VERSION=$(TZ=Asia/Shanghai date +%Y%m%d%H%M)-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-      - name: Build frontend
-        working-directory: frontend
-        run: pnpm install --frozen-lockfile && pnpm build
-        env:
-          VITE_BUILD_VERSION: ${{ env.BUILD_VERSION }}
-      - name: Run Go tests
-        run: go test ./...
+
       - name: Detect browser image changes
         id: changes
         shell: bash
@@ -60,59 +47,67 @@ jobs:
             exit 0
           fi
           base="${{ github.event.before }}"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            base="${{ github.event.pull_request.base.sha }}"
-          fi
           if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
-            base="$(git rev-list --max-parents=0 HEAD)"
+            if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+              base="$(git rev-parse HEAD~1)"
+            else
+              echo "browser=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           if git diff --name-only "$base" HEAD | grep -Eq '^(browser/|\.github/workflows/docker\.yml$)'; then
             echo "browser=true" >> "$GITHUB_OUTPUT"
           else
             echo "browser=false" >> "$GITHUB_OUTPUT"
           fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
-        if: github.event_name == 'push'
         with:
           registry: ghcr.io
-          username: Akuma-real
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GHCR_TOKEN }}
+
       - name: Prepare image tags
         shell: bash
         run: |
           {
             echo "APP_TAGS<<EOF"
             echo "${APP_IMAGE}:latest"
+            echo "${APP_IMAGE}:sha-${GITHUB_SHA::7}"
             if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
               echo "${APP_IMAGE}:${GITHUB_REF_NAME#v}"
             fi
             echo "EOF"
             echo "BROWSER_TAGS<<EOF"
             echo "${BROWSER_IMAGE}:latest"
+            echo "${BROWSER_IMAGE}:sha-${GITHUB_SHA::7}"
             if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
               echo "${BROWSER_IMAGE}:${GITHUB_REF_NAME#v}"
             fi
             echo "EOF"
           } >> "$GITHUB_ENV"
+
       - name: Build and push app image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name == 'push' }}
+          push: true
           tags: ${{ env.APP_TAGS }}
           build-args: |
             VITE_BUILD_VERSION=${{ env.BUILD_VERSION }}
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app,ignore-error=true
+
       - name: Build and push browser image
         uses: docker/build-push-action@v6
         if: steps.changes.outputs.browser == 'true'
         with:
           context: browser
-          push: ${{ github.event_name == 'push' }}
+          push: true
           tags: ${{ env.BROWSER_TAGS }}
           cache-from: type=gha,scope=browser
           cache-to: type=gha,mode=max,scope=browser,ignore-error=true
