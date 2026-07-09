@@ -2,8 +2,8 @@ package domain
 
 import "strings"
 
-// KeepSecret keeps the stored value when the request leaves the secret empty.
-// Empty input means "do not change"; non-empty input replaces the secret.
+// KeepSecret：请求密钥为空时保留库中值。
+// 空输入表示「不修改」；非空输入替换密钥。
 func KeepSecret(in, old string) string {
 	in = strings.TrimSpace(in)
 	if in == "" {

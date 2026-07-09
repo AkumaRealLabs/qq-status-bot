@@ -26,13 +26,13 @@ export function fmtTime(value?: string) {
   return date.toLocaleString('zh-CN', { hour12: false })
 }
 
-/** Safe display time: empty / Go zero-time → `-`. */
+/** 安全展示时间：空 / Go 零值时间 → `-`。 */
 export function displayTime(value?: string) {
   if (!value || value.startsWith('0001-')) return '-'
   return fmtTime(value)
 }
 
-/** Compact zh-CN time for dense UI (quota reset, etc.). */
+/** 紧凑 zh-CN 时间，用于密排 UI（配额重置等）。 */
 export function fmtShortTime(value?: string) {
   if (!value) return ''
   const date = new Date(value)

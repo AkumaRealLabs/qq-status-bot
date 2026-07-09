@@ -2,7 +2,7 @@ package domain
 
 import "strings"
 
-// ShouldNotify decides whether a notification channel should fire for an event type.
+// ShouldNotify 判断某事件类型是否应触发通知渠道。
 func ShouldNotify(rules NotificationRules, eventType string, recover bool) bool {
 	if !rules.Enabled {
 		return false
@@ -16,8 +16,8 @@ func ShouldNotify(rules NotificationRules, eventType string, recover bool) bool 
 	return rules.EventTypes[eventType]
 }
 
-// AlertEventType maps probe/upstream alert kind keys to ops event metadata.
-// kind examples: "ping:<cardID>", "quota:<cardID>", "balance", "credential".
+// AlertEventType 将探测/上游告警 kind 映射为运维事件元数据。
+// kind 示例："ping:<cardID>"、"quota:<cardID>"、"balance"、"credential"。
 func AlertEventType(kind string, recover bool) (eventType, targetType, targetID string) {
 	if strings.HasPrefix(kind, "ping:") {
 		return "probe_failed", "card", strings.TrimPrefix(kind, "ping:")
@@ -43,7 +43,7 @@ func AlertEventType(kind string, recover bool) (eventType, targetType, targetID 
 	}
 }
 
-// AlertOpsTitle is the human title for an ops event type.
+// AlertOpsTitle 是运维事件类型的可读标题。
 func AlertOpsTitle(eventType string, recover bool) string {
 	if recover {
 		return "已恢复"
@@ -66,7 +66,7 @@ func AlertOpsTitle(eventType string, recover bool) string {
 	}
 }
 
-// AlertOpsActions lists suggested ops actions for an event type.
+// AlertOpsActions 列出某事件类型建议的运维动作。
 func AlertOpsActions(eventType string) []string {
 	switch eventType {
 	case "probe_failed", "quota_exhausted", "probe_internal_error":
@@ -82,7 +82,7 @@ func AlertOpsActions(eventType string) []string {
 	}
 }
 
-// ProbeAlertKind builds the alert kind key and message for a failed probe.
+// ProbeAlertKind 构造探测失败的告警 kind 与消息。
 func ProbeAlertKind(cardName, cardID, errText string) (kind, message string) {
 	if IsQuotaProbeError(errText) {
 		return "quota:" + cardID, cardName + " 余额不足/成本池不可用: " + errText

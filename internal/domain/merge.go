@@ -2,7 +2,7 @@ package domain
 
 import "strings"
 
-// KeepText keeps the stored non-secret value when the request leaves the field empty.
+// KeepText：请求字段为空时保留库中非密钥字段。
 func KeepText(in, old string) string {
 	if strings.TrimSpace(in) == "" {
 		return old
@@ -10,13 +10,13 @@ func KeepText(in, old string) string {
 	return strings.TrimSpace(in)
 }
 
-// DefaultSiteName is used when site_name is empty.
+// DefaultSiteName：site_name 为空时的默认站点名。
 const DefaultSiteName = "AI 上游监控"
 
-// DefaultCLIProxyName is used when cliproxy name is empty.
+// DefaultCLIProxyName：cliproxy 名称为空时的默认名。
 const DefaultCLIProxyName = "CLIProxyAPI"
 
-// MergeUpdate applies empty-secret keep + preserves runtime/identity fields from old.
+// MergeUpdate：空密钥保留，并保留旧实体的运行时/身份字段。
 func (in Upstream) MergeUpdate(old Upstream) Upstream {
 	out := in
 	out.ID = old.ID
@@ -30,8 +30,8 @@ func (in Upstream) MergeUpdate(old Upstream) Upstream {
 	return out
 }
 
-// MergeUpdate applies secret keep, empty-source keep, runtime preserve, and binding→auto-disable rules.
-// Call after assembling request fields; normalize/validate separately in app.
+// MergeUpdate：密钥保留、空来源保留、运行时字段保留，以及绑定变更→清除自动关渠规则。
+// 在拼好请求字段后调用；规范化/校验仍在 app 层单独做。
 func (in ModelCard) MergeUpdate(old ModelCard) ModelCard {
 	out := in
 	out.APIKey = KeepSecret(in.APIKey, old.APIKey)
@@ -48,7 +48,7 @@ func (in ModelCard) MergeUpdate(old ModelCard) ModelCard {
 	out.CreatedAt = old.CreatedAt
 	out.SchedulerAutoDisabledAt = old.SchedulerAutoDisabledAt
 
-	// Changing scheduler binding clears auto-disabled (channel may still be set by caller).
+	// 变更调度绑定时清除自动关渠（渠道仍可由调用方设置）。
 	if schedulerBindingChanged(old, out) {
 		out.SchedulerAutoDisabled = false
 	}
@@ -68,8 +68,8 @@ func schedulerBindingChanged(old, next ModelCard) bool {
 	return false
 }
 
-// ApplySchedulerGroupPatch applies optional group change semantics used by PATCH /cards:
-// empty or changed group clears channel id/name and auto-disabled.
+// ApplySchedulerGroupPatch：PATCH /cards 的可选分组变更语义：
+// 分组为空或变更时清除渠道 id/名称与自动关渠。
 func ApplySchedulerGroupPatch(oldGroup, oldChannelID, oldChannelName string, oldAutoDisabled bool, newGroup string) (group, channelID, channelName string, autoDisabled bool) {
 	group = newGroup
 	channelID, channelName, autoDisabled = oldChannelID, oldChannelName, oldAutoDisabled
@@ -79,7 +79,7 @@ func ApplySchedulerGroupPatch(oldGroup, oldChannelID, oldChannelName string, old
 	return group, channelID, channelName, autoDisabled
 }
 
-// ApplySchedulerChannelPatch clears auto-disabled when channel is cleared or changed.
+// ApplySchedulerChannelPatch：渠道清空或变更时清除自动关渠。
 func ApplySchedulerChannelPatch(oldChannelID string, oldAutoDisabled bool, newChannelID string) (channelID string, autoDisabled bool) {
 	channelID = newChannelID
 	autoDisabled = oldAutoDisabled
@@ -89,7 +89,7 @@ func ApplySchedulerChannelPatch(oldChannelID string, oldAutoDisabled bool, newCh
 	return channelID, autoDisabled
 }
 
-// MergeUpdate applies secret/text keep and preserves identity fields.
+// MergeUpdate：密钥/文本保留，并保留身份字段。
 func (in RevenueCard) MergeUpdate(old RevenueCard) RevenueCard {
 	out := in
 	out.AccessToken = KeepSecret(in.AccessToken, old.AccessToken)
@@ -107,7 +107,7 @@ func (in RevenueCard) MergeUpdate(old RevenueCard) RevenueCard {
 	return out
 }
 
-// MergeUpdate applies secret keep, defaults, and partial notification-rule keep.
+// MergeUpdate：密钥保留、默认值，以及通知规则的部分保留。
 func (in Settings) MergeUpdate(old Settings) Settings {
 	out := in
 	out.CheckIntervalMinutes = NormalizeCheckInterval(in.CheckIntervalMinutes)
@@ -122,7 +122,7 @@ func (in Settings) MergeUpdate(old Settings) Settings {
 	out.EpayBaseURL = strings.TrimRight(strings.TrimSpace(in.EpayBaseURL), "/")
 	out.EpayPID = strings.TrimSpace(in.EpayPID)
 	out.EpayKey = KeepSecret(in.EpayKey, old.EpayKey)
-	// Zero-value notification patch means "leave rules unchanged".
+	// 通知规则补丁为零值表示「规则不变」。
 	if in.NotificationRules.EventTypes == nil && in.NotificationRules.FailureThreshold == 0 {
 		out.NotificationRules = old.NotificationRules
 	} else {
@@ -131,7 +131,7 @@ func (in Settings) MergeUpdate(old Settings) Settings {
 	return out
 }
 
-// MergeUpdate applies secret keep and normalizes tiers/URL fields.
+// MergeUpdate：密钥保留并规范化档位/URL 字段。
 func (in SchedulerConfig) MergeUpdate(old SchedulerConfig) SchedulerConfig {
 	out := in
 	out.BaseURL = strings.TrimRight(strings.TrimSpace(in.BaseURL), "/")
@@ -141,7 +141,7 @@ func (in SchedulerConfig) MergeUpdate(old SchedulerConfig) SchedulerConfig {
 	return out
 }
 
-// MergeUpdate applies secret keep and name/URL defaults.
+// MergeUpdate：密钥保留及名称/URL 默认值。
 func (in CLIProxyConfig) MergeUpdate(old CLIProxyConfig) CLIProxyConfig {
 	out := in
 	out.Name = strings.TrimSpace(in.Name)

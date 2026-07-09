@@ -2,7 +2,7 @@ package domain
 
 import "strings"
 
-// GroupsForPrice returns managed scheduler groups whose price range includes price.
+// GroupsForPrice 返回价格区间包含 price 的托管调度分组。
 func GroupsForPrice(tiers []SchedulerTier, price float64) []string {
 	groups := []string{}
 	seen := map[string]bool{}
@@ -17,7 +17,7 @@ func GroupsForPrice(tiers []SchedulerTier, price float64) []string {
 	return groups
 }
 
-// ManagedGroups is the set of non-empty groups defined in tiers.
+// ManagedGroups 是档位中定义的非空分组集合。
 func ManagedGroups(tiers []SchedulerTier) map[string]bool {
 	out := map[string]bool{}
 	for _, tier := range tiers {
@@ -28,7 +28,7 @@ func ManagedGroups(tiers []SchedulerTier) map[string]bool {
 	return out
 }
 
-// SplitGroups parses a comma-separated group list, trimming and de-duplicating.
+// SplitGroups 解析逗号分隔的分组列表，去空白并去重。
 func SplitGroups(raw string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -42,7 +42,7 @@ func SplitGroups(raw string) []string {
 	return out
 }
 
-// SameGroups reports whether two group lists contain the same set of names (order ignored).
+// SameGroups 判断两个分组列表是否同名集合（忽略顺序）。
 func SameGroups(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -59,7 +59,7 @@ func SameGroups(a, b []string) bool {
 	return true
 }
 
-// TargetGroups keeps unmanaged groups from current membership and adds price-matched managed groups.
+// TargetGroups 保留当前成员中的非托管分组，并加入价格匹配的托管分组。
 func TargetGroups(tiers []SchedulerTier, managed map[string]bool, price float64, current string) []string {
 	if managed == nil {
 		managed = ManagedGroups(tiers)
@@ -81,7 +81,7 @@ func TargetGroups(tiers []SchedulerTier, managed map[string]bool, price float64,
 	return out
 }
 
-// JoinGroups joins group names with commas (stable order of input).
+// JoinGroups 用逗号拼接分组名（保持输入顺序）。
 func JoinGroups(groups []string) string {
 	return strings.Join(groups, ",")
 }

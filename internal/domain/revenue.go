@@ -5,15 +5,15 @@ import (
 	"strings"
 )
 
-// Revenue card source types.
+// 收入卡片来源类型。
 const (
 	RevenueEpayTotal     = "epay_total"
 	RevenueNewAPIOrders  = "newapi_orders"
 	RevenueSub2APIOrders = "sub2api_orders"
 )
 
-// NormalizeRevenueCard trims fields and applies type-specific field clears.
-// Does not fill credentials from global settings (that is app orchestration).
+// NormalizeRevenueCard 裁剪字段并按类型清空无关字段。
+// 不从全局设置回填凭证（那是 app 编排职责）。
 func NormalizeRevenueCard(in RevenueCard) RevenueCard {
 	out := RevenueCard{
 		ID:          in.ID,
@@ -40,7 +40,7 @@ func NormalizeRevenueCard(in RevenueCard) RevenueCard {
 	return out
 }
 
-// DefaultRevenueName returns a display name for a source type.
+// DefaultRevenueName 返回某来源类型的默认展示名。
 func DefaultRevenueName(sourceType string) string {
 	switch strings.TrimSpace(sourceType) {
 	case RevenueNewAPIOrders:
@@ -52,7 +52,7 @@ func DefaultRevenueName(sourceType string) string {
 	}
 }
 
-// RevenueUpstreamType maps *_orders source types to upstream type names.
+// RevenueUpstreamType 将 *_orders 来源类型映射为上游类型名。
 func RevenueUpstreamType(sourceType string) (string, bool) {
 	switch strings.TrimSpace(sourceType) {
 	case RevenueNewAPIOrders:
@@ -64,8 +64,8 @@ func RevenueUpstreamType(sourceType string) (string, bool) {
 	}
 }
 
-// ValidateRevenueCard checks required fields after settings fill-in and optional
-// upstream binding. upstreamType is only used when UpstreamID is set for order cards.
+// ValidateRevenueCard 在设置回填与可选上游绑定之后校验必填字段。
+// upstreamType 仅在订单类卡片设置了 UpstreamID 时使用。
 func ValidateRevenueCard(card RevenueCard, upstreamType string) error {
 	card = NormalizeRevenueCard(card)
 	switch card.SourceType {
@@ -93,7 +93,7 @@ func ValidateRevenueCard(card RevenueCard, upstreamType string) error {
 	return nil
 }
 
-// ApplyRevenueDefaults sets empty Name from upstream name or source-type label.
+// ApplyRevenueDefaults：Name 为空时用上游名或来源类型标签填充。
 func ApplyRevenueDefaults(card RevenueCard, upstreamName string) RevenueCard {
 	card = NormalizeRevenueCard(card)
 	if card.Name != "" {

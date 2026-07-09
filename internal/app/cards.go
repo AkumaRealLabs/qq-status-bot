@@ -51,8 +51,8 @@ func (s *ProbeService) SaveCard(ctx context.Context, id string, in domain.ModelC
 		}
 		return out.Public(), err
 	}
-	// normalize builds a fresh struct; re-attach runtime identity from old.
-	// SchedulerAutoDisabled already decided by MergeUpdate before normalize.
+	// normalize 会构造新结构体；从 old 重新挂上运行时身份字段。
+	// SchedulerAutoDisabled 已在 normalize 前由 MergeUpdate 决定。
 	card.ID = old.ID
 	card.LastError = old.LastError
 	card.FailureCount = old.FailureCount

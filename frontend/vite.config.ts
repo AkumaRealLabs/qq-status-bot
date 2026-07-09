@@ -10,8 +10,8 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
-  // Public vs admin separation is driven by React.lazy() entry points:
-  // PublicStatusPage / shared stay out of AdminStatusPage + other admin tabs.
-  // Avoid aggressive manualChunks here — they create circular chunk graphs in Vite 8/Rolldown
-  // and can force the public page to download admin-only deps (e.g. @dnd-kit).
+  // 公开/管理分包由 React.lazy() 入口驱动：
+  // PublicStatusPage / shared 不进 AdminStatusPage 及其他 admin 标签。
+  // 此处避免激进 manualChunks — Vite 8/Rolldown 下易形成循环 chunk 图，
+  // 并可能让公开页下载仅 admin 依赖（如 @dnd-kit）。
 })

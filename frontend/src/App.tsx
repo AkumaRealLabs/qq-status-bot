@@ -8,7 +8,7 @@ function isAdminPath(pathname: string) {
   return pathname === '/admin' || pathname.startsWith('/admin/')
 }
 
-/** Thin router: public / and admin /admin/* load completely separate application graphs. */
+/** 薄路由：公开 / 与管理 /admin/* 加载完全独立的应用图。 */
 export default function App() {
   const admin = isAdminPath(location.pathname)
   return <Suspense fallback={<ShellLoading />}>{admin ? <AdminApp /> : <PublicApp />}</Suspense>

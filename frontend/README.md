@@ -1,32 +1,33 @@
-# React + TypeScript + Vite
+# 前端（React + TypeScript + Vite）
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+本仓库管理后台与公开状态页的前端。构建产物由后端 `//go:embed` 嵌入 `frontend/dist`。
 
-Currently, two official plugins are available:
+## 入口与分包
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| 路径 | 应用 | 说明 |
+|------|------|------|
+| `/` | `PublicApp` | 公开状态页，独立懒加载图 |
+| `/admin/*` | `AdminApp` | 管理后台（登录后） |
 
-## React Compiler
+状态页按 **public / admin / shared** 拆分，admin 专有编辑与拖拽排序不进公开路径。
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+共享能力集中在：
 
-## Expanding the Oxlint configuration
+- `src/lib/` — 格式化、反馈文案、排序、工具函数
+- `src/components/common.tsx` — 表格壳、表单页脚、行内消息等
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## 常用命令
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+pnpm install
+pnpm dev      # 本地开发
+pnpm build    # 产出 dist，供 Docker / embed
+pnpm preview  # 预览构建结果
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Lint 使用 Oxlint（见 `.oxlintrc.json`）。
+
+## 与后端的关系
+
+- 开发时 Vite 代理 API 到后端（见 `vite.config.ts`）
+- 生产镜像：多阶段构建先打前端，再编译 Go 并 embed 静态资源

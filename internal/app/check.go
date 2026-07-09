@@ -71,8 +71,8 @@ func (s *ProbeService) CheckAll(ctx context.Context) error {
 	return nil
 }
 
-// runLimited executes n tasks with at most limit concurrent workers.
-// Returns success/failure counts. Individual task errors are logged, not returned.
+// runLimited 以最多 limit 个并发 worker 执行 n 个任务。
+// 返回成功/失败计数。单个任务错误只记日志，不向上返回。
 func (s *ProbeService) runLimited(ctx context.Context, n, limit int, fn func(i int) error) (ok, fail int) {
 	if n == 0 {
 		return 0, 0

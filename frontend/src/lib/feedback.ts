@@ -4,7 +4,7 @@ import { useAutoClear } from '@/lib/hooks'
 
 export type FeedbackTone = 'neutral' | 'success' | 'error' | 'warning'
 
-/** Derive InlineMessage tone from text + error flag. */
+/** 根据文案与 error 标志推导 InlineMessage 语气。 */
 export function feedbackTone(
   message: string,
   options?: {
@@ -30,8 +30,8 @@ export function feedbackTone(
 }
 
 /**
- * Shared save/action feedback state: pending / success / error + auto-clear on success targets.
- * Default success targets: `已保存`.
+ * 共享的保存/操作反馈状态：pending / success / error，成功目标文案到期自动清除。
+ * 默认成功目标：`已保存`。
  */
 export function useFeedback(successTargets = '已保存') {
   const [message, setMessage] = useState('')
@@ -52,12 +52,12 @@ export function secretPlaceholder(saved?: boolean, empty = '') {
   return saved ? '已保存，不修改请留空' : empty
 }
 
-/** Mutation / action error via native alert. */
+/** 变更/操作错误：用原生 alert 提示。 */
 export function alertError(error: unknown) {
   window.alert(errorMessage(error))
 }
 
-/** Close dialog shortly after a successful save so the success label is visible. */
+/** 保存成功后稍后再关对话框，让成功文案可见。 */
 export function closeAfterSave(setOpen: (open: boolean) => void, delayMs = 350) {
   window.setTimeout(() => setOpen(false), delayMs)
 }

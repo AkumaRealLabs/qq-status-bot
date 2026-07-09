@@ -31,7 +31,7 @@ func TestCleanupExpiredData(t *testing.T) {
 		VALUES ('s1','u1','hash',?,?)`, old, old); err != nil {
 		t.Fatal(err)
 	}
-	// fresh probe should survive
+	// 新探测记录应保留
 	if _, err := s.SaveProbe(t.Context(), "u1", "c1", monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
 		t.Fatal(err)
 	}

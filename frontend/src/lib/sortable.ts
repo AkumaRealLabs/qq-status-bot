@@ -16,7 +16,7 @@ export function useSortSensors() {
   )
 }
 
-/** Reorder list by dnd-kit drag end; returns null when nothing moved. */
+/** 按 dnd-kit 拖拽结束重排列表；无移动时返回 null。 */
 export function reorderByDragEnd<T extends { id: string }>(items: T[], event: DragEndEvent): T[] | null {
   const { active, over } = event
   if (!over || active.id === over.id) return null

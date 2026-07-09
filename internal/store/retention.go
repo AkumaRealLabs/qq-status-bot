@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// Retention windows for time-series / log tables. Keep enough for charts and
-// ops review without unbounded SQLite growth on long-running personal hosts.
+// 时序/日志表的保留窗口。保留足够给图表与
+// 运维回看使用，同时避免长期个人主机上 SQLite 无限增长。
 const (
 	ProbeRunRetention              = 14 * 24 * time.Hour
 	BalanceSnapshotRetention       = 30 * 24 * time.Hour

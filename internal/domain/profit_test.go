@@ -59,11 +59,11 @@ func TestBalanceConsumptionCost(t *testing.T) {
 		{Remain: 90},
 		{Remain: 50},
 	}
-	// deltas: 20 + 0 + 40 = 60 (only decreases)
+	// 增量：20 + 0 + 40 = 60（只计减少）
 	if got := BalanceConsumptionCost("other", 1, snaps); got != 60 {
 		t.Fatalf("cost=%v want 60", got)
 	}
-	// newapi divides by 500000 before rate
+	// newapi 在费率前先除以 500000
 	snaps2 := []BalanceSnapshot{{Remain: 500000}, {Remain: 250000}}
 	if got := BalanceConsumptionCost("newapi", 2, snaps2); got != 1 {
 		t.Fatalf("newapi cost=%v want 1", got)

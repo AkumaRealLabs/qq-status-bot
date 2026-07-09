@@ -11,7 +11,7 @@ import (
 	"ai-upstream-monitor/internal/store"
 )
 
-// mockCards is an in-memory CardRepository for port-level tests.
+// mockCards：端口级测试用的内存 CardRepository。
 type mockCards struct {
 	mu    sync.Mutex
 	byID  map[string]domain.ModelCard
@@ -248,7 +248,7 @@ func TestExportDataDTOIsAppType(t *testing.T) {
 	if out.Version != "1" || out.Tables == nil {
 		t.Fatalf("export = %+v", out)
 	}
-	// Round-trip through app DTO must not require store types at the call site.
+	// 经 app DTO 往返时，调用方不应依赖 store 类型。
 	if err := svc.ImportData(t.Context(), out); err != nil {
 		t.Fatal(err)
 	}

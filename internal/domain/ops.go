@@ -43,7 +43,7 @@ func NormalizeNotificationRules(in NotificationRules) NotificationRules {
 	if in.MuteFailureThreshold > 0 {
 		out.MuteFailureThreshold = in.MuteFailureThreshold
 	}
-	// 0 means "use default" (same as FailureThreshold). Cap retries to keep probe latency bounded.
+	// 0 表示「用默认」（与 FailureThreshold 相同）。限制重试次数以免探测延迟失控。
 	if in.InternalRetryCount > 0 {
 		out.InternalRetryCount = in.InternalRetryCount
 	}

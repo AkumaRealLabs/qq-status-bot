@@ -30,7 +30,7 @@ func TestModelCardMergeUpdate(t *testing.T) {
 		SchedulerGroup: "g1", SchedulerChannelID: "ch1", SchedulerAutoDisabled: true,
 		LastError: "err", FailureCount: 2, SortOrder: 5, CreatedAt: time.Unix(1, 0).UTC(),
 	}
-	// empty source keeps old binding + secret
+	// 空来源保留旧绑定 + 密钥
 	in := ModelCard{Name: "Card", APIKey: "", SchedulerGroup: "g1", SchedulerChannelID: "ch1", SchedulerAutoDisabled: true, PoolEnabled: true}
 	got := in.MergeUpdate(old)
 	if got.BaseURL != "https://api" || got.APIKey != "sk-old" || got.ID != "c1" {
@@ -39,7 +39,7 @@ func TestModelCardMergeUpdate(t *testing.T) {
 	if got.FailureCount != 2 || got.SortOrder != 5 {
 		t.Fatalf("runtime = %+v", got)
 	}
-	// channel change clears auto-disabled
+	// 渠道变更清除自动关渠
 	in2 := ModelCard{Name: "Card", BaseURL: "https://api", APIKey: "sk", SchedulerGroup: "g1", SchedulerChannelID: "ch2", SchedulerAutoDisabled: true, PoolEnabled: true}
 	got2 := in2.MergeUpdate(old)
 	if got2.SchedulerAutoDisabled {

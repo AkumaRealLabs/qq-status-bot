@@ -20,8 +20,8 @@ func (s *Store) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, er
 	return cfg, err
 }
 
-// UpdateSchedulerConfig persists scheduler config. Callers should MergeUpdate first.
-// Defensive MergeUpdate remains for direct store callers.
+// UpdateSchedulerConfig 持久化调度配置。调用方应先 MergeUpdate。
+// 对直连 store 的调用方保留防御性 MergeUpdate。
 func (s *Store) UpdateSchedulerConfig(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerConfig, error) {
 	old, err := s.SchedulerConfig(ctx)
 	if err != nil {

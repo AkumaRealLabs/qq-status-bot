@@ -29,14 +29,14 @@ func (s *Store) Settings(ctx context.Context) (domain.Settings, error) {
 	return cfg, nil
 }
 
-// UpdateSettings persists settings as provided. Callers (app layer) should MergeUpdate first.
-// Defensive KeepSecret remains for direct store callers (tests / legacy).
+// UpdateSettings 按入参持久化设置。调用方（app 层）应先 MergeUpdate。
+// 对直连 store 的调用方（测试 / 旧路径）保留防御性 KeepSecret。
 func (s *Store) UpdateSettings(ctx context.Context, cfg domain.Settings) (domain.Settings, error) {
 	old, err := s.Settings(ctx)
 	if err != nil {
 		return cfg, err
 	}
-	// Defensive: if caller skipped app merge, still keep secrets and partial notification rules.
+	// 防御：若调用方跳过了 app 合并，仍保留密钥与部分通知规则。
 	cfg = cfg.MergeUpdate(old)
 	rules, err := json.Marshal(cfg.NotificationRules)
 	if err != nil {

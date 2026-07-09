@@ -7,7 +7,7 @@ import (
 	"ai-upstream-monitor/internal/store"
 )
 
-// Use-case wrappers so httpapi never touches Store directly.
+// 用例包装，使 httpapi 永不直接碰 Store。
 
 func (s *Service) GetUpstream(ctx context.Context, id string) (domain.Upstream, error) {
 	return s.Store.Upstream(ctx, id)
@@ -17,7 +17,7 @@ func (s *Service) DeleteUpstream(ctx context.Context, id string) error {
 	return s.Store.DeleteUpstream(ctx, id)
 }
 
-// CaptureUpstreamBrowserTokens persists tokens scraped from the browser login session.
+// CaptureUpstreamBrowserTokens 持久化浏览器登录会话抓取的 token。
 func (s *Service) CaptureUpstreamBrowserTokens(ctx context.Context, id, access, refresh string) (domain.Upstream, error) {
 	u, err := s.Store.Upstream(ctx, id)
 	if err != nil {

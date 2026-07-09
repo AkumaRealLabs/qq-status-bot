@@ -8,8 +8,8 @@ import (
 	"ai-upstream-monitor/internal/store"
 )
 
-// CardRepository is the persistence port for model cards (probe / pool binding).
-// Production wiring uses *store.Store (see compile-time check below).
+// CardRepository：模型卡片（探测 / 号池绑定）的持久化端口。
+// 生产接线使用 *store.Store（见下方编译期检查）。
 type CardRepository interface {
 	Card(ctx context.Context, id string) (domain.ModelCard, error)
 	ListCards(ctx context.Context) ([]domain.ModelCard, error)
@@ -21,20 +21,20 @@ type CardRepository interface {
 	UpdateCardSchedulerAutoDisabled(ctx context.Context, id string, disabled bool) error
 }
 
-// Notifier is the outbound notification port (Telegram today).
+// Notifier：出站通知端口（当前为 Telegram）。
 type Notifier interface {
 	Send(ctx context.Context, message string) error
 }
 
-// ProbeRunner is the outbound model-probe port.
+// ProbeRunner：出站模型探测端口。
 type ProbeRunner interface {
 	Probe(ctx context.Context, baseURL, key, model string) monitor.ProbeResult
 }
 
-// Compile-time: *store.Store implements CardRepository.
+// 编译期检查：*store.Store 实现 CardRepository。
 var _ CardRepository = (*store.Store)(nil)
 
-// telegramNotifier implements Notifier; closes over Service so Settings/HTTP stay live.
+// telegramNotifier 实现 Notifier；闭包引用 Service，Settings/HTTP 保持最新。
 type telegramNotifier struct {
 	send func(context.Context, string) error
 }
@@ -43,7 +43,7 @@ func (n *telegramNotifier) Send(ctx context.Context, message string) error {
 	return n.send(ctx, message)
 }
 
-// liveProbeRunner always calls the current monitor.Client so tests can swap Client.
+// liveProbeRunner 始终调用当前 monitor.Client，便于测试替换 Client。
 type liveProbeRunner struct {
 	svc *Service
 }

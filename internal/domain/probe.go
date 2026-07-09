@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-// Scheduler restore policy: disabled long enough + recent consecutive successes.
+// 调度恢复策略：已关渠足够久 + 最近连续成功。
 const (
 	SchedulerRestoreMinDuration  = 15 * time.Minute
 	SchedulerRestoreSuccessCount = 3
 )
 
-// EffectiveFailureThreshold returns the alert failure threshold, falling back to defaults.
+// EffectiveFailureThreshold 返回告警失败阈值，未配置时回退默认值。
 func EffectiveFailureThreshold(rules NotificationRules) int {
 	if rules.FailureThreshold <= 0 {
 		return DefaultNotificationRules().FailureThreshold
@@ -19,7 +19,7 @@ func EffectiveFailureThreshold(rules NotificationRules) int {
 	return rules.FailureThreshold
 }
 
-// EffectiveMuteThreshold returns the mute / auto-disable threshold, falling back to defaults.
+// EffectiveMuteThreshold 返回静音/自动关渠阈值，未配置时回退默认值。
 func EffectiveMuteThreshold(rules NotificationRules) int {
 	if rules.MuteFailureThreshold <= 0 {
 		return DefaultNotificationRules().MuteFailureThreshold
@@ -27,7 +27,7 @@ func EffectiveMuteThreshold(rules NotificationRules) int {
 	return rules.MuteFailureThreshold
 }
 
-// EffectiveInternalRetry returns probe internal-retry count and interval.
+// EffectiveInternalRetry 返回探测本地错误的内部重试次数与间隔。
 func EffectiveInternalRetry(rules NotificationRules) (retries int, interval time.Duration) {
 	n := NormalizeNotificationRules(rules)
 	return n.InternalRetryCount, time.Duration(n.InternalRetryIntervalMs) * time.Millisecond
@@ -40,20 +40,20 @@ func normalizeMuteAt(muteAt int) int {
 	return muteAt
 }
 
-// ProbeMuted reports whether a card should show as muted (failure streak or auto-disabled).
+// ProbeMuted 表示卡片是否应显示为静音（失败连击或已自动关渠）。
 func ProbeMuted(failureCount, muteAt int, autoDisabled bool) bool {
 	muteAt = normalizeMuteAt(muteAt)
 	return failureCount >= muteAt || autoDisabled
 }
 
-// SuppressProbeAlert is true when a failure alert should not fire:
-// already auto-disabled, or this failure is not exactly the mute boundary.
+// SuppressProbeAlert 为 true 时不应发出失败告警：
+// 已自动关渠，或本次失败次数不是静音边界那一次。
 func SuppressProbeAlert(autoDisabled bool, failures, muteAt int) bool {
 	muteAt = normalizeMuteAt(muteAt)
 	return autoDisabled || failures != muteAt
 }
 
-// UpstreamAlerting is true when consecutive failures reach the alert threshold.
+// UpstreamAlerting 为 true 表示连续失败已达告警阈值。
 func UpstreamAlerting(failures, threshold int) bool {
 	if threshold <= 0 {
 		threshold = DefaultNotificationRules().FailureThreshold
@@ -61,7 +61,7 @@ func UpstreamAlerting(failures, threshold int) bool {
 	return failures >= threshold
 }
 
-// ShouldAutoDisableScheduler decides whether to close the bound scheduler channel.
+// ShouldAutoDisableScheduler 判断是否应关闭绑定的调度渠道。
 func ShouldAutoDisableScheduler(poolEnabled bool, channelID string, success bool, failures, muteAt int, alreadyDisabled bool) bool {
 	if !poolEnabled || strings.TrimSpace(channelID) == "" || success || alreadyDisabled {
 		return false
@@ -70,13 +70,13 @@ func ShouldAutoDisableScheduler(poolEnabled bool, channelID string, success bool
 	return failures == muteAt
 }
 
-// NeedsSchedulerRestoreTimestamp is true when auto-disabled is set but disabled-at was never recorded.
+// NeedsSchedulerRestoreTimestamp 为 true 表示已自动关渠但尚未记录 disabled-at。
 func NeedsSchedulerRestoreTimestamp(disabledAt *time.Time) bool {
 	return disabledAt == nil
 }
 
-// SchedulerRestoreReady is pure restore eligibility (duration + last N successes).
-// recent should be newest-first; only the first SchedulerRestoreSuccessCount entries are considered.
+// SchedulerRestoreReady 是纯恢复资格判断（关渠时长 + 最近 N 次成功）。
+// recent 应为最新在前；只看前 SchedulerRestoreSuccessCount 条。
 func SchedulerRestoreReady(disabledAt *time.Time, recent []ProbeRun, now time.Time) bool {
 	if disabledAt == nil {
 		return false
@@ -95,7 +95,7 @@ func SchedulerRestoreReady(disabledAt *time.Time, recent []ProbeRun, now time.Ti
 	return true
 }
 
-// IsQuotaProbeError classifies probe error text as quota/balance exhaustion.
+// IsQuotaProbeError 将探测错误文案归类为额度/余额耗尽。
 func IsQuotaProbeError(errText string) bool {
 	lower := strings.ToLower(errText)
 	for _, needle := range []string{

@@ -448,7 +448,7 @@ func (s *SchedulerService) logSchedulerAction(ctx context.Context, card domain.M
 }
 
 func (s *SchedulerService) schedulerRestoreReady(ctx context.Context, card domain.ModelCard) bool {
-	// Side effect kept in app: backfill missing disabled-at timestamp.
+	// 副作用留在 app：补齐缺失的 disabled-at 时间戳。
 	if domain.NeedsSchedulerRestoreTimestamp(card.SchedulerAutoDisabledAt) {
 		now := time.Now().UTC()
 		_ = s.app.Cards.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true)

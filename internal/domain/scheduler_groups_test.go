@@ -47,12 +47,12 @@ func TestTargetGroupsKeepsUnmanaged(t *testing.T) {
 		{Group: "gpt_stable", PriceMin: 0.1, PriceMax: 0.25},
 	}
 	managed := ManagedGroups(tiers)
-	// current has manual group + wrong managed; price hits gpt_low only
+	// 当前含手动分组 + 错误托管；价格仅命中 gpt_low
 	got := TargetGroups(tiers, managed, 0.05, "manual,gpt_stable")
 	if !SameGroups(got, []string{"manual", "gpt_low"}) {
 		t.Fatalf("got=%v", got)
 	}
-	// empty current + no price match → empty
+	// 当前为空且无价格匹配 → 空结果
 	if got := TargetGroups(tiers, managed, 9, ""); len(got) != 0 {
 		t.Fatalf("got=%v", got)
 	}

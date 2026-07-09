@@ -5,7 +5,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-/** Order-sensitive id equality for drag-sort dirty checks. */
+/** 顺序敏感的 id 相等判断，用于拖拽排序脏检查。 */
 export function sameIDs(a: { id: string }[], b: { id: string }[]) {
   return a.length === b.length && a.every((item, index) => item.id === b[index]?.id)
 }

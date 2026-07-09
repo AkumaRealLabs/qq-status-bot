@@ -201,14 +201,14 @@ export function IconAction({
   )
 }
 
-/** Footer row for dialogs / forms: right-aligned actions. */
+/** 对话框/表单底部行：右侧操作按钮。 */
 export function ActionRow({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn('flex flex-wrap items-center justify-end gap-2', className)}>{children}</div>
 }
 
 /**
- * Primary save button with pending / success labels.
- * Pass `message === successLabel` (default 已保存) to flip label after success.
+ * 主保存按钮：pending / success 文案切换。
+ * 传入 `message === successLabel`（默认 已保存）时在成功后切换标签。
  */
 export function SaveButton({
   onClick,
@@ -240,7 +240,7 @@ export function SaveButton({
   )
 }
 
-/** InlineMessage + common tone derivation for action feedback. */
+/** InlineMessage + 通用语气推导，用于操作反馈。 */
 export function FeedbackBanner({
   message,
   error,
@@ -255,7 +255,7 @@ export function FeedbackBanner({
   return <InlineMessage message={message} tone={feedbackTone(message, { error, success })} className={className} />
 }
 
-/** Shared bordered scroll table shell used by ops / pools / revenue. */
+/** 带边框可滚动表格壳，运维/号池/收入共用。 */
 export function DataTable({
   minWidthClass,
   head,

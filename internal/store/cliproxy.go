@@ -20,8 +20,8 @@ func (s *Store) CLIProxyConfig(ctx context.Context) (domain.CLIProxyConfig, erro
 	return cfg, err
 }
 
-// UpdateCLIProxyConfig persists CLIProxy config. Callers should MergeUpdate first.
-// Defensive MergeUpdate remains for direct store callers.
+// UpdateCLIProxyConfig 持久化 CLIProxy 配置。调用方应先 MergeUpdate。
+// 对直连 store 的调用方保留防御性 MergeUpdate。
 func (s *Store) UpdateCLIProxyConfig(ctx context.Context, cfg domain.CLIProxyConfig) (domain.CLIProxyConfig, error) {
 	old, err := s.CLIProxyConfig(ctx)
 	if err != nil {

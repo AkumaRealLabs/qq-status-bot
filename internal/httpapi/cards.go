@@ -109,7 +109,7 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	if body.SchedulerChannelName != nil {
 		schedulerChannelName = *body.SchedulerChannelName
 	}
-	// Empty source/secret fields: SaveCard → ModelCard.MergeUpdate keeps stored values.
+	// 空来源/密钥字段：SaveCard → ModelCard.MergeUpdate 保留库中值。
 	card, err := s.App.SaveCard(r.Context(), r.PathValue("id"), domain.ModelCard{
 		Name: name, BaseURL: baseURL, APIKey: apiKey, UpstreamID: upstreamID, KeyID: keyID,
 		DisplayGroup: displayGroup, PoolEnabled: poolEnabled, PoolEnabledSet: true, ManualCostRatio: manualCostRatio,

@@ -99,7 +99,7 @@ func (s *Server) updateRevenueCard(w http.ResponseWriter, r *http.Request) {
 	if sourceType == "" {
 		sourceType = old.SourceType
 	}
-	// Empty secrets mean keep existing; SaveRevenueCard merges with stored values.
+	// 空密钥表示保留现有；SaveRevenueCard 会与库中值合并。
 	in := domain.RevenueCard{
 		Name: name, SourceType: sourceType, BaseURL: body.BaseURL, UserID: body.UserID, AccessToken: body.AccessToken,
 		AdminAPIKey: body.AdminAPIKey, EpayPID: body.EpayPID, EpayKey: body.EpayKey, UpstreamID: upstreamID, Enabled: enabled,

@@ -32,7 +32,7 @@ func TestProbeMutedAndSuppress(t *testing.T) {
 	if ProbeMuted(1, muteAt, false) {
 		t.Fatal("below mute should not mute")
 	}
-	// Alert only at exact mute boundary; all other failure counts suppress.
+	// 仅在静音边界精确次数告警；其余失败次数抑制。
 	if !SuppressProbeAlert(false, 3, muteAt) {
 		t.Fatal("failures != muteAt should suppress")
 	}
@@ -42,7 +42,7 @@ func TestProbeMutedAndSuppress(t *testing.T) {
 	if !SuppressProbeAlert(true, 4, muteAt) {
 		t.Fatal("auto-disabled should suppress")
 	}
-	// muteAt <= 0 falls back to default (4)
+	// muteAt <= 0 回退默认（4）
 	if SuppressProbeAlert(false, 4, 0) {
 		t.Fatal("default mute boundary should not suppress")
 	}

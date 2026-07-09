@@ -6,7 +6,7 @@ import (
 	"ai-upstream-monitor/internal/domain"
 )
 
-// Public API forwarders keep httpapi and existing call sites on *Service stable.
+// 公开 API 转发器：保持 httpapi 与既有调用方仍挂在 *Service 上。
 
 func (s *Service) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, error) {
 	return s.Scheduler.SchedulerConfig(ctx)
@@ -44,7 +44,7 @@ func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitRespo
 	return s.ProfitSvc.Profit(ctx, window)
 }
 
-// Internal hooks used by cards/check/upstreams — keep on Service for thin call sites.
+// cards/check/upstreams 使用的内部钩子 — 仍挂在 Service 上以便薄调用。
 
 func (s *Service) recordCurrentCostSnapshots(ctx context.Context) error {
 	return s.Scheduler.recordCurrentCostSnapshots(ctx)
@@ -66,7 +66,7 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 	return s.Scheduler.applySchedulerAutomation(ctx, card, success, failures)
 }
 
-// Probe / card public API
+// 探测 / 卡片公开 API
 
 func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) (domain.ModelCard, error) {
 	return s.Probe.SaveCard(ctx, id, in)
@@ -109,7 +109,7 @@ func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
 }
 
 
-// CLIProxy public API
+// CLIProxy 公开 API
 
 func (s *Service) CLIProxyConfig(ctx context.Context) (domain.CLIProxyConfig, error) {
 	return s.CLIProxy.CLIProxyConfig(ctx)
@@ -143,7 +143,7 @@ func (s *Service) CLIProxyAccountQuota(ctx context.Context, name, authIndex, acc
 	return s.CLIProxy.CLIProxyAccountQuota(ctx, name, authIndex, accountID, accountType)
 }
 
-// TG public API
+// TG 公开 API
 
 func (s *Service) TGSessionStatus(ctx context.Context) (TGSessionStatus, error) {
 	return s.TG.TGSessionStatus(ctx)

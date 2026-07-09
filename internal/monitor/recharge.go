@@ -403,7 +403,7 @@ func paymentPayload(raw map[string]any) map[string]any {
 		if len(data) == 0 {
 			data["payment_url"] = rawURL
 		} else {
-			// new-api epay returns a form action plus POST params. OPS does not embed form payments in v1.
+			// new-api 易支付返回 form action + POST 参数。运维台 v1 不内嵌表单支付。
 			data["message"] = "该支付方式需要在上游站点完成"
 		}
 	}

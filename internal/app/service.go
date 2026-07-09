@@ -30,12 +30,12 @@ type Service struct {
 	tgRunning  bool
 	tgLastRun  time.Time
 
-	// Minimal ports (Phase 3). Defaults wire to Store / Telegram / monitor.Client.
+	// 最小 ports（Phase 3）。默认接到 Store / Telegram / monitor.Client。
 	Cards  CardRepository
 	Notify Notifier
 	Prober ProbeRunner
 
-	// Bounded-context facades (same package). Public APIs still forward via Service methods.
+	// 限界上下文门面（同包）。对外 API 仍经 Service 方法转发。
 	Scheduler *SchedulerService
 	ProfitSvc *ProfitService
 	Probe     *ProbeService
@@ -43,27 +43,27 @@ type Service struct {
 	TG        *TGService
 }
 
-// SchedulerService owns scheduler config, channel/group apply, cost snapshots, and automation.
+// SchedulerService 负责调度配置、渠道/分组应用、成本快照与自动化。
 type SchedulerService struct {
 	app *Service
 }
 
-// ProfitService owns scheduler-pool profit aggregation.
+// ProfitService 负责调度号池利润汇总。
 type ProfitService struct {
 	app *Service
 }
 
-// ProbeService owns model cards, probe runs, upstream checks, and monitor status.
+// ProbeService 负责模型卡片、探测、上游检查与监控状态。
 type ProbeService struct {
 	app *Service
 }
 
-// CLIProxyService owns CLIProxyAPI management and quota snapshots.
+// CLIProxyService 负责 CLIProxyAPI 管理与配额快照。
 type CLIProxyService struct {
 	app *Service
 }
 
-// TGService owns Telegram session, channels, and message sync.
+// TGService 负责 Telegram 会话、频道与消息同步。
 type TGService struct {
 	app *Service
 }
@@ -94,7 +94,7 @@ func (s *Service) StartScheduler(ctx context.Context) {
 	if err := s.SeedSchedulerSnapshots(ctx); err != nil {
 		log.Printf("scheduler: seed snapshots: %v", err)
 	}
-	// Run retention once at boot so long-idle hosts free space immediately.
+	// 启动时跑一次数据保留清理，让长期闲置主机立刻腾出空间。
 	if stats, err := s.Store.CleanupExpiredData(ctx); err != nil {
 		log.Printf("scheduler: retention cleanup: %v", err)
 	} else if stats.DeletedTotal() > 0 {
@@ -117,7 +117,7 @@ func (s *Service) StartScheduler(ctx context.Context) {
 				if err := s.RefreshTGMessagesDue(tickCtx); err != nil && !errors.Is(err, context.Canceled) {
 					log.Printf("scheduler: tg refresh: %v", err)
 				}
-				// Retention is cheap; run hourly rather than every minute.
+				// 保留清理开销小；按小时跑，不必每分钟。
 				if lastRetention.IsZero() || time.Since(lastRetention) >= time.Hour {
 					if stats, err := s.Store.CleanupExpiredData(tickCtx); err != nil {
 						log.Printf("scheduler: retention cleanup: %v", err)

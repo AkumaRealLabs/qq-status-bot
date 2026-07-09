@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// UsageUnits converts scheduler quota + group ratio into sale/cost units.
-// Formula: quota / 500000 / groupRatio
+// UsageUnits 将调度配额 + 分组倍率换算为售卖/成本用量单位。
+// 公式：quota / 500000 / groupRatio
 func UsageUnits(quota, groupRatio float64) (float64, bool) {
 	if groupRatio <= 0 || quota < 0 {
 		return 0, false
@@ -16,7 +16,7 @@ func UsageUnits(quota, groupRatio float64) (float64, bool) {
 	return quota / 500000 / groupRatio, true
 }
 
-// LineProfit computes revenue, cost, and profit for a usage line.
+// LineProfit 计算一行用量的收入、成本与利润。
 func LineProfit(usage, salePrice, costPerUnit float64) (revenue, cost, profit float64) {
 	revenue = usage * salePrice
 	cost = usage * costPerUnit
@@ -24,7 +24,7 @@ func LineProfit(usage, salePrice, costPerUnit float64) (revenue, cost, profit fl
 	return revenue, cost, profit
 }
 
-// MergeMeta merges snapshot metadata labels; differing non-empty values become "mixed".
+// MergeMeta 合并快照元数据标签；不同的非空值记为 "mixed"。
 func MergeMeta(old, next string) string {
 	next = strings.TrimSpace(next)
 	if old == "" {
@@ -36,7 +36,7 @@ func MergeMeta(old, next string) string {
 	return "mixed"
 }
 
-// FirstNonEmpty returns the first non-blank string among values.
+// FirstNonEmpty 返回 values 中第一个非空白字符串。
 func FirstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -46,8 +46,8 @@ func FirstNonEmpty(values ...string) string {
 	return ""
 }
 
-// BalanceConsumptionCost sums positive remain decreases across ordered snapshots
-// (converted with type-specific normalization and balance rate).
+// BalanceConsumptionCost 对有序快照中 remain 的正减少量求和
+// （经类型相关规范化与余额费率换算）。
 func BalanceConsumptionCost(upstreamType string, rate float64, snaps []BalanceSnapshot) float64 {
 	var cost float64
 	var prev float64
@@ -61,8 +61,8 @@ func BalanceConsumptionCost(upstreamType string, rate float64, snaps []BalanceSn
 	return cost
 }
 
-// CostPerUnitFromManual parses a manual cost ratio string.
-// Returns (cost, "") on success or (0, missingReason) when invalid.
+// CostPerUnitFromManual 解析手动成本倍率字符串。
+// 成功返回 (cost, "")，无效时返回 (0, missingReason)。
 func CostPerUnitFromManual(ratio string) (float64, string) {
 	v, err := strconv.ParseFloat(strings.TrimSpace(ratio), 64)
 	if err != nil || v <= 0 || math.IsNaN(v) || math.IsInf(v, 0) {
@@ -71,8 +71,8 @@ func CostPerUnitFromManual(ratio string) (float64, string) {
 	return v, ""
 }
 
-// CostPerUnitFromUpstreamKey multiplies key group ratio by balance rate.
-// Returns (cost, "") on success or (0, missingReason) when invalid.
+// CostPerUnitFromUpstreamKey：Key 分组倍率 × 余额费率。
+// 成功返回 (cost, "")，无效时返回 (0, missingReason)。
 func CostPerUnitFromUpstreamKey(groupRatio string, balanceRate float64) (float64, string) {
 	ratio, err := strconv.ParseFloat(strings.TrimSpace(groupRatio), 64)
 	if err != nil || ratio <= 0 || balanceRate <= 0 {
@@ -81,7 +81,7 @@ func CostPerUnitFromUpstreamKey(groupRatio string, balanceRate float64) (float64
 	return ratio * balanceRate, ""
 }
 
-// EffectiveRatio formats groupRatio * balanceRate for display; non-numeric input is returned as-is.
+// EffectiveRatio 将 groupRatio * balanceRate 格式化为展示用；非数字输入原样返回。
 func EffectiveRatio(groupRatio string, balanceRate float64) string {
 	ratio, err := strconv.ParseFloat(strings.TrimSpace(groupRatio), 64)
 	if err != nil {
