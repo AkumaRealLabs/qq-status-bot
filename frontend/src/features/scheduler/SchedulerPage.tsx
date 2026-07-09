@@ -23,7 +23,6 @@ const defaultTiers: SchedulerTier[] = [
 export function SchedulerPage() {
   const qc = useQueryClient()
   const [cfgDraft, setCfgDraft] = useState<SchedulerConfig | null>(null)
-  const [keyword, setKeyword] = useState('')
   const [message, setMessage] = useState('')
   const cfg = useQuery({ queryKey: ['scheduler', 'config'], queryFn: () => api<SchedulerConfig>('/api/scheduler/config') })
   const cards = useQuery({ queryKey: ['cards'], queryFn: () => api<ModelCard[]>('/api/cards') })
@@ -35,8 +34,8 @@ export function SchedulerPage() {
     enabled: configured,
   })
   const channels = useQuery({
-    queryKey: ['scheduler', 'channels', keyword],
-    queryFn: () => api<SchedulerChannel[]>(`/api/scheduler/channels?keyword=${encodeURIComponent(keyword)}`),
+    queryKey: ['scheduler', 'channels'],
+    queryFn: () => api<SchedulerChannel[]>('/api/scheduler/channels'),
     enabled: configured,
   })
   const form = cfgDraft ?? cfg.data
@@ -156,34 +155,8 @@ export function SchedulerPage() {
         </div>
       }
     >
-      <Section title="连接配置">
-        <Card className="bg-card">
-          <CardContent className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-            <InfoCell label="Base URL" value={form.scheduler_base_url || '-'} />
-            <InfoCell label="用户 ID" value={form.scheduler_user_id || '-'} />
-            <div className="flex items-end">
-              <Button variant="outline" onClick={() => {
-                void groups.refetch()
-                void channels.refetch()
-              }} disabled={!configured || groups.isFetching || channels.isFetching}>
-                {groups.isFetching || channels.isFetching ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
-                测试连接
-              </Button>
-            </div>
-            <div className="md:col-span-3">
-              <Field label="渠道搜索">
-                <Input value={keyword} placeholder="名称、模型或分组" onChange={(e) => setKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void channels.refetch() }} />
-              </Field>
-            </div>
-            <div className="md:col-span-3">
-              <FormError error={groups.error || channels.error} />
-            </div>
-          </CardContent>
-        </Card>
-      </Section>
-
       <Section title="调度器分组">
-        <FormError error={groups.error} />
+        <FormError error={groups.error || channels.error} />
         {groups.isLoading && <EmptyPanel text="加载中..." />}
         {!groups.isLoading && !groups.error && groupRows.length === 0 && <EmptyPanel text="暂无调度器分组" />}
         {!groups.isLoading && !groups.error && groupRows.length > 0 && (
