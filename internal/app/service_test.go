@@ -262,7 +262,7 @@ func TestSchedulerConfigAndChannelsProxy(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	cfg, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL + "/", UserID: "42", AccessToken: "token"})
+	cfg, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL + "/", UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,6 +282,7 @@ func TestSchedulerConfigAndChannelsProxy(t *testing.T) {
 }
 
 func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
+	currentGroups := map[int]string{9: "", 10: ""}
 	updated := map[int]string{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/channel/" {
@@ -292,8 +293,8 @@ func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 				t.Fatalf("bad channel page query: %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
-				{"id": 9, "group": ""},
-				{"id": 10, "group": ""},
+				{"id": 9, "group": currentGroups[9]},
+				{"id": 10, "group": currentGroups[10]},
 			}}})
 			return
 		}
@@ -307,6 +308,7 @@ func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
+		currentGroups[body.ID] = body.Group
 		updated[body.ID] = body.Group
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 	}))
@@ -346,7 +348,7 @@ func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
-		BaseURL: ts.URL, UserID: "42", AccessToken: "token",
+		BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",
 		Tiers: []domain.SchedulerTier{
 			{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1},
 			{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.15},
@@ -371,6 +373,7 @@ func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 }
 
 func TestApplySchedulerGroupsUsesCustomManualCostAndSkipsMonitorOnly(t *testing.T) {
+	currentGroups := map[int]string{9: "", 10: "", 11: ""}
 	updated := map[int]string{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/channel/" {
@@ -379,9 +382,9 @@ func TestApplySchedulerGroupsUsesCustomManualCostAndSkipsMonitorOnly(t *testing.
 		switch r.Method {
 		case http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
-				{"id": 9, "group": ""},
-				{"id": 10, "group": ""},
-				{"id": 11, "group": ""},
+				{"id": 9, "group": currentGroups[9]},
+				{"id": 10, "group": currentGroups[10]},
+				{"id": 11, "group": currentGroups[11]},
 			}}})
 		case http.MethodPut:
 			var body struct {
@@ -391,6 +394,7 @@ func TestApplySchedulerGroupsUsesCustomManualCostAndSkipsMonitorOnly(t *testing.
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
+			currentGroups[body.ID] = body.Group
 			updated[body.ID] = body.Group
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 		default:
@@ -418,7 +422,7 @@ func TestApplySchedulerGroupsUsesCustomManualCostAndSkipsMonitorOnly(t *testing.
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
-		BaseURL: ts.URL, UserID: "42", AccessToken: "token",
+		BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",
 		Tiers: []domain.SchedulerTier{
 			{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1, SalePrice: 0.1},
 			{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0.1, PriceMax: 0.25, SalePrice: 0.25},
@@ -510,7 +514,7 @@ func TestApplySchedulerGroupsKeepsManualGroupsAndCountsUnchanged(t *testing.T) {
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
-		BaseURL: ts.URL, UserID: "42", AccessToken: "token",
+		BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",
 		Tiers: []domain.SchedulerTier{
 			{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1, SalePrice: 0.1},
 			{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0.1, PriceMax: 0.25, SalePrice: 0.25},
@@ -530,7 +534,7 @@ func TestApplySchedulerGroupsKeepsManualGroupsAndCountsUnchanged(t *testing.T) {
 	}
 }
 
-func TestApplySchedulerGroupsClearsEmptyTargetGroup(t *testing.T) {
+func TestApplySchedulerGroupsMovesOutOfRangeToUnassigned(t *testing.T) {
 	currentGroups := map[int]string{9: "gpt_stable"}
 	var puts int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -583,7 +587,7 @@ func TestApplySchedulerGroupsClearsEmptyTargetGroup(t *testing.T) {
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
-		BaseURL: ts.URL, UserID: "42", AccessToken: "token",
+		BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",
 		Tiers: []domain.SchedulerTier{{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0.1, PriceMax: 0.15, SalePrice: 0.25}},
 	}); err != nil {
 		t.Fatal(err)
@@ -596,12 +600,12 @@ func TestApplySchedulerGroupsClearsEmptyTargetGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Updated != 1 || out.Skipped != 0 || puts != 1 || currentGroups[9] != "" || len(logs) != 1 || !strings.Contains(logs[0].Message, "expensive: gpt_stable ->") {
-		t.Fatalf("out=%+v puts=%d logs=%+v", out, puts, logs)
+	if out.Updated != 1 || out.Skipped != 0 || puts != 1 || currentGroups[9] != "unassigned" || len(logs) != 1 || !strings.Contains(logs[0].Message, "expensive: gpt_stable -> unassigned") {
+		t.Fatalf("out=%+v puts=%d groups=%+v logs=%+v", out, puts, currentGroups, logs)
 	}
 }
 
-func TestApplySchedulerGroupsDoesNotLogWhenClearIsIgnored(t *testing.T) {
+func TestApplySchedulerGroupsLogsWhenWriteIsIgnored(t *testing.T) {
 	var puts int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/channel/" {
@@ -609,6 +613,7 @@ func TestApplySchedulerGroupsDoesNotLogWhenClearIsIgnored(t *testing.T) {
 		}
 		switch r.Method {
 		case http.MethodGet:
+			// 模拟 new-api：PUT success 但 group 不变
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
 				{"id": 9, "name": "expensive", "group": "gpt_stable"},
 			}}})
@@ -645,7 +650,7 @@ func TestApplySchedulerGroupsDoesNotLogWhenClearIsIgnored(t *testing.T) {
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
-		BaseURL: ts.URL, UserID: "42", AccessToken: "token",
+		BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",
 		Tiers: []domain.SchedulerTier{{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0.1, PriceMax: 0.15, SalePrice: 0.25}},
 	}); err != nil {
 		t.Fatal(err)
@@ -658,13 +663,42 @@ func TestApplySchedulerGroupsDoesNotLogWhenClearIsIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Updated != 0 || out.Skipped != 1 || puts != 1 || len(logs) != 0 {
+	if out.Updated != 0 || out.Skipped != 1 || puts != 1 || len(logs) != 1 || logs[0].Status != "error" || !strings.Contains(logs[0].Message, "校验失败") {
 		t.Fatalf("out=%+v puts=%d logs=%+v", out, puts, logs)
+	}
+}
+
+func TestApplySchedulerGroupsRequiresUnassignedGroup(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	// 直写 store 绕过 Save 校验，模拟旧库未配置 unassigned
+	if _, err := st.UpdateSchedulerConfig(t.Context(), domain.SchedulerConfig{
+		BaseURL: "https://scheduler.example.test", UserID: "1", AccessToken: "token",
+		Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 0.1, SalePrice: 0.1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ApplySchedulerGroups(t.Context()); err == nil {
+		t.Fatal("expected error when unassigned group missing")
+	}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
+		BaseURL: "https://scheduler.example.test", UserID: "1", AccessToken: "token", UnassignedGroup: "",
+		Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 0.1, SalePrice: 0.1}},
+	}); err == nil {
+		t.Fatal("expected save to require unassigned group")
 	}
 }
 
 func TestCheckAllSyncsSchedulerGroupsOnce(t *testing.T) {
 	var channelGets, channelPuts, tokenHits int
+	currentGroup := ""
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/user/self":
@@ -677,11 +711,17 @@ func TestCheckAllSyncsSchedulerGroupsOnce(t *testing.T) {
 		case "/api/channel/":
 			if r.Method == http.MethodPut {
 				channelPuts++
+				var body struct {
+					ID    int    `json:"id"`
+					Group string `json:"group"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				currentGroup = body.Group
 				_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 				return
 			}
 			channelGets++
-			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "group": ""}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "group": currentGroup}}}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -714,13 +754,14 @@ func TestCheckAllSyncsSchedulerGroupsOnce(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.CheckAll(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if tokenHits != 2 || channelGets != 1 || channelPuts != 1 {
+	// 1 次列表 GET + 写后校验 1 次 GET；PUT 仅 1 次（整轮 CheckAll 同步一次）
+	if tokenHits != 2 || channelGets != 2 || channelPuts != 1 {
 		t.Fatalf("tokenHits=%d channelGets=%d channelPuts=%d", tokenHits, channelGets, channelPuts)
 	}
 }
@@ -769,7 +810,7 @@ func TestCheckAllGroupSyncFailureDoesNotStopCardProbe(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.CheckAll(t.Context()); err != nil {
@@ -833,7 +874,7 @@ func TestSaveUpstreamSyncsGroupsOnlyWhenBalanceRateChanges(t *testing.T) {
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
-		BaseURL: ts.URL, UserID: "42", AccessToken: "token",
+		BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",
 		Tiers: []domain.SchedulerTier{
 			{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1, SalePrice: 0.1},
 			{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.25, SalePrice: 0.25},
@@ -850,7 +891,8 @@ func TestSaveUpstreamSyncsGroupsOnlyWhenBalanceRateChanges(t *testing.T) {
 	if _, err := svc.SaveUpstream(t.Context(), u.ID, domain.Upstream{Name: "A", Type: "newapi", BaseURL: "https://api.example.test", BalanceRate: 2, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if gets != 1 || puts != 1 || currentGroup != "gpt_stable" {
+	// 列表 1 次 + 写后校验 1 次
+	if gets != 2 || puts != 1 || currentGroup != "gpt_stable" {
 		t.Fatalf("gets=%d puts=%d group=%q", gets, puts, currentGroup)
 	}
 }
@@ -917,7 +959,7 @@ func TestProfitFromSchedulerLogs(t *testing.T) {
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
-		BaseURL: ts.URL, UserID: "42", AccessToken: "token",
+		BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",
 		Tiers: []domain.SchedulerTier{
 			{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1, SalePrice: 0.1},
 			{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.25, SalePrice: 0.25},
@@ -974,7 +1016,7 @@ func TestSeedSchedulerSnapshotsIsIdempotentAndSkipsMonitorOnlyActiveCost(t *test
 		t.Fatal(err)
 	}
 	svc := New(st)
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: "https://scheduler.example.test", UserID: "1", AccessToken: "token", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 0.1, SalePrice: 0.1}}}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: "https://scheduler.example.test", UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 0.1, SalePrice: 0.1}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.SeedSchedulerSnapshots(t.Context()); err != nil {
@@ -1038,7 +1080,7 @@ func TestProfitUsesManualCostSnapshotsByLogTime(t *testing.T) {
 	}
 	oldLog, newLog = first.Add(time.Second), second.Add(time.Second)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 1, SalePrice: 0.2}}}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 1, SalePrice: 0.2}}}); err != nil {
 		t.Fatal(err)
 	}
 	out, err := svc.Profit(t.Context(), "24h")
@@ -1073,7 +1115,7 @@ func TestProfitUsesFirstSnapshotsForEarlierLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 1, SalePrice: 0.2}}}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 1, SalePrice: 0.2}}}); err != nil {
 		t.Fatal(err)
 	}
 	out, err := svc.Profit(t.Context(), "24h")
@@ -1117,7 +1159,7 @@ func TestProfitIncludesDeletedGroupFromSaleSnapshots(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", Tiers: []domain.SchedulerTier{}}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned", Tiers: []domain.SchedulerTier{}}); err != nil {
 		t.Fatal(err)
 	}
 	out, err := svc.Profit(t.Context(), "24h")
@@ -1171,7 +1213,7 @@ func TestSchedulerProfitLogsUsesNewAPICappedPageSize(t *testing.T) {
 
 	svc := New(nil)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	logs, err := svc.ProfitSvc.schedulerProfitLogs(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token"}, time.Unix(1, 0), time.Unix(2, 0), "gpt_low")
+	logs, err := svc.ProfitSvc.schedulerProfitLogs(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned",}, time.Unix(1, 0), time.Unix(2, 0), "gpt_low")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1204,7 +1246,7 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
 		t.Fatal(err)
 	}
 	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", Enabled: true})
@@ -1319,7 +1361,7 @@ func TestSetCardSchedulerChannelStatus(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
 		t.Fatal(err)
 	}
 	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", SchedulerAutoDisabled: true, Enabled: true})
@@ -1388,7 +1430,7 @@ func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	}))
 	defer ts.Close()
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
 		t.Fatal(err)
 	}
 	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", Enabled: true})
@@ -1659,7 +1701,7 @@ func TestSchedulerGroupsFallbackAndParse(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
 		t.Fatal(err)
 	}
 	groups, err := svc.SchedulerGroups(t.Context())
@@ -2025,7 +2067,7 @@ func TestSchedulerAutomationSkipsMonitorOnlyCards(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token"}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
 		t.Fatal(err)
 	}
 	err = svc.applySchedulerAutomation(t.Context(), domain.ModelCard{ID: "c", Name: "监控", PoolEnabled: false, SchedulerChannelID: "9"}, false, 2)

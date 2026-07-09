@@ -58,6 +58,47 @@ func TestTargetGroupsKeepsUnmanaged(t *testing.T) {
 	}
 }
 
+func TestAssignedTargetGroupsUsesUnassigned(t *testing.T) {
+	tiers := []SchedulerTier{
+		{Group: "gpt_low", PriceMin: 0, PriceMax: 0.1},
+		{Group: "gpt_stable", PriceMin: 0.1, PriceMax: 0.25},
+	}
+	managed := ManagedGroups(tiers)
+	// 超档：落到 unassigned，并剥离旧托管组
+	got := AssignedTargetGroups(tiers, managed, 0.5, "gpt_stable", "unassigned")
+	if !SameGroups(got, []string{"unassigned"}) {
+		t.Fatalf("got=%v", got)
+	}
+	// 已在 unassigned：保持
+	if got := AssignedTargetGroups(tiers, managed, 0.5, "unassigned", "unassigned"); !SameGroups(got, []string{"unassigned"}) {
+		t.Fatalf("got=%v", got)
+	}
+	// 命中档位时不再带 unassigned
+	if got := AssignedTargetGroups(tiers, managed, 0.05, "unassigned", "unassigned"); !SameGroups(got, []string{"gpt_low"}) {
+		t.Fatalf("got=%v", got)
+	}
+	// 保留其它手动分组
+	if got := AssignedTargetGroups(tiers, managed, 0.5, "manual,gpt_stable", "unassigned"); !SameGroups(got, []string{"manual"}) {
+		t.Fatalf("got=%v", got)
+	}
+}
+
+func TestValidateSchedulerUnassignedGroup(t *testing.T) {
+	tiers := []SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 0.1, SalePrice: 0.1}}
+	if err := ValidateSchedulerUnassignedGroup("", tiers); err == nil {
+		t.Fatal("empty should fail")
+	}
+	if err := ValidateSchedulerUnassignedGroup("gpt_low", tiers); err == nil {
+		t.Fatal("same as tier should fail")
+	}
+	if err := ValidateSchedulerUnassignedGroup("a,b", tiers); err == nil {
+		t.Fatal("multi should fail")
+	}
+	if err := ValidateSchedulerUnassignedGroup("unassigned", tiers); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestJoinGroups(t *testing.T) {
 	if got := JoinGroups([]string{"a", "b"}); got != "a,b" {
 		t.Fatalf("got=%q", got)

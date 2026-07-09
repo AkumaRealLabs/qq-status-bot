@@ -131,12 +131,13 @@ func (in Settings) MergeUpdate(old Settings) Settings {
 	return out
 }
 
-// MergeUpdate：密钥保留并规范化档位/URL 字段。
+// MergeUpdate：密钥保留并规范化档位/URL/未分配分组字段。
 func (in SchedulerConfig) MergeUpdate(old SchedulerConfig) SchedulerConfig {
 	out := in
 	out.BaseURL = strings.TrimRight(strings.TrimSpace(in.BaseURL), "/")
 	out.UserID = strings.TrimSpace(in.UserID)
 	out.AccessToken = KeepSecret(in.AccessToken, old.AccessToken)
+	out.UnassignedGroup = strings.TrimSpace(in.UnassignedGroup)
 	out.Tiers = NormalizeSchedulerTiers(in.Tiers)
 	return out
 }

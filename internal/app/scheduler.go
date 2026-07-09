@@ -34,6 +34,9 @@ func (s *SchedulerService) SaveSchedulerConfig(ctx context.Context, cfg domain.S
 	if err := domain.ValidateSchedulerTiers(cfg.Tiers); err != nil {
 		return domain.SchedulerConfig{}, BadRequest(err)
 	}
+	if err := domain.ValidateSchedulerUnassignedGroup(cfg.UnassignedGroup, cfg.Tiers); err != nil {
+		return domain.SchedulerConfig{}, BadRequest(err)
+	}
 	out, err := s.app.Store.UpdateSchedulerConfig(ctx, cfg)
 	if err == nil {
 		err = s.recordCurrentSaleSnapshots(ctx)
@@ -243,6 +246,11 @@ func (s *SchedulerService) ApplySchedulerGroups(ctx context.Context) (domain.Sch
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
 		return domain.SchedulerApplyResult{}, errSchedulerNotConfigured
 	}
+	if err := domain.ValidateSchedulerUnassignedGroup(cfg.UnassignedGroup, cfg.Tiers); err != nil {
+		// 与未连接区分：后台 best-effort 静默跳过，避免每轮巡检刷 error 日志；手动 apply 仍返回 400。
+		return domain.SchedulerApplyResult{}, ErrBadRequest(err.Error())
+	}
+	unassigned := strings.TrimSpace(cfg.UnassignedGroup)
 	tiers := domain.NormalizeSchedulerTiers(cfg.Tiers)
 	cards, err := s.app.Cards.ListCards(ctx)
 	if err != nil {
@@ -277,7 +285,7 @@ func (s *SchedulerService) ApplySchedulerGroups(ctx context.Context) (domain.Sch
 			out.Skipped++
 			continue
 		}
-		groups := domain.TargetGroups(tiers, managed, price, current)
+		groups := domain.AssignedTargetGroups(tiers, managed, price, current, unassigned)
 		if domain.SameGroups(domain.SplitGroups(current), groups) {
 			out.Unchanged++
 			continue
@@ -286,16 +294,21 @@ func (s *SchedulerService) ApplySchedulerGroups(ctx context.Context) (domain.Sch
 		if err := s.setSchedulerChannelGroup(ctx, cfg, card.SchedulerChannelID, group); err != nil {
 			return out, err
 		}
-		if group == "" {
-			actual, found, err := s.schedulerChannelGroup(ctx, cfg, card.SchedulerChannelID)
-			if err != nil {
-				return out, err
-			}
-			if !found || !domain.SameGroups(domain.SplitGroups(actual), groups) {
-				out.Skipped++
-				continue
-			}
+		// new-api 对空串/部分写入可能 success 但不改 group；始终写后校验。
+		actual, found, err := s.schedulerChannelGroup(ctx, cfg, card.SchedulerChannelID)
+		if err != nil {
+			return out, err
 		}
+		if !found || !domain.SameGroups(domain.SplitGroups(actual), groups) {
+			out.Skipped++
+			_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
+				Action:  "group_sync",
+				Status:  "error",
+				Message: fmt.Sprintf("%s: 写入分组 %q 后校验失败（实际 %q）", domain.FirstNonEmpty(channelNames[card.SchedulerChannelID], card.SchedulerChannelName, card.SchedulerChannelID), group, domain.FirstNonEmpty(actual, "-")),
+			})
+			continue
+		}
+		channelGroups[card.SchedulerChannelID] = actual
 		changes = append(changes, fmt.Sprintf("%s: %s -> %s", domain.FirstNonEmpty(channelNames[card.SchedulerChannelID], card.SchedulerChannelName, card.SchedulerChannelID), domain.FirstNonEmpty(current, "-"), group))
 		out.Updated++
 	}
@@ -335,6 +348,10 @@ func schedulerGroupSyncMessage(out domain.SchedulerApplyResult, changes []string
 
 func (s *SchedulerService) syncSchedulerGroupsBestEffort(ctx context.Context) {
 	if _, err := s.ApplySchedulerGroups(ctx); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
+		// 未配置 unassigned：功能未就绪，不刷调度日志；手动「应用分组」仍会返回错误提示。
+		if IsBadRequest(err) && strings.Contains(err.Error(), "未分配分组") {
+			return
+		}
 		_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
 			Action:  "group_sync",
 			Status:  "error",

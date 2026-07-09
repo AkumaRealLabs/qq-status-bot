@@ -81,6 +81,29 @@ func TargetGroups(tiers []SchedulerTier, managed map[string]bool, price float64,
 	return out
 }
 
+// AssignedTargetGroups 计算应写入调度器的分组列表。
+// unassigned 视为「停靠位」：会从当前分组中剥离，且当价格未命中任何托管档位、也无其它手动分组时落到 unassigned。
+// 调用方须保证 unassigned 已通过 ValidateSchedulerUnassignedGroup。
+func AssignedTargetGroups(tiers []SchedulerTier, managed map[string]bool, price float64, current, unassigned string) []string {
+	unassigned = strings.TrimSpace(unassigned)
+	if managed == nil {
+		managed = ManagedGroups(tiers)
+	}
+	// 复制 managed，避免修改调用方 map；把 unassigned 当托管剥离，防止粘在渠道上。
+	strip := make(map[string]bool, len(managed)+1)
+	for k, v := range managed {
+		strip[k] = v
+	}
+	if unassigned != "" {
+		strip[unassigned] = true
+	}
+	out := TargetGroups(tiers, strip, price, current)
+	if len(out) == 0 && unassigned != "" {
+		return []string{unassigned}
+	}
+	return out
+}
+
 // JoinGroups 用逗号拼接分组名（保持输入顺序）。
 func JoinGroups(groups []string) string {
 	return strings.Join(groups, ",")

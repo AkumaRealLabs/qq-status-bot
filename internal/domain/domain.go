@@ -169,11 +169,12 @@ type Settings struct {
 }
 
 type SchedulerConfig struct {
-	BaseURL        string          `json:"scheduler_base_url"`
-	UserID         string          `json:"scheduler_user_id"`
-	AccessToken    string          `json:"scheduler_access_token"`
-	AccessTokenSet bool            `json:"scheduler_access_token_set,omitempty"`
-	Tiers          []SchedulerTier `json:"scheduler_tiers"`
+	BaseURL         string          `json:"scheduler_base_url"`
+	UserID          string          `json:"scheduler_user_id"`
+	AccessToken     string          `json:"scheduler_access_token"`
+	AccessTokenSet  bool            `json:"scheduler_access_token_set,omitempty"`
+	UnassignedGroup string          `json:"scheduler_unassigned_group"`
+	Tiers           []SchedulerTier `json:"scheduler_tiers"`
 }
 
 type SchedulerTier struct {
@@ -253,6 +254,23 @@ func ValidateSchedulerTiers(tiers []SchedulerTier) error {
 		}
 		if tier.SalePrice <= 0 {
 			return errors.New("调度器售价必须大于 0")
+		}
+	}
+	return nil
+}
+
+// ValidateSchedulerUnassignedGroup 校验未分配分组：非空且不得与价格档位分组重名。
+func ValidateSchedulerUnassignedGroup(unassigned string, tiers []SchedulerTier) error {
+	unassigned = strings.TrimSpace(unassigned)
+	if unassigned == "" {
+		return errors.New("请配置未分配分组（调度器中需已存在该分组）")
+	}
+	if strings.ContainsAny(unassigned, ",，;；") {
+		return errors.New("未分配分组只能是单个分组名")
+	}
+	for _, tier := range NormalizeSchedulerTiers(tiers) {
+		if strings.TrimSpace(tier.Group) == unassigned {
+			return errors.New("未分配分组不能与价格档位的调度器分组相同")
 		}
 	}
 	return nil

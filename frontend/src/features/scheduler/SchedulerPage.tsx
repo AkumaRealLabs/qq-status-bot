@@ -132,6 +132,7 @@ export function SchedulerPage() {
           </Button>
           <SchedulerConfigDialog
             form={form}
+            groupOptions={groupOptions}
             message={fb.message}
             saveError={saveConfig.isError}
             saving={saveConfig.isPending}
@@ -160,6 +161,12 @@ export function SchedulerPage() {
         </div>
       }
     >
+      {configured && !(form.scheduler_unassigned_group ?? '').trim() && (
+        <FeedbackBanner
+          message="请先在「连接配置」中设置未分配分组，否则自动分组不会写入调度器（new-api 无法用空分组移出渠道）。"
+          error
+        />
+      )}
       <Section title="调度器分组">
         <FormError error={groups.error || channels.error} />
         {groups.isLoading && <EmptyPanel text="加载中..." />}
@@ -308,6 +315,7 @@ export function SchedulerPage() {
 
 function SchedulerConfigDialog({
   form,
+  groupOptions,
   message,
   saveError,
   saving,
@@ -315,12 +323,16 @@ function SchedulerConfigDialog({
   onSave,
 }: {
   form: SchedulerConfig
+  groupOptions: string[]
   message: string
   saveError: boolean
   saving: boolean
   onChange: (patch: Partial<SchedulerConfig>) => void
   onSave: () => void
 }) {
+  const unassigned = form.scheduler_unassigned_group ?? ''
+  const tierGroups = new Set((form.scheduler_tiers ?? []).map((t) => t.group.trim()).filter(Boolean))
+  const unassignedOptions = groupOptions.filter((g) => !tierGroups.has(g))
   return (
     <Dialog>
       <DialogTrigger asChild>
@@ -346,7 +358,23 @@ function SchedulerConfigDialog({
               onChange={(e) => onChange({ scheduler_access_token: e.target.value })}
             />
           </Field>
+          <Field label="未分配分组">
+            <Input
+              list="scheduler-unassigned-groups"
+              value={unassigned}
+              placeholder="例如 unassigned（须在调度器中已存在）"
+              onChange={(e) => onChange({ scheduler_unassigned_group: e.target.value })}
+            />
+            <datalist id="scheduler-unassigned-groups">
+              {unassignedOptions.map((group) => (
+                <option key={group} value={group} />
+              ))}
+            </datalist>
+          </Field>
         </div>
+        <p className="text-xs text-muted-foreground">
+          价格未命中任何托管档位时，渠道会写入此分组（new-api 不支持空分组）。保存与自动分组前必填；请先在调度器中创建同名分组，且勿与价格档位重名。
+        </p>
         <FeedbackBanner message={message} error={saveError} />
         <ActionRow>
           <SaveButton onClick={onSave} pending={saving} message={message} label="保存配置" />

@@ -279,6 +279,8 @@ export type SchedulerConfig = {
   scheduler_user_id: string
   scheduler_access_token: string
   scheduler_access_token_set?: boolean
+  /** 价格未命中托管档位时落到该 new-api 分组（不可空串） */
+  scheduler_unassigned_group: string
   scheduler_tiers: SchedulerTier[]
 }
 
