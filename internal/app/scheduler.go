@@ -345,7 +345,7 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 	if !card.PoolEnabled || card.SchedulerChannelID == "" {
 		return nil
 	}
-	if !success && failures >= 4 {
+	if !success && failures == probeMuteFailureThreshold {
 		if card.SchedulerAutoDisabled {
 			return nil
 		}

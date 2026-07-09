@@ -7,6 +7,7 @@ import { GripVertical, KeyRound, Loader2, Pencil, RefreshCcw, Save, Trash2 } fro
 import { EmptyPanel, Field, FormError, HoverText, IconAction, Metric, MiniStat, SkeletonCardGrid, StatusBadge, WindowSelect } from '@/components/common'
 import { BrandIcon, Page } from '@/components/layout'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -260,15 +261,16 @@ function StatusMonitorCard({
   })
   const history = card.history ?? []
   const latest = history.at(-1)
-  const ok = latest ? probeOK(latest) : !card.last_error
-  const statusText = latest ? probeStatusLabel(probeStatus(latest)) : ok ? probeStatusLabel('operational') : probeStatusLabel('failed')
+  const muted = card.probe_muted
+  const ok = muted || (latest ? probeOK(latest) : !card.last_error)
+  const statusText = muted ? '静默测试中' : latest ? probeStatusLabel(probeStatus(latest)) : ok ? probeStatusLabel('operational') : probeStatusLabel('failed')
   const successCount = history.filter(probeOK).length
   const uptime = history.length ? `${((successCount / history.length) * 100).toFixed(2)}%` : '-'
   const groupName = editableCard?.key_group || (editableCard?.base_url ? '自定义' : '-')
   const displayGroup = cardDisplayGroup(card)
   const ratio = editableCard?.effective_ratio || editableCard?.key_group_ratio || '-'
   return (
-    <Card className={cn('min-w-0 bg-card', !ok && 'border-destructive/40')}>
+    <Card className={cn('min-w-0 bg-card', muted ? 'border-border' : !ok && 'border-destructive/40')}>
       <CardHeader className="min-h-16 gap-2 border-b border-border">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
           <div className="min-w-0 pt-1">
@@ -282,7 +284,7 @@ function StatusMonitorCard({
             )}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5">
-            <StatusBadge ok={ok} okText={statusText} failText={statusText} />
+            {muted ? <Badge variant="outline" className="text-muted-foreground"><RefreshCcw className="size-3" />{statusText}</Badge> : <StatusBadge ok={ok} okText={statusText} failText={statusText} />}
             {!publicView && editableCard && (
               <div className="flex flex-wrap justify-end gap-1.5">
                 {dragHandle}
@@ -304,7 +306,7 @@ function StatusMonitorCard({
         <div className="min-w-0 border-t border-border pt-2.5">
           <div className="mb-2 flex items-end justify-between gap-2">
             <div className="text-xs text-muted-foreground">可用性 · {windowValue}</div>
-            <div className={cn('font-display text-2xl font-normal', ok ? 'text-success' : 'text-destructive')}>{uptime}</div>
+            <div className={cn('font-display text-2xl font-normal', muted ? 'text-muted-foreground' : ok ? 'text-success' : 'text-destructive')}>{uptime}</div>
           </div>
           <div className="-mx-1 overflow-x-auto px-1 pb-1">
             <div
@@ -317,9 +319,9 @@ function StatusMonitorCard({
                   <HoverText
                     key={`${probe.checked_at}-${index}`}
                     value={probeHoverTitle(probe)}
-                    content={<ProbeTooltip probe={probe} />}
+                    content={<ProbeTooltip probe={probe} muted={muted} />}
                     nativeTitle={false}
-                    className={cn('h-4 rounded-sm', good ? 'bg-success' : 'bg-destructive')}
+                    className={cn('h-4 rounded-sm', muted ? 'bg-muted-soft' : good ? 'bg-success' : 'bg-destructive')}
                   >
                     <span className="sr-only">{probeStatus(probe)}</span>
                   </HoverText>
@@ -338,7 +340,7 @@ function StatusMonitorCard({
         {(message || card.last_error) && (
           <HoverText
             value={message || card.last_error}
-            className={cn('rounded-sm px-2.5 py-1.5 text-xs', check.isError || card.last_error ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}
+            className={cn('rounded-sm px-2.5 py-1.5 text-xs', muted ? 'bg-secondary text-muted-foreground' : check.isError || card.last_error ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}
           />
         )}
       </CardContent>
@@ -545,17 +547,17 @@ function probeStatusLabel(status: string) {
   } as Record<string, string>)[status] || status || '-'
 }
 
-function ProbeTooltip({ probe }: { probe: Probe }) {
+function ProbeTooltip({ probe, muted = false }: { probe: Probe; muted?: boolean }) {
   const ok = probeOK(probe)
   const rows = [
-    ['状态', probeStatusLabel(probeStatus(probe)), ok ? 'text-success' : 'text-destructive'],
+    ['状态', muted ? '静默测试中' : probeStatusLabel(probeStatus(probe)), muted ? 'text-muted-foreground' : ok ? 'text-success' : 'text-destructive'],
     ['延迟', `${probe.latency_ms} ms`],
     ['HTTP 状态', probe.http_status || '-'],
     ['测什么', probePurpose(probe)],
     ['探活输入', probe.input || '-'],
     ['模型回答', probe.output || '-'],
     ['检查时间', fmtTime(probe.checked_at)],
-    probe.error ? ['详情', probe.error, 'text-destructive'] : undefined,
+    probe.error ? ['详情', probe.error, muted ? 'text-muted-foreground' : 'text-destructive'] : undefined,
   ].filter(Boolean) as string[][]
   return (
     <span className="block min-w-64 max-w-[min(520px,calc(100vw-32px))] rounded-md bg-popover px-3 py-3 text-sm leading-[1.55] text-popover-foreground">

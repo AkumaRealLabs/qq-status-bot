@@ -608,8 +608,11 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 		_ = s.alert(ctx, u, "quota:"+card.ID, false, card.Name+" 余额不足状态已恢复")
 		return s.alert(ctx, u, "ping:"+card.ID, false, card.Name+" 探测已恢复")
 	}
+	if suppressProbeAlert(card, failures) {
+		return nil
+	}
 	kind, msg := probeAlertKind(card, probe)
-	return s.alert(ctx, u, kind, failures >= s.alertFailureThreshold(ctx), msg)
+	return s.alert(ctx, u, kind, failures >= probeMuteFailureThreshold, msg)
 }
 
 func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) error {
@@ -646,10 +649,22 @@ func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) er
 		_ = s.alert(ctx, pseudo, "quota:"+card.ID, false, card.Name+" 余额不足状态已恢复")
 		_ = s.alert(ctx, pseudo, "ping:"+card.ID, false, card.Name+" 探测已恢复")
 	} else {
-		kind, msg := probeAlertKind(card, probe)
-		_ = s.alert(ctx, pseudo, kind, failures >= s.alertFailureThreshold(ctx), msg)
+		if !suppressProbeAlert(card, failures) {
+			kind, msg := probeAlertKind(card, probe)
+			_ = s.alert(ctx, pseudo, kind, failures >= probeMuteFailureThreshold, msg)
+		}
 	}
 	return s.applySchedulerAutomation(ctx, card, probe.Success, failures)
+}
+
+const probeMuteFailureThreshold = 4
+
+func cardProbeMuted(card domain.ModelCard) bool {
+	return card.FailureCount >= probeMuteFailureThreshold || card.SchedulerAutoDisabled
+}
+
+func suppressProbeAlert(card domain.ModelCard, failures int) bool {
+	return card.SchedulerAutoDisabled || failures != probeMuteFailureThreshold
 }
 
 func (s *Service) probeWithInternalRetry(ctx context.Context, baseURL, key, model string) monitor.ProbeResult {
@@ -742,6 +757,9 @@ func (s *Service) monitorStatus(ctx context.Context, window string, publicOnly b
 	}
 	total, ok, failed, latency, samples := 0, 0, 0, 0, 0
 	for _, c := range cards {
+		if c.ProbeMuted {
+			continue
+		}
 		for _, p := range c.History {
 			total++
 			if p.Success {
@@ -763,6 +781,9 @@ func (s *Service) monitorStatus(ctx context.Context, window string, publicOnly b
 
 func statusSummary(cards []domain.PublicModelCard) (total, ok, failed, latency, samples int) {
 	for _, c := range cards {
+		if c.ProbeMuted {
+			continue
+		}
 		for _, p := range c.History {
 			total++
 			if p.Success {
@@ -785,7 +806,7 @@ func publicCards(cards []domain.ModelCard) []domain.PublicModelCard {
 		if !c.PublicEnabled {
 			continue
 		}
-		card := domain.PublicModelCard{Name: c.Name, DisplayGroup: c.DisplayGroup}
+		card := domain.PublicModelCard{Name: c.Name, DisplayGroup: c.DisplayGroup, ProbeMuted: c.ProbeMuted}
 		for i := range c.History {
 			p := c.History[i]
 			p.Status = probeStatusLabel(p.Status)
@@ -795,7 +816,9 @@ func publicCards(cards []domain.ModelCard) []domain.PublicModelCard {
 				Output: p.Output, HTTPStatus: p.HTTPStatus, LatencyMS: p.LatencyMS, Success: p.Success, Error: p.Error,
 			})
 		}
-		card.LastError = publicLastError(card)
+		if !card.ProbeMuted {
+			card.LastError = publicLastError(card)
+		}
 		out = append(out, card)
 	}
 	return out
@@ -872,6 +895,7 @@ func (s *Service) enrichedCards(ctx context.Context, since time.Time, probeLimit
 		}
 		reverse(history)
 		cards[i].History = history
+		cards[i].ProbeMuted = cardProbeMuted(cards[i])
 	}
 	return cards, nil
 }

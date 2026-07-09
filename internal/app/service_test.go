@@ -1125,6 +1125,13 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	if len(statuses) != 1 {
 		t.Fatalf("second success restored too early: %+v", statuses)
 	}
+	out, err := svc.MonitorStatus(t.Context(), "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows := out["rows"].([]domain.ModelCard); len(rows) != 1 || !rows[0].ProbeMuted {
+		t.Fatalf("auto disabled card should stay muted before restore: %+v", rows)
+	}
 	old := time.Now().Add(-16 * time.Minute)
 	card.SchedulerAutoDisabledAt = &old
 	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
@@ -1136,6 +1143,13 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	card, _ = st.Card(t.Context(), card.ID)
 	if len(statuses) != 2 || statuses[1] != 1 || card.SchedulerAutoDisabled {
 		t.Fatalf("restore statuses=%v card=%+v", statuses, card)
+	}
+	out, err = svc.MonitorStatus(t.Context(), "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows := out["rows"].([]domain.ModelCard); len(rows) != 1 || rows[0].ProbeMuted {
+		t.Fatalf("restored card should exit mute: %+v", rows)
 	}
 	logs, err := svc.SchedulerLogs(t.Context(), 10)
 	if err != nil {
@@ -1224,6 +1238,16 @@ func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	if len(logs) != 1 || logs[0].Status != "skipped" {
 		t.Fatalf("unconfigured logs = %+v", logs)
 	}
+	if err := svc.applySchedulerAutomation(t.Context(), unconfigured, false, 5); err != nil {
+		t.Fatal(err)
+	}
+	logs, err = svc.SchedulerLogs(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("unconfigured retry logs = %+v", logs)
+	}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "message": "blocked"})
 	}))
@@ -1253,6 +1277,16 @@ func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	if len(logs) != 2 || logs[0].Status != "error" {
 		t.Fatalf("remote failure logs = %+v", logs)
 	}
+	if err := svc.applySchedulerAutomation(t.Context(), card, false, 5); err != nil {
+		t.Fatal(err)
+	}
+	logs, err = svc.SchedulerLogs(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("remote retry logs = %+v", logs)
+	}
 	if _, err := svc.SchedulerChannels(t.Context(), ""); err == nil {
 		t.Fatal("success:false channel list should fail")
 	}
@@ -1278,11 +1312,10 @@ func TestQuotaProbeUsesQuotaEventAndCooldown(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client(), ProbeMode: monitor.ProbeModeHTTP}
-	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
-		t.Fatal(err)
+	for i := 0; i < 4; i++ {
+		if err := svc.CheckCard(t.Context(), card.ID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	events, err := st.OpsEvents(t.Context(), domain.OpsEventFilter{Type: "quota_exhausted", TargetType: "card", TargetID: card.ID, Limit: 10})
 	if err != nil {
@@ -1303,6 +1336,109 @@ func TestQuotaProbeUsesQuotaEventAndCooldown(t *testing.T) {
 	}
 	if len(events) != 1 {
 		t.Fatalf("quota cooldown failed: %+v", events)
+	}
+}
+
+func TestCheckCardMutesLongFailingProbeNoise(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":{"message":"upstream broken"}}`))
+	}))
+	defer ts.Close()
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: ts.URL, APIKey: "sk", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client(), ProbeMode: monitor.ProbeModeHTTP}
+	for i := 0; i < 4; i++ {
+		if err := svc.CheckCard(t.Context(), card.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := st.Card(t.Context(), card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FailureCount != 4 {
+		t.Fatalf("failure_count = %d", got.FailureCount)
+	}
+	out, err := svc.MonitorStatus(t.Context(), "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := out["rows"].([]domain.ModelCard)
+	if len(rows) != 1 || !rows[0].ProbeMuted {
+		t.Fatalf("rows = %+v", rows)
+	}
+	events, err := st.OpsEvents(t.Context(), domain.OpsEventFilter{Type: "probe_failed", TargetType: "card", TargetID: card.ID, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events after mute threshold = %+v", events)
+	}
+	var probes int
+	if err := st.DB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM probe_runs WHERE card_id=?`, card.ID).Scan(&probes); err != nil {
+		t.Fatal(err)
+	}
+	if probes != 4 {
+		t.Fatalf("probe count = %d", probes)
+	}
+	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	events, err = st.OpsEvents(t.Context(), domain.OpsEventFilter{Type: "probe_failed", TargetType: "card", TargetID: card.ID, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM probe_runs WHERE card_id=?`, card.ID).Scan(&probes); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || probes != 5 {
+		t.Fatalf("events=%+v probes=%d", events, probes)
+	}
+}
+
+func TestAutoDisabledCardSuppressesProbeFailureNoise(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"insufficient_quota secret detail"}}`))
+	}))
+	defer ts.Close()
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: ts.URL, APIKey: "sk", SchedulerAutoDisabled: true, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client(), ProbeMode: monitor.ProbeModeHTTP}
+	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, eventType := range []string{"probe_failed", "quota_exhausted"} {
+		events, err := st.OpsEvents(t.Context(), domain.OpsEventFilter{Type: eventType, TargetType: "card", TargetID: card.ID, Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("%s events = %+v", eventType, events)
+		}
 	}
 }
 
@@ -1648,16 +1784,23 @@ func TestMonitorStatusCountsProbeStatuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	muted, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "Muted", UpstreamID: u.ID, Enabled: true, FailureCount: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, status := range []string{monitor.StatusOperational, monitor.StatusDegraded, monitor.StatusFailed} {
 		if _, err := st.SaveProbe(t.Context(), u.ID, card.ID, monitor.ProbeResult{Status: status, Latency: time.Millisecond}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if _, err := st.SaveProbe(t.Context(), u.ID, muted.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Latency: 10 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
 	out, err := New(st).MonitorStatus(t.Context(), "1h")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out["success"] != 2 || out["failed"] != 1 {
+	if out["success"] != 2 || out["failed"] != 1 || out["requests"] != 3 {
 		t.Fatalf("status = %#v", out)
 	}
 }
@@ -1968,7 +2111,7 @@ func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	public, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "公开", BaseURL: "https://api.example.test", APIKey: "sk-public", Enabled: true, PublicEnabled: true})
+	public, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "公开", BaseURL: "https://api.example.test", APIKey: "sk-public", Enabled: true, PublicEnabled: true, FailureCount: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1981,7 +2124,7 @@ func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := st.SaveProbe(t.Context(), "", public.ID, monitor.ProbeResult{
-		Status: monitor.StatusFailed, Input: "ping", Output: "", Error: "回复为空",
+		Status: monitor.StatusFailed, Input: "ping", Output: "", Error: "secret upstream detail",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -2008,7 +2151,10 @@ func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 			t.Fatalf("public body missing %s: %s", visible, body)
 		}
 	}
-	for _, hidden := range []string{`"id"`, "api_key", "model", "enabled", "public_enabled", "sort_order", "failure_count", "created_at", "updated_at"} {
+	if !strings.Contains(text, `"probe_muted":true`) {
+		t.Fatalf("public body missing probe_muted: %s", body)
+	}
+	for _, hidden := range []string{`"id"`, "api_key", "model", "enabled", "public_enabled", "sort_order", "failure_count", "created_at", "updated_at", "secret upstream detail"} {
 		if strings.Contains(text, hidden) {
 			t.Fatalf("public body leaked %s: %s", hidden, body)
 		}

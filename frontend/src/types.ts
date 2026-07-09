@@ -57,6 +57,7 @@ export type ModelCard = {
   scheduler_channel_name?: string
   scheduler_auto_disabled: boolean
   scheduler_auto_disabled_at?: string
+  probe_muted: boolean
   enabled: boolean
   public_enabled: boolean
   sort_order: number
@@ -64,7 +65,7 @@ export type ModelCard = {
   history?: Probe[]
 }
 
-export type PublicModelCard = Pick<ModelCard, 'name' | 'display_group' | 'last_error' | 'history'>
+export type PublicModelCard = Pick<ModelCard, 'name' | 'display_group' | 'probe_muted' | 'last_error' | 'history'>
 
 export type Probe = {
   checked_at: string

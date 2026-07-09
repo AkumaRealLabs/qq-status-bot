@@ -67,6 +67,7 @@ type ModelCard struct {
 	SchedulerChannelName    string     `json:"scheduler_channel_name,omitempty"`
 	SchedulerAutoDisabled   bool       `json:"scheduler_auto_disabled"`
 	SchedulerAutoDisabledAt *time.Time `json:"scheduler_auto_disabled_at,omitempty"`
+	ProbeMuted              bool       `json:"probe_muted"`
 	Enabled                 bool       `json:"enabled"`
 	PublicEnabled           bool       `json:"public_enabled"`
 	SortOrder               int        `json:"sort_order"`
@@ -80,6 +81,7 @@ type ModelCard struct {
 type PublicModelCard struct {
 	Name         string           `json:"name"`
 	DisplayGroup string           `json:"display_group"`
+	ProbeMuted   bool             `json:"probe_muted"`
 	LastError    string           `json:"last_error,omitempty"`
 	History      []PublicProbeRun `json:"history,omitempty"`
 }
