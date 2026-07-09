@@ -1023,7 +1023,9 @@ func TestProfitUsesManualCostSnapshotsByLogTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := New(st)
-	first := time.Now().UTC().Add(-2 * time.Hour)
+	// 固定整秒时间轴，避免 RFC3339Nano 小数位数不固定导致 SQLite 字符串比较
+	// 在 1ns 边界上漏选新成本快照（CI 偶发 Cost=2 而非 2.4）。
+	first := time.Date(2024, 6, 1, 10, 0, 0, 0, time.UTC)
 	second := first.Add(time.Minute)
 	if _, err := st.SaveSchedulerChannelCostSnapshot(t.Context(), domain.SchedulerChannelCostSnapshot{ChannelID: "9", ChannelName: "ch", CardName: "自建", SourceType: "manual_cost_ratio", CostPerUnit: 0.10, Active: true, EffectiveAt: first}); err != nil {
 		t.Fatal(err)
@@ -1034,7 +1036,7 @@ func TestProfitUsesManualCostSnapshotsByLogTime(t *testing.T) {
 	if _, err := st.SaveSchedulerGroupSaleSnapshot(t.Context(), domain.SchedulerGroupSaleSnapshot{Group: "gpt_low", Tag: "low", SalePrice: 0.2, Active: true, EffectiveAt: first.Add(-time.Second)}); err != nil {
 		t.Fatal(err)
 	}
-	oldLog, newLog = first.Add(time.Nanosecond), second.Add(time.Nanosecond)
+	oldLog, newLog = first.Add(time.Second), second.Add(time.Second)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", Tiers: []domain.SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 1, SalePrice: 0.2}}}); err != nil {
 		t.Fatal(err)
