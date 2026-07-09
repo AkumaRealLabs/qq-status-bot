@@ -438,11 +438,15 @@ function SchedulerGroupDialog({
               </div>
             ))}
           </div>
+          {message && (
+            <div className={cn('rounded-sm border px-3 py-2 text-sm', saveError ? 'border-destructive/30 bg-destructive/10 text-destructive' : 'border-success/30 bg-success/10 text-success')}>
+              {message}
+            </div>
+          )}
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {message && <span className={cn('text-sm', saveError ? 'text-destructive' : 'text-muted-foreground')}>{message}</span>}
             <Button onClick={onApply} disabled={applying || saving}>
               {applying ? <Loader2 className="size-4 animate-spin" /> : <Tags className="size-4" />}
-              应用分组
+              {applying ? '应用中' : '应用分组'}
             </Button>
           </div>
         </div>
