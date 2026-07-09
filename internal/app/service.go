@@ -29,6 +29,43 @@ type Service struct {
 	lastRun    time.Time
 	tgRunning  bool
 	tgLastRun  time.Time
+
+	// Minimal ports (Phase 3). Defaults wire to Store / Telegram / monitor.Client.
+	Cards  CardRepository
+	Notify Notifier
+	Prober ProbeRunner
+
+	// Bounded-context facades (same package). Public APIs still forward via Service methods.
+	Scheduler *SchedulerService
+	ProfitSvc *ProfitService
+	Probe     *ProbeService
+	CLIProxy  *CLIProxyService
+	TG        *TGService
+}
+
+// SchedulerService owns scheduler config, channel/group apply, cost snapshots, and automation.
+type SchedulerService struct {
+	app *Service
+}
+
+// ProfitService owns scheduler-pool profit aggregation.
+type ProfitService struct {
+	app *Service
+}
+
+// ProbeService owns model cards, probe runs, upstream checks, and monitor status.
+type ProbeService struct {
+	app *Service
+}
+
+// CLIProxyService owns CLIProxyAPI management and quota snapshots.
+type CLIProxyService struct {
+	app *Service
+}
+
+// TGService owns Telegram session, channels, and message sync.
+type TGService struct {
+	app *Service
 }
 
 func New(st *store.Store) *Service {
@@ -41,7 +78,16 @@ func New(st *store.Store) *Service {
 	if strings.EqualFold(os.Getenv("AUM_PROBE_MODE"), monitor.ProbeModeHTTP) {
 		probeMode = monitor.ProbeModeHTTP
 	}
-	return &Service{Store: st, Client: monitor.Client{HTTP: &http.Client{Timeout: 45 * time.Second}, ProbeMode: probeMode}, TGMediaDir: mediaDir}
+	s := &Service{Store: st, Client: monitor.Client{HTTP: &http.Client{Timeout: 45 * time.Second}, ProbeMode: probeMode}, TGMediaDir: mediaDir}
+	s.Cards = st
+	s.Notify = &telegramNotifier{send: s.sendTelegram}
+	s.Prober = &liveProbeRunner{svc: s}
+	s.Scheduler = &SchedulerService{app: s}
+	s.ProfitSvc = &ProfitService{app: s}
+	s.Probe = &ProbeService{app: s}
+	s.CLIProxy = &CLIProxyService{app: s}
+	s.TG = &TGService{app: s}
+	return s
 }
 
 func (s *Service) StartScheduler(ctx context.Context) {

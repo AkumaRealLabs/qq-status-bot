@@ -47,11 +47,11 @@ func (s *Service) TestNotification(ctx context.Context) error {
 	if strings.TrimSpace(cfg.TelegramBotToken) == "" || strings.TrimSpace(cfg.TelegramChatID) == "" {
 		return ErrBadRequest("请先配置 Telegram Bot Token 和 Chat ID")
 	}
-	return s.sendTelegram(ctx, "通知规则测试")
+	return s.Notify.Send(ctx, "通知规则测试")
 }
 
 func (s *Service) createAlertOpsEvent(ctx context.Context, u domain.Upstream, kind string, recover bool, message string) {
-	eventType, targetType, targetID := alertOpsType(kind, recover)
+	eventType, targetType, targetID := domain.AlertEventType(kind, recover)
 	severity := "warning"
 	if recover {
 		severity = "success"
@@ -59,79 +59,17 @@ func (s *Service) createAlertOpsEvent(ctx context.Context, u domain.Upstream, ki
 	_, _ = s.Store.CreateOpsEvent(ctx, domain.OpsEvent{
 		Type:       eventType,
 		Severity:   severity,
-		Title:      alertOpsTitle(eventType, recover),
+		Title:      domain.AlertOpsTitle(eventType, recover),
 		Message:    message,
 		TargetType: targetType,
-		TargetID:   firstNonEmpty(targetID, u.ID),
-		Actions:    alertOpsActions(eventType),
+		TargetID:   domain.FirstNonEmpty(targetID, u.ID),
+		Actions:    domain.AlertOpsActions(eventType),
 	})
 }
 
-func alertOpsType(kind string, recover bool) (string, string, string) {
-	if strings.HasPrefix(kind, "ping:") {
-		return "probe_failed", "card", strings.TrimPrefix(kind, "ping:")
-	}
-	if strings.HasPrefix(kind, "quota:") {
-		return "quota_exhausted", "card", strings.TrimPrefix(kind, "quota:")
-	}
-	if strings.HasPrefix(kind, "internal:") {
-		return "probe_internal_error", "card", strings.TrimPrefix(kind, "internal:")
-	}
-	switch kind {
-	case "balance":
-		return "balance_low", "upstream", ""
-	case "credential":
-		return "credential_invalid", "upstream", ""
-	case "balance_query":
-		return "balance_query_failed", "upstream", ""
-	default:
-		if recover {
-			return "system_recovered", "upstream", ""
-		}
-		return "system_warning", "upstream", ""
-	}
-}
-
-func alertOpsTitle(eventType string, recover bool) string {
-	if recover {
-		return "已恢复"
-	}
-	switch eventType {
-	case "probe_failed":
-		return "探测失败"
-	case "quota_exhausted":
-		return "余额不足/成本池不可用"
-	case "probe_internal_error":
-		return "本地探测错误"
-	case "balance_low":
-		return "余额低"
-	case "credential_invalid":
-		return "凭据失效"
-	case "balance_query_failed":
-		return "额度查询失败"
-	default:
-		return "系统事件"
-	}
-}
-
-func alertOpsActions(eventType string) []string {
-	switch eventType {
-	case "probe_failed", "quota_exhausted", "probe_internal_error":
-		return []string{"check_card"}
-	case "credential_invalid", "balance_query_failed":
-		return []string{"check_upstream", "sync_keys"}
-	case "balance_low":
-		return []string{"check_upstream"}
-	case "cliproxy_error":
-		return []string{"refresh_cliproxy_accounts"}
-	default:
-		return nil
-	}
-}
-
-func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitResponse, error) {
+func (s *ProfitService) Profit(ctx context.Context, window string) (domain.ProfitResponse, error) {
 	since, label, _ := opsWindow(window)
-	cfg, err := s.Store.SchedulerConfig(ctx)
+	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return domain.ProfitResponse{}, err
 	}
@@ -153,14 +91,14 @@ func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitRespo
 			return out, err
 		}
 		for _, log := range logs {
-			group := strings.TrimSpace(firstNonEmpty(log.Group, group))
+			group := strings.TrimSpace(domain.FirstNonEmpty(log.Group, group))
 			pool := pools[group]
 			if pool == nil {
 				tier := tierMeta[group]
 				pool = &profitPool{row: domain.ProfitPoolRow{Group: group, Tag: strings.TrimSpace(tier.Tag), SalePrice: tier.SalePrice, Complete: true}, channels: map[string]*domain.ProfitChannelRow{}}
 				pools[group] = pool
 			}
-			units, ok := profitUsageUnits(log.Quota, log.GroupRatio)
+			units, ok := domain.UsageUnits(log.Quota, log.GroupRatio)
 			row := pool.channel(log.ChannelID, log.ChannelName)
 			if !ok {
 				markProfitIncomplete(row, pool, &out, "缺 group_ratio")
@@ -180,29 +118,29 @@ func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitRespo
 				markProfitIncomplete(row, pool, &out, "缺售价快照")
 				continue
 			}
-			pool.row.Tag = firstNonEmpty(pool.row.Tag, sale.Tag)
+			pool.row.Tag = domain.FirstNonEmpty(pool.row.Tag, sale.Tag)
 			pool.row.SalePrice = sale.SalePrice
-			row.SaleEffective = mergeProfitMeta(row.SaleEffective, sale.EffectiveAt.Format(time.RFC3339Nano))
-			revenue := units * sale.SalePrice
+			row.SaleEffective = domain.MergeMeta(row.SaleEffective, sale.EffectiveAt.Format(time.RFC3339Nano))
+			revenue, _, _ := domain.LineProfit(units, sale.SalePrice, 0)
 			row.Revenue += revenue
 			costSnap, ok, err := s.profitCostSnapshot(ctx, log.ChannelID, log.LogTime)
 			if err != nil {
 				return out, err
 			}
 			if !ok || !costSnap.Active || costSnap.CostPerUnit <= 0 {
-				markProfitIncomplete(row, pool, &out, firstNonEmpty(costSnap.MissingReason, "缺成本快照"))
+				markProfitIncomplete(row, pool, &out, domain.FirstNonEmpty(costSnap.MissingReason, "缺成本快照"))
 				pool.row.MissingRevenue += revenue
 				out.MissingRevenue += revenue
 				continue
 			}
-			row.ChannelName = firstNonEmpty(row.ChannelName, costSnap.ChannelName)
+			row.ChannelName = domain.FirstNonEmpty(row.ChannelName, costSnap.ChannelName)
 			row.CardID, row.CardName = costSnap.CardID, costSnap.CardName
 			row.UpstreamID, row.UpstreamName = costSnap.UpstreamID, costSnap.UpstreamName
 			row.KeyID, row.KeyName = costSnap.KeyID, costSnap.KeyName
 			row.CostPerUnit = costSnap.CostPerUnit
-			row.CostSource = mergeProfitMeta(row.CostSource, costSnap.SourceType)
-			row.CostEffective = mergeProfitMeta(row.CostEffective, costSnap.EffectiveAt.Format(time.RFC3339Nano))
-			cost := units * costSnap.CostPerUnit
+			row.CostSource = domain.MergeMeta(row.CostSource, costSnap.SourceType)
+			row.CostEffective = domain.MergeMeta(row.CostEffective, costSnap.EffectiveAt.Format(time.RFC3339Nano))
+			_, cost, _ := domain.LineProfit(units, sale.SalePrice, costSnap.CostPerUnit)
 			row.Cost += cost
 			row.Profit = row.Revenue - row.Cost
 			pool.row.Revenue += revenue
@@ -248,7 +186,7 @@ type profitPool struct {
 	channels map[string]*domain.ProfitChannelRow
 }
 
-func (s *Service) profitGroups(ctx context.Context, tiers []domain.SchedulerTier, end time.Time) ([]string, map[string]domain.SchedulerTier, error) {
+func (s *ProfitService) profitGroups(ctx context.Context, tiers []domain.SchedulerTier, end time.Time) ([]string, map[string]domain.SchedulerTier, error) {
 	seen := map[string]bool{}
 	meta := map[string]domain.SchedulerTier{}
 	for _, tier := range tiers {
@@ -259,7 +197,7 @@ func (s *Service) profitGroups(ctx context.Context, tiers []domain.SchedulerTier
 		seen[group] = true
 		meta[group] = tier
 	}
-	snapshotGroups, err := s.Store.SchedulerSaleSnapshotGroups(ctx, end)
+	snapshotGroups, err := s.app.Store.SchedulerSaleSnapshotGroups(ctx, end)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -274,42 +212,31 @@ func (s *Service) profitGroups(ctx context.Context, tiers []domain.SchedulerTier
 	return out, meta, nil
 }
 
-func (s *Service) profitSaleSnapshot(ctx context.Context, group string, at time.Time) (domain.SchedulerGroupSaleSnapshot, bool, error) {
-	snap, ok, err := s.Store.SchedulerGroupSaleSnapshotAt(ctx, group, at)
+func (s *ProfitService) profitSaleSnapshot(ctx context.Context, group string, at time.Time) (domain.SchedulerGroupSaleSnapshot, bool, error) {
+	snap, ok, err := s.app.Store.SchedulerGroupSaleSnapshotAt(ctx, group, at)
 	if err != nil || ok {
 		return snap, ok, err
 	}
-	return s.Store.FirstSchedulerGroupSaleSnapshot(ctx, group)
+	return s.app.Store.FirstSchedulerGroupSaleSnapshot(ctx, group)
 }
 
-func (s *Service) profitCostSnapshot(ctx context.Context, channelID string, at time.Time) (domain.SchedulerChannelCostSnapshot, bool, error) {
-	snap, ok, err := s.Store.SchedulerChannelCostSnapshotAt(ctx, channelID, at)
+func (s *ProfitService) profitCostSnapshot(ctx context.Context, channelID string, at time.Time) (domain.SchedulerChannelCostSnapshot, bool, error) {
+	snap, ok, err := s.app.Store.SchedulerChannelCostSnapshotAt(ctx, channelID, at)
 	if err != nil || ok {
 		return snap, ok, err
 	}
-	return s.Store.FirstSchedulerChannelCostSnapshot(ctx, channelID)
+	return s.app.Store.FirstSchedulerChannelCostSnapshot(ctx, channelID)
 }
 
 func markProfitIncomplete(row *domain.ProfitChannelRow, pool *profitPool, out *domain.ProfitResponse, reason string) {
 	row.Complete = false
-	row.MissingReason = firstNonEmpty(row.MissingReason, reason)
+	row.MissingReason = domain.FirstNonEmpty(row.MissingReason, reason)
 	pool.row.Complete = false
 	out.Complete = false
 }
 
-func mergeProfitMeta(old, next string) string {
-	next = strings.TrimSpace(next)
-	if old == "" {
-		return next
-	}
-	if next == "" || old == next {
-		return old
-	}
-	return "mixed"
-}
-
 func (p *profitPool) channel(id, name string) *domain.ProfitChannelRow {
-	key := firstNonEmpty(id, name, "unknown")
+	key := domain.FirstNonEmpty(id, name, "unknown")
 	row := p.channels[key]
 	if row == nil {
 		row = &domain.ProfitChannelRow{ChannelID: id, ChannelName: name, Complete: true}
@@ -318,7 +245,7 @@ func (p *profitPool) channel(id, name string) *domain.ProfitChannelRow {
 	return row
 }
 
-func (s *Service) schedulerProfitLogs(ctx context.Context, cfg domain.SchedulerConfig, start, end time.Time, group string) ([]schedulerProfitLog, error) {
+func (s *ProfitService) schedulerProfitLogs(ctx context.Context, cfg domain.SchedulerConfig, start, end time.Time, group string) ([]schedulerProfitLog, error) {
 	const pageSize = 100
 	var out []schedulerProfitLog
 	for page := 1; page <= 1000; page++ {
@@ -330,7 +257,7 @@ func (s *Service) schedulerProfitLogs(ctx context.Context, cfg domain.SchedulerC
 		values.Set("p", strconv.Itoa(page))
 		values.Set("page_size", strconv.Itoa(pageSize))
 		var raw map[string]any
-		if err := s.schedulerJSON(ctx, cfg, http.MethodGet, "/api/log/?"+values.Encode(), nil, &raw); err != nil {
+		if err := s.app.Scheduler.schedulerJSON(ctx, cfg, http.MethodGet, "/api/log/?"+values.Encode(), nil, &raw); err != nil {
 			return nil, err
 		}
 		if ok, exists := raw["success"].(bool); exists && !ok {
@@ -348,7 +275,7 @@ func (s *Service) schedulerProfitLogs(ctx context.Context, cfg domain.SchedulerC
 				groupRatio = profitFloat(firstScheduler(m, "group_ratio", "groupRatio", "ratio"))
 			}
 			out = append(out, schedulerProfitLog{
-				Group:       firstNonEmpty(schedulerString(firstScheduler(m, "group")), group),
+				Group:       domain.FirstNonEmpty(schedulerString(firstScheduler(m, "group")), group),
 				ChannelID:   schedulerString(firstScheduler(m, "channel", "channel_id", "channelId")),
 				ChannelName: schedulerString(firstScheduler(m, "channel_name", "channelName")),
 				Quota:       profitFloat(firstScheduler(m, "quota")),
@@ -361,13 +288,6 @@ func (s *Service) schedulerProfitLogs(ctx context.Context, cfg domain.SchedulerC
 		}
 	}
 	return out, errors.New("调度器日志分页超过 1000 页")
-}
-
-func profitUsageUnits(quota, groupRatio float64) (float64, bool) {
-	if groupRatio <= 0 || quota < 0 {
-		return 0, false
-	}
-	return quota / 500000 / groupRatio, true
 }
 
 func profitLogItems(raw map[string]any) []any {
@@ -466,19 +386,6 @@ func unixProfitTime(v float64) time.Time {
 	return time.Unix(int64(v), int64((v-math.Floor(v))*1e9)).UTC()
 }
 
-func balanceCost(u domain.Upstream, snaps []domain.BalanceSnapshot) float64 {
-	var cost float64
-	var prev float64
-	for i, snap := range snaps {
-		_, _, remain := domain.ConvertedBalanceValues(u.Type, domain.BalanceRate(u), snap.Balance, snap.Used, snap.Remain)
-		if i > 0 && remain < prev {
-			cost += prev - remain
-		}
-		prev = remain
-	}
-	return cost
-}
-
 func (s *Service) SelfCheck(ctx context.Context) (domain.SelfCheckResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
@@ -486,11 +393,11 @@ func (s *Service) SelfCheck(ctx context.Context) (domain.SelfCheckResponse, erro
 	out.Items = append(out.Items, checkItem("app", nil, "HTTP API 正常"))
 	out.Items = append(out.Items, checkItem("database_writable", s.Store.CheckWritable(ctx), "数据库可写"))
 	out.Items = append(out.Items, diskCheck())
-	out.Items = append(out.Items, domain.SelfCheckItem{Name: "build_version", Status: "ok", Message: firstNonEmpty(os.Getenv("VITE_BUILD_VERSION"), "dev")})
+	out.Items = append(out.Items, domain.SelfCheckItem{Name: "build_version", Status: "ok", Message: domain.FirstNonEmpty(os.Getenv("VITE_BUILD_VERSION"), "dev")})
 	out.Items = append(out.Items, domain.SelfCheckItem{Name: "container_restart_count", Status: "safe_mode", Message: "安全模式未读取容器重启次数"})
 	out.Items = append(out.Items, checkHTTP(ctx, s.Client.HTTP, "browser_http", envDefault("BROWSER_PROXY_URL", "http://127.0.0.1:6080")))
 	out.Items = append(out.Items, checkBrowserCDP(ctx, s.Client.HTTP, envDefault("BROWSER_DEBUG_URL", "http://127.0.0.1:19222")))
-	out.Items = append(out.Items, s.cliProxySelfCheck(ctx))
+	out.Items = append(out.Items, s.CLIProxy.cliProxySelfCheck(ctx))
 	out.Items = append(out.Items, domain.SelfCheckItem{Name: "database_backup", Status: "warn", Message: "未配置自动备份时间"})
 	return out, nil
 }
@@ -572,23 +479,6 @@ func hostWithDefaultPort(host, scheme string) string {
 		return net.JoinHostPort(host, "443")
 	}
 	return net.JoinHostPort(host, "80")
-}
-
-func (s *Service) cliProxySelfCheck(ctx context.Context) domain.SelfCheckItem {
-	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	cfg, err := s.Store.CLIProxyConfig(ctx)
-	if err != nil {
-		return checkItem("cliproxy_management", err, "")
-	}
-	if !cfg.Enabled {
-		return domain.SelfCheckItem{Name: "cliproxy_management", Status: "warn", Message: "未启用"}
-	}
-	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.ManagementKey) == "" {
-		return domain.SelfCheckItem{Name: "cliproxy_management", Status: "warn", Message: "未配置"}
-	}
-	_, _, err = s.cliProxyRequest(reqCtx, cfg, http.MethodGet, "/auth-files", nil, "")
-	return checkItem("cliproxy_management", err, "管理接口可连通")
 }
 
 func checkItem(name string, err error, ok string) domain.SelfCheckItem {

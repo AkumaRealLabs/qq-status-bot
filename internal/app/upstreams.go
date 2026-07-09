@@ -27,14 +27,7 @@ func (s *Service) SaveUpstream(ctx context.Context, id string, in domain.Upstrea
 	if err != nil {
 		return domain.Upstream{}, err
 	}
-	in.ID = id
-	in.AccessToken = domain.KeepSecret(in.AccessToken, old.AccessToken)
-	in.Password = domain.KeepSecret(in.Password, old.Password)
-	in.Sub2APIAccessToken = domain.KeepSecret(in.Sub2APIAccessToken, old.Sub2APIAccessToken)
-	in.Sub2APIRefreshToken = domain.KeepSecret(in.Sub2APIRefreshToken, old.Sub2APIRefreshToken)
-	in.LastError = old.LastError
-	in.FailureCount = old.FailureCount
-	in.CreatedAt = old.CreatedAt
+	in = in.MergeUpdate(old)
 	out, err := s.Store.UpdateUpstream(ctx, in)
 	if err == nil && domain.BalanceRate(old) != domain.BalanceRate(out) {
 		if err := s.recordCurrentCostSnapshots(ctx); err != nil {

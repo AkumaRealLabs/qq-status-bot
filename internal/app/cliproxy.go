@@ -29,29 +29,28 @@ type cliProxyAuthUpload struct {
 	Content string
 }
 
-func (s *Service) CLIProxyConfig(ctx context.Context) (domain.CLIProxyConfig, error) {
-	cfg, err := s.Store.CLIProxyConfig(ctx)
+func (s *CLIProxyService) CLIProxyConfig(ctx context.Context) (domain.CLIProxyConfig, error) {
+	cfg, err := s.app.Store.CLIProxyConfig(ctx)
 	return cfg.Public(), err
 }
 
-func (s *Service) SaveCLIProxyConfig(ctx context.Context, cfg domain.CLIProxyConfig) (domain.CLIProxyConfig, error) {
-	cfg.Name = strings.TrimSpace(cfg.Name)
-	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-	cfg.ManagementKey = strings.TrimSpace(cfg.ManagementKey)
-	if cfg.Name == "" {
-		cfg.Name = "CLIProxyAPI"
+func (s *CLIProxyService) SaveCLIProxyConfig(ctx context.Context, cfg domain.CLIProxyConfig) (domain.CLIProxyConfig, error) {
+	old, err := s.app.Store.CLIProxyConfig(ctx)
+	if err != nil {
+		return domain.CLIProxyConfig{}, err
 	}
+	cfg = cfg.MergeUpdate(old)
 	if cfg.BaseURL != "" {
 		u, err := url.Parse(cfg.BaseURL)
 		if err != nil || u.Scheme == "" || u.Host == "" {
 			return domain.CLIProxyConfig{}, ErrBadRequest("CLIProxyAPI 管理地址不是有效 URL")
 		}
 	}
-	out, err := s.Store.UpdateCLIProxyConfig(ctx, cfg)
+	out, err := s.app.Store.UpdateCLIProxyConfig(ctx, cfg)
 	return out.Public(), err
 }
 
-func (s *Service) CLIProxyAccounts(ctx context.Context) ([]domain.CLIProxyAuthFile, error) {
+func (s *CLIProxyService) CLIProxyAccounts(ctx context.Context) ([]domain.CLIProxyAuthFile, error) {
 	cfg, err := s.cliProxyConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -74,7 +73,7 @@ func (s *Service) CLIProxyAccounts(ctx context.Context) ([]domain.CLIProxyAuthFi
 	return out, nil
 }
 
-func (s *Service) UploadCLIProxyAccount(ctx context.Context, name, content string) error {
+func (s *CLIProxyService) UploadCLIProxyAccount(ctx context.Context, name, content string) error {
 	name = strings.TrimSpace(name)
 	content = strings.TrimSpace(content)
 	files, err := normalizeCLIProxyAuthUploads(name, content)
@@ -93,7 +92,7 @@ func (s *Service) UploadCLIProxyAccount(ctx context.Context, name, content strin
 	return nil
 }
 
-func (s *Service) uploadCLIProxyAuthFile(ctx context.Context, cfg domain.CLIProxyConfig, name, content string) error {
+func (s *CLIProxyService) uploadCLIProxyAuthFile(ctx context.Context, cfg domain.CLIProxyConfig, name, content string) error {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, err := mw.CreateFormFile("file", name)
@@ -360,7 +359,7 @@ func uniqueCLIProxyAuthFileName(name string, used map[string]int) string {
 	return fmt.Sprintf("%s-%d%s", base, used[key], ext)
 }
 
-func (s *Service) DownloadCLIProxyAccount(ctx context.Context, name string) ([]byte, string, error) {
+func (s *CLIProxyService) DownloadCLIProxyAccount(ctx context.Context, name string) ([]byte, string, error) {
 	name = strings.TrimSpace(name)
 	if err := domain.ValidateCLIProxyAuthFileName(name); err != nil {
 		return nil, "", BadRequest(err)
@@ -373,7 +372,7 @@ func (s *Service) DownloadCLIProxyAccount(ctx context.Context, name string) ([]b
 	return s.cliProxyRequest(ctx, cfg, http.MethodGet, path, nil, "")
 }
 
-func (s *Service) DeleteCLIProxyAccount(ctx context.Context, name string) error {
+func (s *CLIProxyService) DeleteCLIProxyAccount(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if err := domain.ValidateCLIProxyAuthFileName(name); err != nil {
 		return BadRequest(err)
@@ -387,7 +386,7 @@ func (s *Service) DeleteCLIProxyAccount(ctx context.Context, name string) error 
 	return err
 }
 
-func (s *Service) ResetCLIProxyQuota(ctx context.Context, name string) (domain.CLIProxyResetQuotaResult, error) {
+func (s *CLIProxyService) ResetCLIProxyQuota(ctx context.Context, name string) (domain.CLIProxyResetQuotaResult, error) {
 	name = strings.TrimSpace(name)
 	if err := domain.ValidateCLIProxyAuthFileName(name); err != nil {
 		return domain.CLIProxyResetQuotaResult{}, BadRequest(err)
@@ -417,7 +416,7 @@ func (s *Service) ResetCLIProxyQuota(ctx context.Context, name string) (domain.C
 	return domain.CLIProxyResetQuotaResult{Status: cliproxyString(firstCLIProxy(raw, "status", "message")), AuthIndex: authIndex, Models: cliproxyStrings(firstCLIProxy(raw, "models"))}, nil
 }
 
-func (s *Service) CLIProxyAccountQuota(ctx context.Context, name, authIndex, accountID, accountType string) (quota domain.CLIProxyQuota, err error) {
+func (s *CLIProxyService) CLIProxyAccountQuota(ctx context.Context, name, authIndex, accountID, accountType string) (quota domain.CLIProxyQuota, err error) {
 	account := domain.CLIProxyAuthFile{Name: strings.TrimSpace(name), AuthIndex: strings.TrimSpace(authIndex)}
 	defer func() { s.saveCLIProxyQuotaSnapshot(ctx, account, quota, err) }()
 	name = strings.TrimSpace(name)
@@ -492,7 +491,7 @@ func (s *Service) CLIProxyAccountQuota(ctx context.Context, name, authIndex, acc
 	return cliproxyCodexQuota(account, payload), nil
 }
 
-func (s *Service) saveCLIProxyQuotaSnapshot(ctx context.Context, account domain.CLIProxyAuthFile, quota domain.CLIProxyQuota, err error) {
+func (s *CLIProxyService) saveCLIProxyQuotaSnapshot(ctx context.Context, account domain.CLIProxyAuthFile, quota domain.CLIProxyQuota, err error) {
 	if strings.TrimSpace(account.Name) == "" {
 		return
 	}
@@ -505,12 +504,12 @@ func (s *Service) saveCLIProxyQuotaSnapshot(ctx context.Context, account domain.
 	}
 	if err != nil {
 		snap.Error = err.Error()
-		_, _ = s.Store.CreateOpsEvent(ctx, domain.OpsEvent{
+		_, _ = s.app.Store.CreateOpsEvent(ctx, domain.OpsEvent{
 			Type: "cliproxy_error", Severity: "warning", Title: "CLIProxyAPI 额度异常", Message: account.Name + ": " + err.Error(),
 			TargetType: "cliproxy_account", TargetID: account.Name, Actions: []string{"refresh_cliproxy_accounts"},
 		})
 	}
-	_ = s.Store.SaveCLIProxyQuotaSnapshot(ctx, snap)
+	_ = s.app.Store.SaveCLIProxyQuotaSnapshot(ctx, snap)
 }
 
 func cliproxyQuotaSummary(quota domain.CLIProxyQuota) string {
@@ -523,8 +522,8 @@ func cliproxyQuotaSummary(quota domain.CLIProxyQuota) string {
 	return strings.Join(parts, "; ")
 }
 
-func (s *Service) cliProxyConfig(ctx context.Context) (domain.CLIProxyConfig, error) {
-	cfg, err := s.Store.CLIProxyConfig(ctx)
+func (s *CLIProxyService) cliProxyConfig(ctx context.Context) (domain.CLIProxyConfig, error) {
+	cfg, err := s.app.Store.CLIProxyConfig(ctx)
 	if err != nil {
 		return cfg, err
 	}
@@ -537,7 +536,7 @@ func (s *Service) cliProxyConfig(ctx context.Context) (domain.CLIProxyConfig, er
 	return cfg, nil
 }
 
-func (s *Service) cliProxyJSON(ctx context.Context, cfg domain.CLIProxyConfig, method, path string, body any, out any) error {
+func (s *CLIProxyService) cliProxyJSON(ctx context.Context, cfg domain.CLIProxyConfig, method, path string, body any, out any) error {
 	var r io.Reader
 	contentType := ""
 	if body != nil {
@@ -555,7 +554,7 @@ func (s *Service) cliProxyJSON(ctx context.Context, cfg domain.CLIProxyConfig, m
 	return json.Unmarshal(b, out)
 }
 
-func (s *Service) cliProxyRequest(ctx context.Context, cfg domain.CLIProxyConfig, method, path string, body io.Reader, contentType string) ([]byte, string, error) {
+func (s *CLIProxyService) cliProxyRequest(ctx context.Context, cfg domain.CLIProxyConfig, method, path string, body io.Reader, contentType string) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, method, cliproxyManagementURL(cfg.BaseURL, path), body)
 	if err != nil {
 		return nil, "", err
@@ -566,7 +565,7 @@ func (s *Service) cliProxyRequest(ctx context.Context, cfg domain.CLIProxyConfig
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	hc := s.Client.HTTP
+	hc := s.app.Client.HTTP
 	if hc == nil {
 		hc = &http.Client{Timeout: 15 * time.Second}
 	}
@@ -660,7 +659,7 @@ func cliproxyAuthFiles(raw any) []domain.CLIProxyAuthFile {
 func cliproxyCodexQuota(account domain.CLIProxyAuthFile, raw map[string]any) domain.CLIProxyQuota {
 	resetCredits := cliproxyIntPtr(firstCLIProxy(cliproxyMap(firstCLIProxy(raw, "rate_limit_reset_credits", "rateLimitResetCredits")), "available_count", "availableCount"))
 	quota := domain.CLIProxyQuota{
-		PlanType:                       firstNonEmpty(cliproxyString(firstCLIProxy(raw, "plan_type", "planType")), account.AccountType),
+		PlanType:                       domain.FirstNonEmpty(cliproxyString(firstCLIProxy(raw, "plan_type", "planType")), account.AccountType),
 		SubscriptionActiveUntil:        cliproxyTime(firstCLIProxy(raw, "subscription_active_until", "subscriptionActiveUntil")),
 		RateLimitResetCreditsAvailable: resetCredits,
 		Windows:                        cliproxyCodexQuotaWindows(raw),
@@ -952,4 +951,21 @@ func cliproxyStatusRank(file domain.CLIProxyAuthFile) int {
 	default:
 		return 3
 	}
+}
+
+func (s *CLIProxyService) cliProxySelfCheck(ctx context.Context) domain.SelfCheckItem {
+	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	cfg, err := s.app.Store.CLIProxyConfig(ctx)
+	if err != nil {
+		return checkItem("cliproxy_management", err, "")
+	}
+	if !cfg.Enabled {
+		return domain.SelfCheckItem{Name: "cliproxy_management", Status: "warn", Message: "未启用"}
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.ManagementKey) == "" {
+		return domain.SelfCheckItem{Name: "cliproxy_management", Status: "warn", Message: "未配置"}
+	}
+	_, _, err = s.cliProxyRequest(reqCtx, cfg, http.MethodGet, "/auth-files", nil, "")
+	return checkItem("cliproxy_management", err, "管理接口可连通")
 }

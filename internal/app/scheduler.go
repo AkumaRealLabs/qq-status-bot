@@ -20,31 +20,36 @@ import (
 
 var errSchedulerNotConfigured = errors.New("scheduler not configured")
 
-func (s *Service) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, error) {
-	cfg, err := s.Store.SchedulerConfig(ctx)
+func (s *SchedulerService) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, error) {
+	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	return cfg.Public(), err
 }
 
-func (s *Service) SaveSchedulerConfig(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerConfig, error) {
+func (s *SchedulerService) SaveSchedulerConfig(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerConfig, error) {
+	old, err := s.app.Store.SchedulerConfig(ctx)
+	if err != nil {
+		return domain.SchedulerConfig{}, err
+	}
+	cfg = cfg.MergeUpdate(old)
 	if err := domain.ValidateSchedulerTiers(cfg.Tiers); err != nil {
 		return domain.SchedulerConfig{}, BadRequest(err)
 	}
-	out, err := s.Store.UpdateSchedulerConfig(ctx, cfg)
+	out, err := s.app.Store.UpdateSchedulerConfig(ctx, cfg)
 	if err == nil {
 		err = s.recordCurrentSaleSnapshots(ctx)
 	}
 	return out.Public(), err
 }
 
-func (s *Service) SeedSchedulerSnapshots(ctx context.Context) error {
+func (s *SchedulerService) SeedSchedulerSnapshots(ctx context.Context) error {
 	if err := s.recordCurrentSaleSnapshots(ctx); err != nil {
 		return err
 	}
 	return s.recordCurrentCostSnapshots(ctx)
 }
 
-func (s *Service) recordCurrentSaleSnapshots(ctx context.Context) error {
-	cfg, err := s.Store.SchedulerConfig(ctx)
+func (s *SchedulerService) recordCurrentSaleSnapshots(ctx context.Context) error {
+	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return err
 	}
@@ -56,13 +61,13 @@ func (s *Service) recordCurrentSaleSnapshots(ctx context.Context) error {
 			continue
 		}
 		current[group] = true
-		if _, err := s.Store.SaveSchedulerGroupSaleSnapshot(ctx, domain.SchedulerGroupSaleSnapshot{
+		if _, err := s.app.Store.SaveSchedulerGroupSaleSnapshot(ctx, domain.SchedulerGroupSaleSnapshot{
 			Group: group, Tag: strings.TrimSpace(tier.Tag), SalePrice: tier.SalePrice, Active: true, EffectiveAt: now,
 		}); err != nil {
 			return err
 		}
 	}
-	groups, err := s.Store.SchedulerSaleSnapshotGroups(ctx, now)
+	groups, err := s.app.Store.SchedulerSaleSnapshotGroups(ctx, now)
 	if err != nil {
 		return err
 	}
@@ -70,14 +75,14 @@ func (s *Service) recordCurrentSaleSnapshots(ctx context.Context) error {
 		if current[group] {
 			continue
 		}
-		latest, ok, err := s.Store.LatestSchedulerGroupSaleSnapshot(ctx, group)
+		latest, ok, err := s.app.Store.LatestSchedulerGroupSaleSnapshot(ctx, group)
 		if err != nil {
 			return err
 		}
 		if !ok || !latest.Active {
 			continue
 		}
-		if _, err := s.Store.SaveSchedulerGroupSaleSnapshot(ctx, domain.SchedulerGroupSaleSnapshot{
+		if _, err := s.app.Store.SaveSchedulerGroupSaleSnapshot(ctx, domain.SchedulerGroupSaleSnapshot{
 			Group: group, Tag: latest.Tag, Active: false, EffectiveAt: now,
 		}); err != nil {
 			return err
@@ -86,8 +91,8 @@ func (s *Service) recordCurrentSaleSnapshots(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) recordCurrentCostSnapshots(ctx context.Context) error {
-	cards, err := s.Store.ListCards(ctx)
+func (s *SchedulerService) recordCurrentCostSnapshots(ctx context.Context) error {
+	cards, err := s.app.Cards.ListCards(ctx)
 	if err != nil {
 		return err
 	}
@@ -99,26 +104,26 @@ func (s *Service) recordCurrentCostSnapshots(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) recordCardCostSnapshot(ctx context.Context, card domain.ModelCard) error {
+func (s *SchedulerService) recordCardCostSnapshot(ctx context.Context, card domain.ModelCard) error {
 	snap := s.cardCostSnapshot(ctx, card)
 	if snap.ChannelID == "" {
 		return nil
 	}
-	_, err := s.Store.SaveSchedulerChannelCostSnapshot(ctx, snap)
+	_, err := s.app.Store.SaveSchedulerChannelCostSnapshot(ctx, snap)
 	return err
 }
 
-func (s *Service) recordInactiveCostSnapshot(ctx context.Context, card domain.ModelCard, reason string) error {
+func (s *SchedulerService) recordInactiveCostSnapshot(ctx context.Context, card domain.ModelCard, reason string) error {
 	snap := s.cardCostSnapshot(ctx, card)
 	if snap.ChannelID == "" {
 		return nil
 	}
 	snap.Active, snap.CostPerUnit, snap.MissingReason = false, 0, reason
-	_, err := s.Store.SaveSchedulerChannelCostSnapshot(ctx, snap)
+	_, err := s.app.Store.SaveSchedulerChannelCostSnapshot(ctx, snap)
 	return err
 }
 
-func (s *Service) cardCostSnapshot(ctx context.Context, card domain.ModelCard) domain.SchedulerChannelCostSnapshot {
+func (s *SchedulerService) cardCostSnapshot(ctx context.Context, card domain.ModelCard) domain.SchedulerChannelCostSnapshot {
 	snap := domain.SchedulerChannelCostSnapshot{
 		ChannelID: card.SchedulerChannelID, ChannelName: card.SchedulerChannelName,
 		CardID: card.ID, CardName: card.Name, MissingReason: "缺成本绑定", EffectiveAt: time.Now().UTC(),
@@ -132,20 +137,20 @@ func (s *Service) cardCostSnapshot(ctx context.Context, card domain.ModelCard) d
 	}
 	if card.BaseURL != "" {
 		snap.SourceType = "manual_cost_ratio"
-		ratio, err := strconv.ParseFloat(strings.TrimSpace(card.ManualCostRatio), 64)
-		if err != nil || ratio <= 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
-			snap.MissingReason = "缺手动成本"
+		ratio, reason := domain.CostPerUnitFromManual(card.ManualCostRatio)
+		if reason != "" {
+			snap.MissingReason = reason
 			return snap
 		}
 		snap.CostPerUnit, snap.Active, snap.MissingReason = ratio, true, ""
 		return snap
 	}
-	key, err := s.Store.Key(ctx, card.KeyID)
+	key, err := s.app.Store.Key(ctx, card.KeyID)
 	if err != nil {
 		snap.MissingReason = "未绑定上游 Key"
 		return snap
 	}
-	upstream, err := s.Store.Upstream(ctx, card.UpstreamID)
+	upstream, err := s.app.Store.Upstream(ctx, card.UpstreamID)
 	if err != nil {
 		snap.MissingReason = "未绑定上游"
 		return snap
@@ -153,17 +158,17 @@ func (s *Service) cardCostSnapshot(ctx context.Context, card domain.ModelCard) d
 	snap.SourceType = "upstream_key"
 	snap.UpstreamID, snap.UpstreamName = upstream.ID, upstream.Name
 	snap.KeyID, snap.KeyName = key.ID, key.Name
-	ratio, err := strconv.ParseFloat(strings.TrimSpace(key.GroupRatio), 64)
-	if err != nil || ratio <= 0 || domain.BalanceRate(upstream) <= 0 {
-		snap.MissingReason = "缺成本倍率"
+	ratio, reason := domain.CostPerUnitFromUpstreamKey(key.GroupRatio, domain.BalanceRate(upstream))
+	if reason != "" {
+		snap.MissingReason = reason
 		return snap
 	}
-	snap.CostPerUnit, snap.Active, snap.MissingReason = ratio*domain.BalanceRate(upstream), true, ""
+	snap.CostPerUnit, snap.Active, snap.MissingReason = ratio, true, ""
 	return snap
 }
 
-func (s *Service) SchedulerChannels(ctx context.Context, keyword string) ([]domain.SchedulerChannel, error) {
-	cfg, err := s.Store.SchedulerConfig(ctx)
+func (s *SchedulerService) SchedulerChannels(ctx context.Context, keyword string) ([]domain.SchedulerChannel, error) {
+	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +178,7 @@ func (s *Service) SchedulerChannels(ctx context.Context, keyword string) ([]doma
 	return s.fetchSchedulerChannels(ctx, cfg, keyword)
 }
 
-func (s *Service) fetchSchedulerChannels(ctx context.Context, cfg domain.SchedulerConfig, keyword string) ([]domain.SchedulerChannel, error) {
+func (s *SchedulerService) fetchSchedulerChannels(ctx context.Context, cfg domain.SchedulerConfig, keyword string) ([]domain.SchedulerChannel, error) {
 	var out []domain.SchedulerChannel
 	for p := 1; ; p++ {
 		values := url.Values{}
@@ -201,8 +206,8 @@ func (s *Service) fetchSchedulerChannels(ctx context.Context, cfg domain.Schedul
 	}
 }
 
-func (s *Service) SchedulerGroups(ctx context.Context) ([]domain.SchedulerGroup, error) {
-	cfg, err := s.Store.SchedulerConfig(ctx)
+func (s *SchedulerService) SchedulerGroups(ctx context.Context) ([]domain.SchedulerGroup, error) {
+	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +220,7 @@ func (s *Service) SchedulerGroups(ctx context.Context) ([]domain.SchedulerGroup,
 	return s.fetchSchedulerGroups(ctx, cfg, "/api/user/groups")
 }
 
-func (s *Service) fetchSchedulerGroups(ctx context.Context, cfg domain.SchedulerConfig, path string) ([]domain.SchedulerGroup, error) {
+func (s *SchedulerService) fetchSchedulerGroups(ctx context.Context, cfg domain.SchedulerConfig, path string) ([]domain.SchedulerGroup, error) {
 	var raw map[string]any
 	if err := s.schedulerJSON(ctx, cfg, http.MethodGet, path, nil, &raw); err != nil {
 		return nil, err
@@ -226,12 +231,12 @@ func (s *Service) fetchSchedulerGroups(ctx context.Context, cfg domain.Scheduler
 	return schedulerGroups(raw), nil
 }
 
-func (s *Service) SchedulerLogs(ctx context.Context, limit int) ([]domain.SchedulerLog, error) {
-	return s.Store.SchedulerLogs(ctx, limit)
+func (s *SchedulerService) SchedulerLogs(ctx context.Context, limit int) ([]domain.SchedulerLog, error) {
+	return s.app.Store.SchedulerLogs(ctx, limit)
 }
 
-func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApplyResult, error) {
-	cfg, err := s.Store.SchedulerConfig(ctx)
+func (s *SchedulerService) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApplyResult, error) {
+	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return domain.SchedulerApplyResult{}, err
 	}
@@ -239,7 +244,7 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 		return domain.SchedulerApplyResult{}, errSchedulerNotConfigured
 	}
 	tiers := domain.NormalizeSchedulerTiers(cfg.Tiers)
-	cards, err := s.Store.ListCards(ctx)
+	cards, err := s.app.Cards.ListCards(ctx)
 	if err != nil {
 		return domain.SchedulerApplyResult{}, err
 	}
@@ -263,7 +268,7 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 		channelGroups[channel.ID] = channel.Group
 		channelNames[channel.ID] = channel.Name
 	}
-	managed := schedulerManagedGroups(tiers)
+	managed := domain.ManagedGroups(tiers)
 	var changes []string
 	for _, card := range poolCards {
 		price, ok := s.cardPrice(ctx, card)
@@ -272,12 +277,12 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 			out.Skipped++
 			continue
 		}
-		groups := schedulerTargetGroups(tiers, managed, price, current)
-		if schedulerSameGroups(schedulerSplitGroups(current), groups) {
+		groups := domain.TargetGroups(tiers, managed, price, current)
+		if domain.SameGroups(domain.SplitGroups(current), groups) {
 			out.Unchanged++
 			continue
 		}
-		group := strings.Join(groups, ",")
+		group := domain.JoinGroups(groups)
 		if err := s.setSchedulerChannelGroup(ctx, cfg, card.SchedulerChannelID, group); err != nil {
 			return out, err
 		}
@@ -286,16 +291,16 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 			if err != nil {
 				return out, err
 			}
-			if !found || !schedulerSameGroups(schedulerSplitGroups(actual), groups) {
+			if !found || !domain.SameGroups(domain.SplitGroups(actual), groups) {
 				out.Skipped++
 				continue
 			}
 		}
-		changes = append(changes, fmt.Sprintf("%s: %s -> %s", firstNonEmpty(channelNames[card.SchedulerChannelID], card.SchedulerChannelName, card.SchedulerChannelID), firstNonEmpty(current, "-"), group))
+		changes = append(changes, fmt.Sprintf("%s: %s -> %s", domain.FirstNonEmpty(channelNames[card.SchedulerChannelID], card.SchedulerChannelName, card.SchedulerChannelID), domain.FirstNonEmpty(current, "-"), group))
 		out.Updated++
 	}
 	if out.Updated > 0 {
-		_ = s.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
+		_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
 			Action:  "group_sync",
 			Status:  "success",
 			Message: schedulerGroupSyncMessage(out, changes),
@@ -304,7 +309,7 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 	return out, nil
 }
 
-func (s *Service) schedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID string) (string, bool, error) {
+func (s *SchedulerService) schedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID string) (string, bool, error) {
 	channels, err := s.fetchSchedulerChannels(ctx, cfg, "")
 	if err != nil {
 		return "", false, err
@@ -328,9 +333,9 @@ func schedulerGroupSyncMessage(out domain.SchedulerApplyResult, changes []string
 	return msg + "；" + strings.Join(changes, "；")
 }
 
-func (s *Service) syncSchedulerGroupsBestEffort(ctx context.Context) {
+func (s *SchedulerService) syncSchedulerGroupsBestEffort(ctx context.Context) {
 	if _, err := s.ApplySchedulerGroups(ctx); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
-		_ = s.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
+		_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
 			Action:  "group_sync",
 			Status:  "error",
 			Message: err.Error(),
@@ -338,11 +343,11 @@ func (s *Service) syncSchedulerGroupsBestEffort(ctx context.Context) {
 	}
 }
 
-func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID string, status int) (domain.ModelCard, error) {
+func (s *SchedulerService) SetCardSchedulerChannelStatus(ctx context.Context, cardID string, status int) (domain.ModelCard, error) {
 	if status != 1 && status != 2 {
 		return domain.ModelCard{}, ErrBadRequest("status must be 1 or 2")
 	}
-	card, err := s.Store.Card(ctx, cardID)
+	card, err := s.app.Cards.Card(ctx, cardID)
 	if err != nil {
 		return domain.ModelCard{}, err
 	}
@@ -356,7 +361,7 @@ func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID stri
 		s.logSchedulerAction(ctx, card, schedulerAction(status), "error", err.Error())
 		return domain.ModelCard{}, err
 	}
-	if err := s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, false); err != nil {
+	if err := s.app.Cards.UpdateCardSchedulerAutoDisabled(ctx, card.ID, false); err != nil {
 		s.logSchedulerAction(ctx, card, schedulerAction(status), "error", err.Error())
 		return domain.ModelCard{}, err
 	}
@@ -365,15 +370,9 @@ func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID stri
 	return card.Public(), nil
 }
 
-func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {
-	if !card.PoolEnabled || card.SchedulerChannelID == "" {
-		return nil
-	}
-	muteAt := s.probeMuteFailureThreshold(ctx)
-	if !success && failures == muteAt {
-		if card.SchedulerAutoDisabled {
-			return nil
-		}
+func (s *SchedulerService) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {
+	muteAt := s.app.probeMuteFailureThreshold(ctx)
+	if domain.ShouldAutoDisableScheduler(card.PoolEnabled, card.SchedulerChannelID, success, failures, muteAt, card.SchedulerAutoDisabled) {
 		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 2); err != nil {
 			if errors.Is(err, errSchedulerNotConfigured) {
 				s.logSchedulerAction(ctx, card, "disable", "skipped", "调度器未配置")
@@ -382,7 +381,7 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
 			return err
 		}
-		if err := s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true); err != nil {
+		if err := s.app.Cards.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true); err != nil {
 			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
 			return err
 		}
@@ -398,7 +397,7 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 			s.logSchedulerAction(ctx, card, "restore", "error", err.Error())
 			return err
 		}
-		if err := s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, false); err != nil {
+		if err := s.app.Cards.UpdateCardSchedulerAutoDisabled(ctx, card.ID, false); err != nil {
 			s.logSchedulerAction(ctx, card, "restore", "error", err.Error())
 			return err
 		}
@@ -422,8 +421,8 @@ func schedulerManualMessage(status int) string {
 	return "手动关闭调度器渠道"
 }
 
-func (s *Service) logSchedulerAction(ctx context.Context, card domain.ModelCard, action, status, message string) {
-	_ = s.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
+func (s *SchedulerService) logSchedulerAction(ctx context.Context, card domain.ModelCard, action, status, message string) {
+	_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
 		CardID:      card.ID,
 		CardName:    card.Name,
 		ChannelID:   card.SchedulerChannelID,
@@ -441,31 +440,29 @@ func (s *Service) logSchedulerAction(ctx context.Context, card domain.ModelCard,
 		if action == "disable" {
 			actions = []string{"scheduler_restore"}
 		}
-		_, _ = s.Store.CreateOpsEvent(ctx, domain.OpsEvent{
+		_, _ = s.app.Store.CreateOpsEvent(ctx, domain.OpsEvent{
 			Type: "scheduler_changed", Severity: severity, Title: "调度器状态变更", Message: card.Name + " " + message,
 			TargetType: "card", TargetID: card.ID, Actions: actions,
 		})
 	}
 }
 
-func (s *Service) schedulerRestoreReady(ctx context.Context, card domain.ModelCard) bool {
-	if card.SchedulerAutoDisabledAt == nil {
+func (s *SchedulerService) schedulerRestoreReady(ctx context.Context, card domain.ModelCard) bool {
+	// Side effect kept in app: backfill missing disabled-at timestamp.
+	if domain.NeedsSchedulerRestoreTimestamp(card.SchedulerAutoDisabledAt) {
 		now := time.Now().UTC()
-		_ = s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true)
+		_ = s.app.Cards.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true)
 		card.SchedulerAutoDisabledAt = &now
 		return false
 	}
-	if time.Since(*card.SchedulerAutoDisabledAt) < 15*time.Minute {
+	probes, err := s.app.Store.RecentProbesForCard(ctx, card.ID, domain.SchedulerRestoreSuccessCount)
+	if err != nil {
 		return false
 	}
-	probes, err := s.Store.RecentProbesForCard(ctx, card.ID, 3)
-	if err != nil || len(probes) < 3 {
-		return false
-	}
-	return probes[0].Success && probes[1].Success && probes[2].Success
+	return domain.SchedulerRestoreReady(card.SchedulerAutoDisabledAt, probes, time.Now())
 }
 
-func (s *Service) cardPrice(ctx context.Context, card domain.ModelCard) (float64, bool) {
+func (s *SchedulerService) cardPrice(ctx context.Context, card domain.ModelCard) (float64, bool) {
 	if card.BaseURL != "" {
 		price, err := strconv.ParseFloat(strings.TrimSpace(card.ManualCostRatio), 64)
 		if err != nil || price < 0 || math.IsNaN(price) || math.IsInf(price, 0) {
@@ -476,7 +473,7 @@ func (s *Service) cardPrice(ctx context.Context, card domain.ModelCard) (float64
 	if card.KeyID == "" {
 		return 0, false
 	}
-	key, err := s.Store.Key(ctx, card.KeyID)
+	key, err := s.app.Store.Key(ctx, card.KeyID)
 	if err != nil {
 		return 0, false
 	}
@@ -485,86 +482,15 @@ func (s *Service) cardPrice(ctx context.Context, card domain.ModelCard) (float64
 		return 0, false
 	}
 	if card.UpstreamID != "" {
-		if u, err := s.Store.Upstream(ctx, card.UpstreamID); err == nil {
+		if u, err := s.app.Store.Upstream(ctx, card.UpstreamID); err == nil {
 			price *= domain.BalanceRate(u)
 		}
 	}
 	return price, true
 }
 
-func schedulerGroupsForPrice(tiers []domain.SchedulerTier, price float64) []string {
-	groups := []string{}
-	seen := map[string]bool{}
-	for _, tier := range tiers {
-		group := strings.TrimSpace(tier.Group)
-		if group == "" || price < tier.PriceMin || price > tier.PriceMax || seen[group] {
-			continue
-		}
-		seen[group] = true
-		groups = append(groups, group)
-	}
-	return groups
-}
-
-func schedulerManagedGroups(tiers []domain.SchedulerTier) map[string]bool {
-	out := map[string]bool{}
-	for _, tier := range tiers {
-		if group := strings.TrimSpace(tier.Group); group != "" {
-			out[group] = true
-		}
-	}
-	return out
-}
-
-func schedulerTargetGroups(tiers []domain.SchedulerTier, managed map[string]bool, price float64, current string) []string {
-	out := []string{}
-	seen := map[string]bool{}
-	for _, group := range schedulerSplitGroups(current) {
-		if !managed[group] {
-			seen[group] = true
-			out = append(out, group)
-		}
-	}
-	for _, group := range schedulerGroupsForPrice(tiers, price) {
-		if !seen[group] {
-			seen[group] = true
-			out = append(out, group)
-		}
-	}
-	return out
-}
-
-func schedulerSplitGroups(raw string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, item := range strings.Split(raw, ",") {
-		group := strings.TrimSpace(item)
-		if group != "" && !seen[group] {
-			seen[group] = true
-			out = append(out, group)
-		}
-	}
-	return out
-}
-
-func schedulerSameGroups(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	seen := map[string]bool{}
-	for _, group := range a {
-		seen[group] = true
-	}
-	for _, group := range b {
-		if !seen[group] {
-			return false
-		}
-	}
-	return true
-}
-
-func (s *Service) setSchedulerChannelStatus(ctx context.Context, channelID string, status int) error {
-	cfg, err := s.Store.SchedulerConfig(ctx)
+func (s *SchedulerService) setSchedulerChannelStatus(ctx context.Context, channelID string, status int) error {
+	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return err
 	}
@@ -581,7 +507,7 @@ func (s *Service) setSchedulerChannelStatus(ctx context.Context, channelID strin
 	return nil
 }
 
-func (s *Service) setSchedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID, group string) error {
+func (s *SchedulerService) setSchedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID, group string) error {
 	id, err := strconv.Atoi(strings.TrimSpace(channelID))
 	if err != nil || id <= 0 {
 		return ErrBadRequest(fmt.Sprintf("invalid scheduler channel id: %s", channelID))
@@ -596,7 +522,7 @@ func (s *Service) setSchedulerChannelGroup(ctx context.Context, cfg domain.Sched
 	return nil
 }
 
-func (s *Service) schedulerJSON(ctx context.Context, cfg domain.SchedulerConfig, method, path string, body any, out any) error {
+func (s *SchedulerService) schedulerJSON(ctx context.Context, cfg domain.SchedulerConfig, method, path string, body any, out any) error {
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -614,7 +540,7 @@ func (s *Service) schedulerJSON(ctx context.Context, cfg domain.SchedulerConfig,
 	}
 	req.Header.Set("Authorization", cfg.AccessToken)
 	req.Header.Set("New-Api-User", cfg.UserID)
-	hc := s.Client.HTTP
+	hc := s.app.Client.HTTP
 	if hc == nil {
 		hc = &http.Client{Timeout: 15 * time.Second}
 	}

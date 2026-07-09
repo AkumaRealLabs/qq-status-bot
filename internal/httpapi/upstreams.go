@@ -31,7 +31,7 @@ func (s *Server) updateUpstream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteUpstream(w http.ResponseWriter, r *http.Request) {
-	err := s.App.Store.DeleteUpstream(r.Context(), r.PathValue("id"))
+	err := s.App.DeleteUpstream(r.Context(), r.PathValue("id"))
 	writeNoContentOrError(w, err)
 }
 

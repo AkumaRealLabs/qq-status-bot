@@ -43,43 +43,36 @@ func (s *Service) alert(ctx context.Context, u domain.Upstream, kind string, fai
 	if err != nil {
 		return err
 	}
-	eventType, _, _ := alertOpsType(kind, dec.Recover)
-	shouldSend := rules.Enabled && rules.EventTypes[eventType] && (!dec.Recover || rules.Recovery)
+	eventType, _, _ := domain.AlertEventType(kind, dec.Recover)
 	sent := false
-	if shouldSend {
-		sent = s.sendTelegram(ctx, dec.Message) == nil
+	if domain.ShouldNotify(rules, eventType, dec.Recover) {
+		sent = s.Notify.Send(ctx, dec.Message) == nil
 	}
 	return s.Store.SaveAlert(ctx, u.ID, dec, sent)
 }
 
 func (s *Service) alertFailureThreshold(ctx context.Context) int {
 	rules, err := s.Store.NotificationRules(ctx)
-	if err != nil || rules.FailureThreshold <= 0 {
-		return domain.DefaultNotificationRules().FailureThreshold
+	if err != nil {
+		return domain.EffectiveFailureThreshold(domain.NotificationRules{})
 	}
-	return rules.FailureThreshold
+	return domain.EffectiveFailureThreshold(rules)
 }
 
 func (s *Service) probeMuteFailureThreshold(ctx context.Context) int {
 	rules, err := s.Store.NotificationRules(ctx)
-	if err != nil || rules.MuteFailureThreshold <= 0 {
-		return domain.DefaultNotificationRules().MuteFailureThreshold
+	if err != nil {
+		return domain.EffectiveMuteThreshold(domain.NotificationRules{})
 	}
-	return rules.MuteFailureThreshold
+	return domain.EffectiveMuteThreshold(rules)
 }
 
 func (s *Service) probeInternalRetryPolicy(ctx context.Context) (retries int, interval time.Duration) {
-	def := domain.DefaultNotificationRules()
 	rules, err := s.Store.NotificationRules(ctx)
 	if err != nil {
-		return def.InternalRetryCount, time.Duration(def.InternalRetryIntervalMs) * time.Millisecond
+		return domain.EffectiveInternalRetry(domain.NotificationRules{})
 	}
-	retries = rules.InternalRetryCount
-	if retries < 0 {
-		retries = def.InternalRetryCount
-	}
-	interval = time.Duration(rules.InternalRetryIntervalMs) * time.Millisecond
-	return retries, interval
+	return domain.EffectiveInternalRetry(rules)
 }
 
 func (s *Service) sendTelegram(ctx context.Context, message string) error {

@@ -83,7 +83,7 @@ func (s *Server) updateRevenueCard(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	old, err := s.App.Store.RevenueCard(r.Context(), r.PathValue("id"))
+	old, err := s.App.GetRevenueCard(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
@@ -109,7 +109,7 @@ func (s *Server) updateRevenueCard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteRevenueCard(w http.ResponseWriter, r *http.Request) {
-	writeNoContentOrError(w, s.App.Store.DeleteRevenueCard(r.Context(), r.PathValue("id")))
+	writeNoContentOrError(w, s.App.DeleteRevenueCard(r.Context(), r.PathValue("id")))
 }
 
 func (s *Server) sortRevenueCards(w http.ResponseWriter, r *http.Request) {

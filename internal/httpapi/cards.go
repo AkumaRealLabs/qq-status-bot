@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"net/http"
-	"strings"
 
 	"ai-upstream-monitor/internal/domain"
 )
@@ -70,7 +69,7 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	old, err := s.App.Store.Card(r.Context(), r.PathValue("id"))
+	old, err := s.App.GetCard(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
@@ -100,25 +99,17 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	}
 	schedulerGroup, schedulerChannelID, schedulerChannelName, schedulerAutoDisabled := old.SchedulerGroup, old.SchedulerChannelID, old.SchedulerChannelName, old.SchedulerAutoDisabled
 	if body.SchedulerGroup != nil {
-		schedulerGroup = *body.SchedulerGroup
-		if strings.TrimSpace(schedulerGroup) == "" || strings.TrimSpace(schedulerGroup) != old.SchedulerGroup {
-			schedulerChannelID, schedulerChannelName, schedulerAutoDisabled = "", "", false
-		}
+		schedulerGroup, schedulerChannelID, schedulerChannelName, schedulerAutoDisabled = domain.ApplySchedulerGroupPatch(
+			old.SchedulerGroup, schedulerChannelID, schedulerChannelName, schedulerAutoDisabled, *body.SchedulerGroup,
+		)
 	}
 	if body.SchedulerChannelID != nil {
-		oldChannelID := schedulerChannelID
-		schedulerChannelID = *body.SchedulerChannelID
-		if strings.TrimSpace(schedulerChannelID) == "" || schedulerChannelID != oldChannelID {
-			schedulerAutoDisabled = false
-		}
+		schedulerChannelID, schedulerAutoDisabled = domain.ApplySchedulerChannelPatch(schedulerChannelID, schedulerAutoDisabled, *body.SchedulerChannelID)
 	}
 	if body.SchedulerChannelName != nil {
 		schedulerChannelName = *body.SchedulerChannelName
 	}
-	// Empty secret fields mean "keep existing"; SaveCard applies KeepSecret.
-	if baseURL == "" && apiKey == "" && upstreamID == "" && keyID == "" {
-		baseURL, upstreamID, keyID = old.BaseURL, old.UpstreamID, old.KeyID
-	}
+	// Empty source/secret fields: SaveCard → ModelCard.MergeUpdate keeps stored values.
 	card, err := s.App.SaveCard(r.Context(), r.PathValue("id"), domain.ModelCard{
 		Name: name, BaseURL: baseURL, APIKey: apiKey, UpstreamID: upstreamID, KeyID: keyID,
 		DisplayGroup: displayGroup, PoolEnabled: poolEnabled, PoolEnabledSet: true, ManualCostRatio: manualCostRatio,

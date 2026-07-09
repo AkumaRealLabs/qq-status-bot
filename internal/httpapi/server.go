@@ -171,7 +171,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if rr.status < http.StatusBadRequest {
 			targetType, targetID := auditTarget(r)
-			_ = s.App.Store.CreateAudit(r.Context(), domain.AuditLog{
+			_ = s.App.RecordAudit(r.Context(), domain.AuditLog{
 				Actor: u.Username, Action: auditAction(r), TargetType: targetType, TargetID: targetID,
 				Summary: auditSummary(r, body), Fields: fields,
 			})

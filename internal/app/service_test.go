@@ -112,10 +112,10 @@ func TestUpstreamRowsReturnsEmptyKeysArray(t *testing.T) {
 }
 
 func TestEffectiveRatioUsesBalanceRate(t *testing.T) {
-	if got := effectiveRatio("0.045", 2); got != "0.09" {
+	if got := domain.EffectiveRatio("0.045", 2); got != "0.09" {
 		t.Fatalf("ratio = %q, want 0.09", got)
 	}
-	if got := effectiveRatio("custom", 2); got != "custom" {
+	if got := domain.EffectiveRatio("custom", 2); got != "custom" {
 		t.Fatalf("non-numeric ratio = %q, want custom", got)
 	}
 }
@@ -856,7 +856,7 @@ func TestSaveUpstreamSyncsGroupsOnlyWhenBalanceRateChanges(t *testing.T) {
 }
 
 func TestProfitUsageUnitsUsesOriginalQuota(t *testing.T) {
-	got, ok := profitUsageUnits(50000, 0.1)
+	got, ok := domain.UsageUnits(50000, 0.1)
 	if !ok || got != 1 {
 		t.Fatalf("usage=%v ok=%v", got, ok)
 	}
@@ -1169,7 +1169,7 @@ func TestSchedulerProfitLogsUsesNewAPICappedPageSize(t *testing.T) {
 
 	svc := New(nil)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	logs, err := svc.schedulerProfitLogs(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token"}, time.Unix(1, 0), time.Unix(2, 0), "gpt_low")
+	logs, err := svc.ProfitSvc.schedulerProfitLogs(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token"}, time.Unix(1, 0), time.Unix(2, 0), "gpt_low")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1884,7 +1884,7 @@ func TestTGMediaDownloadFailureKeepsMessageData(t *testing.T) {
 			ID: 1, AccessHash: 2, Sizes: []tg.PhotoSizeClass{&tg.PhotoSize{Type: "m", W: 10, H: 10}},
 		}},
 	}
-	typ, path, url, cached := svc.cacheTGMedia(t.Context(), nil, ch.ID, msg)
+	typ, path, url, cached := svc.TG.cacheTGMedia(t.Context(), nil, ch.ID, msg)
 	if typ != "photo" || path != "" || url != "" || cached {
 		t.Fatalf("media = %q %q %q %v", typ, path, url, cached)
 	}

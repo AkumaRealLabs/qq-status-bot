@@ -18,11 +18,11 @@ func (s *Server) opsEventGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) markOpsEventRead(w http.ResponseWriter, r *http.Request) {
-	writeNoContentOrError(w, s.App.Store.MarkOpsEventRead(r.Context(), r.PathValue("id")))
+	writeNoContentOrError(w, s.App.MarkOpsEventRead(r.Context(), r.PathValue("id")))
 }
 
 func (s *Server) ackOpsEvent(w http.ResponseWriter, r *http.Request) {
-	writeNoContentOrError(w, s.App.Store.AckOpsEvent(r.Context(), r.PathValue("id")))
+	writeNoContentOrError(w, s.App.AckOpsEvent(r.Context(), r.PathValue("id")))
 }
 
 func (s *Server) markOpsEventsRead(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +30,7 @@ func (s *Server) markOpsEventsRead(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeNoContentOrError(w, s.App.Store.MarkOpsEventsRead(r.Context(), filter))
+	writeNoContentOrError(w, s.App.MarkOpsEventsRead(r.Context(), filter))
 }
 
 func (s *Server) ackOpsEvents(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +38,7 @@ func (s *Server) ackOpsEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeNoContentOrError(w, s.App.Store.AckOpsEvents(r.Context(), filter))
+	writeNoContentOrError(w, s.App.AckOpsEvents(r.Context(), filter))
 }
 
 func opsEventFilterFromQuery(r *http.Request) domain.OpsEventFilter {

@@ -11,29 +11,14 @@ import (
 )
 
 func (s *Service) SaveRevenueCard(ctx context.Context, id string, in domain.RevenueCard) (domain.RevenueCard, error) {
+	var old domain.RevenueCard
 	if id != "" {
-		old, err := s.Store.RevenueCard(ctx, id)
+		var err error
+		old, err = s.Store.RevenueCard(ctx, id)
 		if err != nil {
 			return domain.RevenueCard{}, err
 		}
-		in.AccessToken = domain.KeepSecret(in.AccessToken, old.AccessToken)
-		in.AdminAPIKey = domain.KeepSecret(in.AdminAPIKey, old.AdminAPIKey)
-		in.EpayKey = domain.KeepSecret(in.EpayKey, old.EpayKey)
-		if strings.TrimSpace(in.BaseURL) == "" {
-			in.BaseURL = old.BaseURL
-		}
-		if strings.TrimSpace(in.UserID) == "" {
-			in.UserID = old.UserID
-		}
-		if strings.TrimSpace(in.EpayPID) == "" {
-			in.EpayPID = old.EpayPID
-		}
-		if strings.TrimSpace(in.UpstreamID) == "" && strings.TrimSpace(in.SourceType) == old.SourceType {
-			in.UpstreamID = old.UpstreamID
-		}
-		in.ID = old.ID
-		in.SortOrder = old.SortOrder
-		in.CreatedAt = old.CreatedAt
+		in = in.MergeUpdate(old)
 	}
 	card, err := s.normalizeRevenueCard(ctx, in)
 	if err != nil {
@@ -43,30 +28,18 @@ func (s *Service) SaveRevenueCard(ctx context.Context, id string, in domain.Reve
 		out, err := s.Store.CreateRevenueCard(ctx, card)
 		return out.Public(), err
 	}
+	card.ID = old.ID
+	card.SortOrder = old.SortOrder
+	card.CreatedAt = old.CreatedAt
 	out, err := s.Store.UpdateRevenueCard(ctx, card)
 	return out.Public(), err
 }
 
 func (s *Service) normalizeRevenueCard(ctx context.Context, in domain.RevenueCard) (domain.RevenueCard, error) {
-	card := domain.RevenueCard{
-		Name:        strings.TrimSpace(in.Name),
-		SourceType:  strings.TrimSpace(in.SourceType),
-		BaseURL:     strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"),
-		UserID:      strings.TrimSpace(in.UserID),
-		AccessToken: strings.TrimSpace(in.AccessToken),
-		AdminAPIKey: strings.TrimSpace(in.AdminAPIKey),
-		EpayPID:     strings.TrimSpace(in.EpayPID),
-		EpayKey:     strings.TrimSpace(in.EpayKey),
-		UpstreamID:  strings.TrimSpace(in.UpstreamID),
-		Enabled:     in.Enabled,
-		SortOrder:   in.SortOrder,
-	}
+	card := domain.NormalizeRevenueCard(in)
+	var upstreamType, upstreamName string
 	switch card.SourceType {
-	case "epay_total":
-		if card.Name == "" {
-			card.Name = "今日收入"
-		}
-		card.UpstreamID = ""
+	case domain.RevenueEpayTotal:
 		if card.BaseURL == "" || card.EpayPID == "" || card.EpayKey == "" {
 			cfg, _ := s.Store.Settings(ctx)
 			if card.BaseURL == "" {
@@ -79,37 +52,18 @@ func (s *Service) normalizeRevenueCard(ctx context.Context, in domain.RevenueCar
 				card.EpayKey = cfg.EpayKey
 			}
 		}
-		if card.BaseURL == "" || card.EpayPID == "" || card.EpayKey == "" {
-			return card, ErrBadRequest("易支付 Base URL、PID、Key 是必填")
-		}
-	case "newapi_orders", "sub2api_orders":
-		want := strings.TrimSuffix(card.SourceType, "_orders")
+	case domain.RevenueNewAPIOrders, domain.RevenueSub2APIOrders:
 		if card.UpstreamID != "" && card.BaseURL == "" {
 			u, err := s.Store.Upstream(ctx, card.UpstreamID)
 			if err != nil {
 				return card, err
 			}
-			if u.Type != want {
-				return card, ErrBadRequest("upstream type does not match revenue card")
-			}
-			if card.Name == "" {
-				card.Name = u.Name
-			}
+			upstreamType, upstreamName = u.Type, u.Name
 		}
-		if card.BaseURL == "" && card.UpstreamID == "" {
-			return card, ErrBadRequest("Base URL 是必填")
-		}
-		if want == "newapi" && card.UpstreamID == "" && (card.UserID == "" || card.AccessToken == "") {
-			return card, ErrBadRequest("new-api 用户 ID 和 Access Token 是必填")
-		}
-		if want == "sub2api" && card.AdminAPIKey == "" && card.UpstreamID == "" {
-			return card, ErrBadRequest("sub2api 管理员 API Key 是必填")
-		}
-		if card.Name == "" {
-			card.Name = sourceTypeLabel(card.SourceType)
-		}
-	default:
-		return card, ErrBadRequest("source_type must be epay_total, newapi_orders or sub2api_orders")
+	}
+	card = domain.ApplyRevenueDefaults(card, upstreamName)
+	if err := domain.ValidateRevenueCard(card, upstreamType); err != nil {
+		return card, ErrBadRequest(err.Error())
 	}
 	return card, nil
 }
@@ -150,8 +104,8 @@ func (s *Service) TodayRevenue(ctx context.Context) ([]domain.RevenueRow, error)
 		}
 		row.CheckedAt = time.Now().UTC()
 		switch card.SourceType {
-		case "epay_total":
-			orders, err := (epay.Client{HTTP: s.Client.HTTP}).TodayOrders(ctx, epay.Config{BaseURL: firstNonEmpty(card.BaseURL, cfg.EpayBaseURL), PID: firstNonEmpty(card.EpayPID, cfg.EpayPID), Key: firstNonEmpty(card.EpayKey, cfg.EpayKey)}, start)
+		case domain.RevenueEpayTotal:
+			orders, err := (epay.Client{HTTP: s.Client.HTTP}).TodayOrders(ctx, epay.Config{BaseURL: domain.FirstNonEmpty(card.BaseURL, cfg.EpayBaseURL), PID: domain.FirstNonEmpty(card.EpayPID, cfg.EpayPID), Key: domain.FirstNonEmpty(card.EpayKey, cfg.EpayKey)}, start)
 			for _, order := range orders {
 				row.Revenue += order.Amount
 			}
@@ -159,7 +113,7 @@ func (s *Service) TodayRevenue(ctx context.Context) ([]domain.RevenueRow, error)
 				row.Revenue = 0
 				row.Error = err.Error()
 			}
-		case "newapi_orders", "sub2api_orders":
+		case domain.RevenueNewAPIOrders, domain.RevenueSub2APIOrders:
 			mu, upstreamID, err := s.revenueMonitorUpstream(ctx, card)
 			if err != nil {
 				row.Error = err.Error()
@@ -194,12 +148,12 @@ func (s *Service) RevenueCardOrders(ctx context.Context, id string) ([]monitor.R
 	if !card.Enabled {
 		return []monitor.RevenueOrder{}, nil
 	}
-	if card.SourceType == "epay_total" {
+	if card.SourceType == domain.RevenueEpayTotal {
 		cfg, err := s.Store.Settings(ctx)
 		if err != nil {
 			return nil, err
 		}
-		orders, err := (epay.Client{HTTP: s.Client.HTTP}).TodayOrders(ctx, epay.Config{BaseURL: firstNonEmpty(card.BaseURL, cfg.EpayBaseURL), PID: firstNonEmpty(card.EpayPID, cfg.EpayPID), Key: firstNonEmpty(card.EpayKey, cfg.EpayKey)}, todayStart())
+		orders, err := (epay.Client{HTTP: s.Client.HTTP}).TodayOrders(ctx, epay.Config{BaseURL: domain.FirstNonEmpty(card.BaseURL, cfg.EpayBaseURL), PID: domain.FirstNonEmpty(card.EpayPID, cfg.EpayPID), Key: domain.FirstNonEmpty(card.EpayKey, cfg.EpayKey)}, todayStart())
 		out := make([]monitor.RevenueOrder, 0, len(orders))
 		for _, order := range orders {
 			out = append(out, monitor.RevenueOrder{
@@ -244,7 +198,7 @@ func (s *Service) SortRevenueCards(ctx context.Context, ids []string) error {
 func (s *Service) enrichRevenueCards(ctx context.Context, cards []domain.RevenueCard) []domain.RevenueCard {
 	cfg, _ := s.Store.Settings(ctx)
 	for i := range cards {
-		if cards[i].SourceType == "epay_total" {
+		if cards[i].SourceType == domain.RevenueEpayTotal {
 			if cards[i].BaseURL == "" {
 				cards[i].BaseURL = cfg.EpayBaseURL
 			}
@@ -265,7 +219,10 @@ func (s *Service) enrichRevenueCards(ctx context.Context, cards []domain.Revenue
 }
 
 func (s *Service) revenueMonitorUpstream(ctx context.Context, card domain.RevenueCard) (monitor.Upstream, string, error) {
-	typ := strings.TrimSuffix(card.SourceType, "_orders")
+	typ, _ := domain.RevenueUpstreamType(card.SourceType)
+	if typ == "" {
+		typ = strings.TrimSuffix(card.SourceType, "_orders")
+	}
 	if card.UpstreamID != "" && card.BaseURL == "" {
 		u, err := s.Store.Upstream(ctx, card.UpstreamID)
 		if err != nil {
@@ -284,26 +241,6 @@ func (s *Service) revenueMonitorUpstream(ctx context.Context, card domain.Revenu
 		AccessToken: card.AccessToken,
 		AdminAPIKey: card.AdminAPIKey,
 	}, "", nil
-}
-
-func sourceTypeLabel(sourceType string) string {
-	switch sourceType {
-	case "newapi_orders":
-		return "new-api 订单"
-	case "sub2api_orders":
-		return "sub2api 订单"
-	default:
-		return "今日收入"
-	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func todayStart() time.Time {

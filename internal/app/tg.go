@@ -30,8 +30,8 @@ type TGSessionStatus struct {
 	LastError      string `json:"last_error,omitempty"`
 }
 
-func (s *Service) TGSessionStatus(ctx context.Context) (TGSessionStatus, error) {
-	sess, err := s.Store.TGSession(ctx)
+func (s *TGService) TGSessionStatus(ctx context.Context) (TGSessionStatus, error) {
+	sess, err := s.app.Store.TGSession(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TGSessionStatus{}, nil
 	}
@@ -41,13 +41,13 @@ func (s *Service) TGSessionStatus(ctx context.Context) (TGSessionStatus, error) 
 	return tgSessionStatus(sess), nil
 }
 
-func (s *Service) StartTGSession(ctx context.Context, apiID int, apiHash, phone string) (TGSessionStatus, error) {
+func (s *TGService) StartTGSession(ctx context.Context, apiID int, apiHash, phone string) (TGSessionStatus, error) {
 	apiHash, phone = strings.TrimSpace(apiHash), strings.TrimSpace(phone)
 	if apiID <= 0 || apiHash == "" || phone == "" {
 		return TGSessionStatus{}, ErrBadRequest("api_id, api_hash and phone are required")
 	}
 	sess := domain.TGSession{ID: "default", APIID: apiID, APIHash: apiHash, Phone: phone}
-	if _, err := s.Store.SaveTGSession(ctx, sess); err != nil {
+	if _, err := s.app.Store.SaveTGSession(ctx, sess); err != nil {
 		return TGSessionStatus{}, err
 	}
 	err := s.withTGClient(ctx, sess, func(ctx context.Context, client *telegram.Client) error {
@@ -66,21 +66,21 @@ func (s *Service) StartTGSession(ctx context.Context, apiID int, apiHash, phone 
 	})
 	if err != nil {
 		sess.LastError = err.Error()
-		_, _ = s.Store.SaveTGSession(ctx, sess)
+		_, _ = s.app.Store.SaveTGSession(ctx, sess)
 		return TGSessionStatus{}, err
 	}
 	sess.LastError = ""
 	sess.PasswordNeeded = false
-	sess, err = s.Store.SaveTGSession(ctx, sess)
+	sess, err = s.app.Store.SaveTGSession(ctx, sess)
 	return tgSessionStatus(sess), err
 }
 
-func (s *Service) VerifyTGSession(ctx context.Context, code string) (TGSessionStatus, error) {
+func (s *TGService) VerifyTGSession(ctx context.Context, code string) (TGSessionStatus, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return TGSessionStatus{}, ErrBadRequest("code is required")
 	}
-	sess, err := s.Store.TGSession(ctx)
+	sess, err := s.app.Store.TGSession(ctx)
 	if err != nil {
 		return TGSessionStatus{}, err
 	}
@@ -103,20 +103,20 @@ func (s *Service) VerifyTGSession(ctx context.Context, code string) (TGSessionSt
 	})
 	if err != nil {
 		sess.LastError = err.Error()
-		_, _ = s.Store.SaveTGSession(ctx, sess)
+		_, _ = s.app.Store.SaveTGSession(ctx, sess)
 		return TGSessionStatus{}, err
 	}
 	sess.LastError = ""
-	sess, err = s.Store.SaveTGSession(ctx, sess)
+	sess, err = s.app.Store.SaveTGSession(ctx, sess)
 	return tgSessionStatus(sess), err
 }
 
-func (s *Service) TGSessionPassword(ctx context.Context, password string) (TGSessionStatus, error) {
+func (s *TGService) TGSessionPassword(ctx context.Context, password string) (TGSessionStatus, error) {
 	password = strings.TrimSpace(password)
 	if password == "" {
 		return TGSessionStatus{}, ErrBadRequest("password is required")
 	}
-	sess, err := s.Store.TGSession(ctx)
+	sess, err := s.app.Store.TGSession(ctx)
 	if err != nil {
 		return TGSessionStatus{}, err
 	}
@@ -131,15 +131,15 @@ func (s *Service) TGSessionPassword(ctx context.Context, password string) (TGSes
 	})
 	if err != nil {
 		sess.LastError = err.Error()
-		_, _ = s.Store.SaveTGSession(ctx, sess)
+		_, _ = s.app.Store.SaveTGSession(ctx, sess)
 		return TGSessionStatus{}, err
 	}
 	sess.LastError = ""
-	sess, err = s.Store.SaveTGSession(ctx, sess)
+	sess, err = s.app.Store.SaveTGSession(ctx, sess)
 	return tgSessionStatus(sess), err
 }
 
-func (s *Service) SaveTGChannel(ctx context.Context, id string, in domain.TGChannel) (domain.TGChannel, error) {
+func (s *TGService) SaveTGChannel(ctx context.Context, id string, in domain.TGChannel) (domain.TGChannel, error) {
 	ch := domain.TGChannel{
 		DisplayName:  strings.TrimSpace(in.DisplayName),
 		Identifier:   strings.TrimSpace(in.Identifier),
@@ -175,9 +175,9 @@ func (s *Service) SaveTGChannel(ctx context.Context, id string, in domain.TGChan
 			ch.DisplayName = ch.Identifier
 		}
 		ch.Enabled = true
-		return s.Store.CreateTGChannel(ctx, ch)
+		return s.app.Store.CreateTGChannel(ctx, ch)
 	}
-	old, err := s.Store.TGChannel(ctx, id)
+	old, err := s.app.Store.TGChannel(ctx, id)
 	if err != nil {
 		return ch, err
 	}
@@ -197,17 +197,17 @@ func (s *Service) SaveTGChannel(ctx context.Context, id string, in domain.TGChan
 		ch.AvatarURL = old.AvatarURL
 	}
 	ch.ID, ch.LastSyncAt, ch.LastError, ch.CreatedAt = old.ID, old.LastSyncAt, old.LastError, old.CreatedAt
-	ch, err = s.Store.UpdateTGChannel(ctx, ch)
+	ch, err = s.app.Store.UpdateTGChannel(ctx, ch)
 	if err != nil {
 		return ch, err
 	}
 	if old.PinnedOnly != ch.PinnedOnly {
-		err = s.Store.DeleteTGMessages(ctx, ch.ID)
+		err = s.app.Store.DeleteTGMessages(ctx, ch.ID)
 	}
 	return ch, err
 }
 
-func (s *Service) SyncTGChannels(ctx context.Context) ([]domain.TGChannel, error) {
+func (s *TGService) SyncTGChannels(ctx context.Context) ([]domain.TGChannel, error) {
 	var out []domain.TGChannel
 	err := s.withAuthorizedTG(ctx, func(ctx context.Context, api *tg.Client, client *telegram.Client) error {
 		dialogs, err := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{OffsetPeer: &tg.InputPeerEmpty{}, Limit: 100})
@@ -233,7 +233,7 @@ func (s *Service) SyncTGChannels(ctx context.Context) ([]domain.TGChannel, error
 				Enabled:      true,
 				MessageLimit: 10,
 			}
-			saved, err := s.Store.CreateTGChannel(ctx, ch)
+			saved, err := s.app.Store.CreateTGChannel(ctx, ch)
 			if err != nil {
 				return err
 			}
@@ -248,25 +248,25 @@ func (s *Service) SyncTGChannels(ctx context.Context) ([]domain.TGChannel, error
 	return out, nil
 }
 
-func (s *Service) RefreshTGMessagesDue(ctx context.Context) error {
-	s.mu.Lock()
-	if s.tgRunning || (!s.tgLastRun.IsZero() && time.Since(s.tgLastRun) < 5*time.Minute) {
-		s.mu.Unlock()
+func (s *TGService) RefreshTGMessagesDue(ctx context.Context) error {
+	s.app.mu.Lock()
+	if s.app.tgRunning || (!s.app.tgLastRun.IsZero() && time.Since(s.app.tgLastRun) < 5*time.Minute) {
+		s.app.mu.Unlock()
 		return nil
 	}
-	s.tgRunning = true
-	s.tgLastRun = time.Now()
-	s.mu.Unlock()
+	s.app.tgRunning = true
+	s.app.tgLastRun = time.Now()
+	s.app.mu.Unlock()
 	defer func() {
-		s.mu.Lock()
-		s.tgRunning = false
-		s.mu.Unlock()
+		s.app.mu.Lock()
+		s.app.tgRunning = false
+		s.app.mu.Unlock()
 	}()
 	return s.RefreshTGMessages(ctx, "")
 }
 
-func (s *Service) RefreshTGMessages(ctx context.Context, channelID string) error {
-	channels, err := s.Store.ListTGChannels(ctx)
+func (s *TGService) RefreshTGMessages(ctx context.Context, channelID string) error {
+	channels, err := s.app.Store.ListTGChannels(ctx)
 	if err != nil {
 		return err
 	}
@@ -280,7 +280,7 @@ func (s *Service) RefreshTGMessages(ctx context.Context, channelID string) error
 			matched = true
 			if err := s.refreshTGChannel(ctx, api, client, ch); err != nil {
 				ch.LastError = err.Error()
-				_, _ = s.Store.UpdateTGChannel(ctx, ch)
+				_, _ = s.app.Store.UpdateTGChannel(ctx, ch)
 				if firstErr == nil {
 					firstErr = err
 				}
@@ -293,7 +293,7 @@ func (s *Service) RefreshTGMessages(ctx context.Context, channelID string) error
 	})
 }
 
-func (s *Service) refreshTGChannel(ctx context.Context, api *tg.Client, client *telegram.Client, ch domain.TGChannel) error {
+func (s *TGService) refreshTGChannel(ctx context.Context, api *tg.Client, client *telegram.Client, ch domain.TGChannel) error {
 	limit := ch.MessageLimit
 	if limit <= 0 {
 		limit = 10
@@ -306,7 +306,7 @@ func (s *Service) refreshTGChannel(ctx context.Context, api *tg.Client, client *
 	if err != nil {
 		return err
 	}
-	if err := s.Store.DeleteTGMessages(ctx, ch.ID); err != nil {
+	if err := s.app.Store.DeleteTGMessages(ctx, ch.ID); err != nil {
 		return err
 	}
 	for _, item := range messages {
@@ -322,12 +322,12 @@ func (s *Service) refreshTGChannel(ctx context.Context, api *tg.Client, client *
 			Link:        tgMessageLink(ch, msg.ID),
 		}
 		out.MediaType, out.MediaPath, out.MediaURL, out.MediaCached = s.cacheTGMedia(ctx, client, ch.ID, msg)
-		if _, err := s.Store.SaveTGMessage(ctx, out); err != nil {
+		if _, err := s.app.Store.SaveTGMessage(ctx, out); err != nil {
 			return err
 		}
 	}
 	ch.LastSyncAt, ch.LastError = time.Now().UTC(), ""
-	_, err = s.Store.UpdateTGChannel(ctx, ch)
+	_, err = s.app.Store.UpdateTGChannel(ctx, ch)
 	return err
 }
 
@@ -353,8 +353,8 @@ func tgMessages(res tg.MessagesMessagesClass) []tg.MessageClass {
 	return nil
 }
 
-func (s *Service) withAuthorizedTG(ctx context.Context, fn func(context.Context, *tg.Client, *telegram.Client) error) error {
-	sess, err := s.Store.TGSession(ctx)
+func (s *TGService) withAuthorizedTG(ctx context.Context, fn func(context.Context, *tg.Client, *telegram.Client) error) error {
+	sess, err := s.app.Store.TGSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -369,19 +369,19 @@ func (s *Service) withAuthorizedTG(ctx context.Context, fn func(context.Context,
 		if !status.Authorized {
 			sess.Authorized = false
 			sess.LastError = "Telegram session expired"
-			_, _ = s.Store.SaveTGSession(ctx, sess)
+			_, _ = s.app.Store.SaveTGSession(ctx, sess)
 			return ErrBadRequest("Telegram 登录已失效")
 		}
 		return fn(ctx, client.API(), client)
 	})
 }
 
-func (s *Service) withTGClient(ctx context.Context, sess domain.TGSession, fn func(context.Context, *telegram.Client) error) error {
+func (s *TGService) withTGClient(ctx context.Context, sess domain.TGSession, fn func(context.Context, *telegram.Client) error) error {
 	if sess.APIID <= 0 || strings.TrimSpace(sess.APIHash) == "" {
 		return ErrBadRequest("Telegram API 配置不完整")
 	}
 	client := telegram.NewClient(sess.APIID, sess.APIHash, telegram.Options{
-		SessionStorage: tgDBSession{store: s.Store},
+		SessionStorage: tgDBSession{store: s.app.Store},
 		NoUpdates:      true,
 		Device: telegram.DeviceConfig{
 			DeviceModel:    "ai-upstream-monitor",
@@ -396,7 +396,7 @@ func (s *Service) withTGClient(ctx context.Context, sess domain.TGSession, fn fu
 	return client.Run(runCtx, func(ctx context.Context) error { return fn(ctx, client) })
 }
 
-func (s *Service) resolveTGChannel(ctx context.Context, raw string) (domain.TGChannel, error) {
+func (s *TGService) resolveTGChannel(ctx context.Context, raw string) (domain.TGChannel, error) {
 	username := tgUsername(raw)
 	if username == "" {
 		return domain.TGChannel{}, ErrBadRequest("只支持公开频道用户名/链接，私密频道请用同步频道选择")
@@ -420,16 +420,16 @@ func (s *Service) resolveTGChannel(ctx context.Context, raw string) (domain.TGCh
 	return out, err
 }
 
-func (s *Service) cacheTGMedia(ctx context.Context, client *telegram.Client, channelID string, msg *tg.Message) (mediaType, mediaPath, mediaURL string, cached bool) {
+func (s *TGService) cacheTGMedia(ctx context.Context, client *telegram.Client, channelID string, msg *tg.Message) (mediaType, mediaPath, mediaURL string, cached bool) {
 	loc, typ, ext := tgMediaLocation(msg)
 	if loc == nil {
 		return "", "", "", false
 	}
 	name := fmt.Sprintf("%s_%d%s", channelID, msg.ID, ext)
-	if err := os.MkdirAll(s.TGMediaDir, 0o755); err != nil {
+	if err := os.MkdirAll(s.app.TGMediaDir, 0o755); err != nil {
 		return typ, "", "", false
 	}
-	path := filepath.Join(s.TGMediaDir, name)
+	path := filepath.Join(s.app.TGMediaDir, name)
 	if _, err := os.Stat(path); err == nil {
 		return typ, name, "/api/tg/media/" + name, true
 	}
@@ -440,7 +440,7 @@ func (s *Service) cacheTGMedia(ctx context.Context, client *telegram.Client, cha
 	return typ, name, "/api/tg/media/" + name, true
 }
 
-func (s *Service) fetchTGChannelAvatar(ctx context.Context, api *tg.Client, client *telegram.Client, ch domain.TGChannel) string {
+func (s *TGService) fetchTGChannelAvatar(ctx context.Context, api *tg.Client, client *telegram.Client, ch domain.TGChannel) string {
 	res, err := api.ChannelsGetChannels(ctx, []tg.InputChannelClass{&tg.InputChannel{ChannelID: ch.PeerID, AccessHash: ch.AccessHash}})
 	if err != nil {
 		return ""
@@ -454,16 +454,16 @@ func (s *Service) fetchTGChannelAvatar(ctx context.Context, api *tg.Client, clie
 	return ""
 }
 
-func (s *Service) cacheTGChannelAvatar(ctx context.Context, client *telegram.Client, channelID, accessHash int64, photo tg.ChatPhotoClass) string {
+func (s *TGService) cacheTGChannelAvatar(ctx context.Context, client *telegram.Client, channelID, accessHash int64, photo tg.ChatPhotoClass) string {
 	p, ok := photo.(*tg.ChatPhoto)
 	if !ok || p.PhotoID == 0 || client == nil {
 		return ""
 	}
 	name := fmt.Sprintf("avatar_%d_%d.jpg", channelID, p.PhotoID)
-	if err := os.MkdirAll(s.TGMediaDir, 0o755); err != nil {
+	if err := os.MkdirAll(s.app.TGMediaDir, 0o755); err != nil {
 		return ""
 	}
-	path := filepath.Join(s.TGMediaDir, name)
+	path := filepath.Join(s.app.TGMediaDir, name)
 	if _, err := os.Stat(path); err == nil {
 		return "/api/tg/media/" + name
 	}

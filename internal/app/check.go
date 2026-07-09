@@ -12,30 +12,30 @@ import (
 	"ai-upstream-monitor/internal/monitor"
 )
 
-func (s *Service) CheckDue(ctx context.Context) error {
-	cfg, err := s.Store.Settings(ctx)
+func (s *ProbeService) CheckDue(ctx context.Context) error {
+	cfg, err := s.app.Store.Settings(ctx)
 	if err != nil {
 		return err
 	}
 	interval := time.Duration(cfg.CheckIntervalMinutes) * time.Minute
-	s.mu.Lock()
-	if s.running || (!s.lastRun.IsZero() && time.Since(s.lastRun) < interval) {
-		s.mu.Unlock()
+	s.app.mu.Lock()
+	if s.app.running || (!s.app.lastRun.IsZero() && time.Since(s.app.lastRun) < interval) {
+		s.app.mu.Unlock()
 		return nil
 	}
-	s.running = true
-	s.lastRun = time.Now()
-	s.mu.Unlock()
+	s.app.running = true
+	s.app.lastRun = time.Now()
+	s.app.mu.Unlock()
 	defer func() {
-		s.mu.Lock()
-		s.running = false
-		s.mu.Unlock()
+		s.app.mu.Lock()
+		s.app.running = false
+		s.app.mu.Unlock()
 	}()
 	return s.CheckAll(ctx)
 }
 
-func (s *Service) CheckAll(ctx context.Context) error {
-	upstreams, err := s.Store.ListUpstreams(ctx)
+func (s *ProbeService) CheckAll(ctx context.Context) error {
+	upstreams, err := s.app.Store.ListUpstreams(ctx)
 	if err != nil {
 		return err
 	}
@@ -49,9 +49,9 @@ func (s *Service) CheckAll(ctx context.Context) error {
 		return s.checkUpstream(ctx, enabledUpstreams[i].ID, false)
 	})
 	if len(enabledUpstreams) > 0 {
-		s.syncSchedulerGroupsBestEffort(ctx)
+		s.app.syncSchedulerGroupsBestEffort(ctx)
 	}
-	cards, err := s.Store.ListCards(ctx)
+	cards, err := s.app.Cards.ListCards(ctx)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (s *Service) CheckAll(ctx context.Context) error {
 
 // runLimited executes n tasks with at most limit concurrent workers.
 // Returns success/failure counts. Individual task errors are logged, not returned.
-func (s *Service) runLimited(ctx context.Context, n, limit int, fn func(i int) error) (ok, fail int) {
+func (s *ProbeService) runLimited(ctx context.Context, n, limit int, fn func(i int) error) (ok, fail int) {
 	if n == 0 {
 		return 0, 0
 	}
@@ -121,47 +121,47 @@ func (s *Service) runLimited(ctx context.Context, n, limit int, fn func(i int) e
 	return ok, fail
 }
 
-func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
+func (s *ProbeService) CheckUpstream(ctx context.Context, upstreamID string) error {
 	return s.checkUpstream(ctx, upstreamID, true)
 }
 
-func (s *Service) checkUpstream(ctx context.Context, upstreamID string, syncGroups bool) error {
-	u, err := s.Store.Upstream(ctx, upstreamID)
+func (s *ProbeService) checkUpstream(ctx context.Context, upstreamID string, syncGroups bool) error {
+	u, err := s.app.Store.Upstream(ctx, upstreamID)
 	if err != nil {
 		return err
 	}
 	start := time.Now()
 	mu := toMonitorUpstream(u)
-	result, err := s.Client.Check(ctx, &mu, "", "")
+	result, err := s.app.Client.Check(ctx, &mu, "", "")
 	if err != nil {
 		failures := u.FailureCount + 1
-		_ = s.Store.SaveUpstreamError(ctx, u.ID, err.Error(), failures)
-		failing := failures >= s.alertFailureThreshold(ctx)
+		_ = s.app.Store.SaveUpstreamError(ctx, u.ID, err.Error(), failures)
+		failing := domain.UpstreamAlerting(failures, s.app.alertFailureThreshold(ctx))
 		if monitor.IsAuthError(err) {
-			_ = s.alert(ctx, u, "credential", failing, u.Name+" 凭据失效: "+err.Error())
+			_ = s.app.alert(ctx, u, "credential", failing, u.Name+" 凭据失效: "+err.Error())
 		} else {
-			_ = s.alert(ctx, u, "balance_query", failing, u.Name+" 额度查询失败: "+err.Error())
+			_ = s.app.alert(ctx, u, "balance_query", failing, u.Name+" 额度查询失败: "+err.Error())
 		}
 		return err
 	}
-	if err := s.Store.SaveUpstreamTokens(ctx, u.ID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken); err != nil {
+	if err := s.app.Store.SaveUpstreamTokens(ctx, u.ID, mu.Sub2APIAccessToken, mu.Sub2APIRefreshToken); err != nil {
 		return err
 	}
-	if err := s.Store.SaveKeys(ctx, u.ID, result.Keys); err != nil {
+	if err := s.app.Store.SaveKeys(ctx, u.ID, result.Keys); err != nil {
 		return err
 	}
-	if err := s.recordCurrentCostSnapshots(ctx); err != nil {
+	if err := s.app.recordCurrentCostSnapshots(ctx); err != nil {
 		return err
 	}
 	if syncGroups {
-		s.syncSchedulerGroupsBestEffort(ctx)
+		s.app.syncSchedulerGroupsBestEffort(ctx)
 	}
-	snap, err := s.Store.SaveBalance(ctx, u.ID, result.Balance, "", int(time.Since(start).Milliseconds()))
+	snap, err := s.app.Store.SaveBalance(ctx, u.ID, result.Balance, "", int(time.Since(start).Milliseconds()))
 	if err != nil {
 		return err
 	}
-	_ = s.Store.SaveUpstreamError(ctx, u.ID, "", 0)
-	_ = s.alert(ctx, u, "credential", false, u.Name+" 凭据已恢复")
-	_ = s.alert(ctx, u, "balance_query", false, u.Name+" 额度查询已恢复")
-	return s.alert(ctx, u, "balance", domain.LowBalance(u, snap), fmt.Sprintf("%s 余额低于阈值", u.Name))
+	_ = s.app.Store.SaveUpstreamError(ctx, u.ID, "", 0)
+	_ = s.app.alert(ctx, u, "credential", false, u.Name+" 凭据已恢复")
+	_ = s.app.alert(ctx, u, "balance_query", false, u.Name+" 额度查询已恢复")
+	return s.app.alert(ctx, u, "balance", domain.LowBalance(u, snap), fmt.Sprintf("%s 余额低于阈值", u.Name))
 }

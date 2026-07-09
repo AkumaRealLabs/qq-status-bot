@@ -14,28 +14,22 @@ import (
 	"ai-upstream-monitor/internal/monitor"
 )
 
-func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) (domain.ModelCard, error) {
+func (s *ProbeService) SaveCard(ctx context.Context, id string, in domain.ModelCard) (domain.ModelCard, error) {
 	var old domain.ModelCard
 	if id != "" {
 		var err error
-		old, err = s.Store.Card(ctx, id)
+		old, err = s.app.Cards.Card(ctx, id)
 		if err != nil {
 			return domain.ModelCard{}, err
 		}
-		in.APIKey = domain.KeepSecret(in.APIKey, old.APIKey)
-		if strings.TrimSpace(in.BaseURL) == "" && strings.TrimSpace(in.UpstreamID) == "" && strings.TrimSpace(in.KeyID) == "" {
-			in.BaseURL, in.UpstreamID, in.KeyID = old.BaseURL, old.UpstreamID, old.KeyID
-			if strings.TrimSpace(in.APIKey) == "" {
-				in.APIKey = old.APIKey
-			}
-		}
+		in = in.MergeUpdate(old)
 	}
 	card, err := s.normalizeCard(ctx, in)
 	if err != nil {
 		return domain.ModelCard{}, err
 	}
 	if card.PoolEnabled && card.SchedulerChannelID != "" {
-		cards, err := s.Store.ListCards(ctx)
+		cards, err := s.app.Cards.ListCards(ctx)
 		if err != nil {
 			return domain.ModelCard{}, err
 		}
@@ -46,42 +40,44 @@ func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) 
 		}
 	}
 	if id == "" {
-		out, err := s.Store.CreateCard(ctx, card)
+		out, err := s.app.Cards.CreateCard(ctx, card)
 		if err == nil {
-			if err := s.recordCardCostSnapshot(ctx, out); err != nil {
+			if err := s.app.recordCardCostSnapshot(ctx, out); err != nil {
 				return out.Public(), err
 			}
 		}
 		if err == nil && out.PoolEnabled && out.SchedulerChannelID != "" {
-			s.syncSchedulerGroupsBestEffort(ctx)
+			s.app.syncSchedulerGroupsBestEffort(ctx)
 		}
 		return out.Public(), err
 	}
+	// normalize builds a fresh struct; re-attach runtime identity from old.
+	// SchedulerAutoDisabled already decided by MergeUpdate before normalize.
 	card.ID = old.ID
 	card.LastError = old.LastError
 	card.FailureCount = old.FailureCount
 	card.SchedulerAutoDisabledAt = old.SchedulerAutoDisabledAt
 	card.SortOrder = old.SortOrder
 	card.CreatedAt = old.CreatedAt
-	out, err := s.Store.UpdateCard(ctx, card)
+	out, err := s.app.Cards.UpdateCard(ctx, card)
 	changedBinding := old.UpstreamID != out.UpstreamID || old.KeyID != out.KeyID || old.SchedulerChannelID != out.SchedulerChannelID || old.PoolEnabled != out.PoolEnabled || old.ManualCostRatio != out.ManualCostRatio
 	if err == nil && old.SchedulerChannelID != "" && (old.SchedulerChannelID != out.SchedulerChannelID || !out.PoolEnabled) {
-		if err := s.recordInactiveCostSnapshot(ctx, old, "渠道绑定已变更"); err != nil {
+		if err := s.app.recordInactiveCostSnapshot(ctx, old, "渠道绑定已变更"); err != nil {
 			return out.Public(), err
 		}
 	}
 	if err == nil && (changedBinding || old.SchedulerChannelName != out.SchedulerChannelName || old.Name != out.Name) {
-		if err := s.recordCardCostSnapshot(ctx, out); err != nil {
+		if err := s.app.recordCardCostSnapshot(ctx, out); err != nil {
 			return out.Public(), err
 		}
 	}
 	if err == nil && out.PoolEnabled && changedBinding && out.SchedulerChannelID != "" {
-		s.syncSchedulerGroupsBestEffort(ctx)
+		s.app.syncSchedulerGroupsBestEffort(ctx)
 	}
 	return out.Public(), err
 }
 
-func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domain.ModelCard, error) {
+func (s *ProbeService) normalizeCard(ctx context.Context, in domain.ModelCard) (domain.ModelCard, error) {
 	card := domain.ModelCard{
 		Name:                  strings.TrimSpace(in.Name),
 		BaseURL:               strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"),
@@ -126,11 +122,11 @@ func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domai
 	if card.UpstreamID == "" || card.KeyID == "" {
 		return card, ErrBadRequest("upstream_id and key_id are required")
 	}
-	u, err := s.Store.Upstream(ctx, card.UpstreamID)
+	u, err := s.app.Store.Upstream(ctx, card.UpstreamID)
 	if err != nil {
 		return card, err
 	}
-	k, err := s.Store.Key(ctx, card.KeyID)
+	k, err := s.app.Store.Key(ctx, card.KeyID)
 	if err != nil {
 		return card, err
 	}
@@ -143,7 +139,7 @@ func (s *Service) normalizeCard(ctx context.Context, in domain.ModelCard) (domai
 	return card, nil
 }
 
-func (s *Service) SortCards(ctx context.Context, ids []string) error {
+func (s *ProbeService) SortCards(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return ErrBadRequest("ids are required")
 	}
@@ -158,56 +154,56 @@ func (s *Service) SortCards(ctx context.Context, ids []string) error {
 		}
 		seen[id] = struct{}{}
 	}
-	return s.Store.UpdateCardOrder(ctx, ids)
+	return s.app.Cards.UpdateCardOrder(ctx, ids)
 }
 
-func (s *Service) DeleteCard(ctx context.Context, id string) error {
-	card, err := s.Store.Card(ctx, id)
+func (s *ProbeService) DeleteCard(ctx context.Context, id string) error {
+	card, err := s.app.Cards.Card(ctx, id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if err == nil {
-		if err := s.recordInactiveCostSnapshot(ctx, card, "卡片已删除"); err != nil {
+		if err := s.app.recordInactiveCostSnapshot(ctx, card, "卡片已删除"); err != nil {
 			return err
 		}
 	}
-	return s.Store.DeleteCard(ctx, id)
+	return s.app.Cards.DeleteCard(ctx, id)
 }
 
-func (s *Service) CheckCard(ctx context.Context, cardID string) error {
-	card, err := s.Store.Card(ctx, cardID)
+func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
+	card, err := s.app.Cards.Card(ctx, cardID)
 	if err != nil {
 		return err
 	}
 	if card.BaseURL != "" {
 		return s.checkCustomCard(ctx, card)
 	}
-	u, err := s.Store.Upstream(ctx, card.UpstreamID)
+	u, err := s.app.Store.Upstream(ctx, card.UpstreamID)
 	if err != nil {
 		return err
 	}
 	if card.KeyID == "" {
 		msg := "未选择 Key"
-		if _, err := s.Store.SaveProbe(ctx, u.ID, card.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
+		if _, err := s.app.Store.SaveProbe(ctx, u.ID, card.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
 			return err
 		}
 		failures := card.FailureCount + 1
-		if err := s.Store.UpdateCardProbeState(ctx, card.ID, msg, failures); err != nil {
+		if err := s.app.Cards.UpdateCardProbeState(ctx, card.ID, msg, failures); err != nil {
 			return err
 		}
-		return s.applySchedulerAutomation(ctx, card, false, failures)
+		return s.app.applySchedulerAutomation(ctx, card, false, failures)
 	}
-	key, err := s.Store.Key(ctx, card.KeyID)
+	key, err := s.app.Store.Key(ctx, card.KeyID)
 	if err != nil {
 		return err
 	}
-	muteAt := s.probeMuteFailureThreshold(ctx)
+	muteAt := s.app.probeMuteFailureThreshold(ctx)
 	probe := s.probeWithInternalRetry(ctx, u.BaseURL, key.Key, domain.ProbeModel)
-	if _, err := s.Store.SaveProbe(ctx, u.ID, card.ID, probe); err != nil {
+	if _, err := s.app.Store.SaveProbe(ctx, u.ID, card.ID, probe); err != nil {
 		return err
 	}
 	if monitor.IsInternalProbeError(probe.Error) {
-		return s.alert(ctx, u, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
+		return s.app.alert(ctx, u, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
 	}
 	failures := 0
 	lastErr := ""
@@ -215,42 +211,42 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 		failures = card.FailureCount + 1
 		lastErr = probe.Error
 	}
-	if err := s.Store.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
+	if err := s.app.Cards.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
 		return err
 	}
-	_ = s.applySchedulerAutomation(ctx, card, probe.Success, failures)
+	_ = s.app.applySchedulerAutomation(ctx, card, probe.Success, failures)
 	if probe.Success {
-		_ = s.alert(ctx, u, "internal:"+card.ID, false, card.Name+" 本地探测已恢复")
-		_ = s.alert(ctx, u, "quota:"+card.ID, false, card.Name+" 余额不足状态已恢复")
-		return s.alert(ctx, u, "ping:"+card.ID, false, card.Name+" 探测已恢复")
+		_ = s.app.alert(ctx, u, "internal:"+card.ID, false, card.Name+" 本地探测已恢复")
+		_ = s.app.alert(ctx, u, "quota:"+card.ID, false, card.Name+" 余额不足状态已恢复")
+		return s.app.alert(ctx, u, "ping:"+card.ID, false, card.Name+" 探测已恢复")
 	}
-	if suppressProbeAlert(card, failures, muteAt) {
+	if domain.SuppressProbeAlert(card.SchedulerAutoDisabled, failures, muteAt) {
 		return nil
 	}
 	kind, msg := probeAlertKind(card, probe)
-	return s.alert(ctx, u, kind, failures >= muteAt, msg)
+	return s.app.alert(ctx, u, kind, failures >= muteAt, msg)
 }
 
-func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) error {
-	muteAt := s.probeMuteFailureThreshold(ctx)
+func (s *ProbeService) checkCustomCard(ctx context.Context, card domain.ModelCard) error {
+	muteAt := s.app.probeMuteFailureThreshold(ctx)
 	if card.APIKey == "" {
 		msg := "未填写 Key"
-		if _, err := s.Store.SaveProbe(ctx, "", card.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
+		if _, err := s.app.Store.SaveProbe(ctx, "", card.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
 			return err
 		}
 		failures := card.FailureCount + 1
-		if err := s.Store.UpdateCardProbeState(ctx, card.ID, msg, failures); err != nil {
+		if err := s.app.Cards.UpdateCardProbeState(ctx, card.ID, msg, failures); err != nil {
 			return err
 		}
-		return s.applySchedulerAutomation(ctx, card, false, failures)
+		return s.app.applySchedulerAutomation(ctx, card, false, failures)
 	}
 	probe := s.probeWithInternalRetry(ctx, card.BaseURL, card.APIKey, domain.ProbeModel)
-	if _, err := s.Store.SaveProbe(ctx, "", card.ID, probe); err != nil {
+	if _, err := s.app.Store.SaveProbe(ctx, "", card.ID, probe); err != nil {
 		return err
 	}
 	pseudo := domain.Upstream{ID: "card:" + card.ID, Name: card.Name}
 	if monitor.IsInternalProbeError(probe.Error) {
-		return s.alert(ctx, pseudo, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
+		return s.app.alert(ctx, pseudo, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
 	}
 	failures := 0
 	lastErr := ""
@@ -258,39 +254,25 @@ func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) er
 		failures = card.FailureCount + 1
 		lastErr = probe.Error
 	}
-	if err := s.Store.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
+	if err := s.app.Cards.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
 		return err
 	}
 	if probe.Success {
-		_ = s.alert(ctx, pseudo, "internal:"+card.ID, false, card.Name+" 本地探测已恢复")
-		_ = s.alert(ctx, pseudo, "quota:"+card.ID, false, card.Name+" 余额不足状态已恢复")
-		_ = s.alert(ctx, pseudo, "ping:"+card.ID, false, card.Name+" 探测已恢复")
+		_ = s.app.alert(ctx, pseudo, "internal:"+card.ID, false, card.Name+" 本地探测已恢复")
+		_ = s.app.alert(ctx, pseudo, "quota:"+card.ID, false, card.Name+" 余额不足状态已恢复")
+		_ = s.app.alert(ctx, pseudo, "ping:"+card.ID, false, card.Name+" 探测已恢复")
 	} else {
-		if !suppressProbeAlert(card, failures, muteAt) {
+		if !domain.SuppressProbeAlert(card.SchedulerAutoDisabled, failures, muteAt) {
 			kind, msg := probeAlertKind(card, probe)
-			_ = s.alert(ctx, pseudo, kind, failures >= muteAt, msg)
+			_ = s.app.alert(ctx, pseudo, kind, failures >= muteAt, msg)
 		}
 	}
-	return s.applySchedulerAutomation(ctx, card, probe.Success, failures)
+	return s.app.applySchedulerAutomation(ctx, card, probe.Success, failures)
 }
 
-func cardProbeMuted(card domain.ModelCard, muteAt int) bool {
-	if muteAt <= 0 {
-		muteAt = domain.DefaultNotificationRules().MuteFailureThreshold
-	}
-	return card.FailureCount >= muteAt || card.SchedulerAutoDisabled
-}
-
-func suppressProbeAlert(card domain.ModelCard, failures, muteAt int) bool {
-	if muteAt <= 0 {
-		muteAt = domain.DefaultNotificationRules().MuteFailureThreshold
-	}
-	return card.SchedulerAutoDisabled || failures != muteAt
-}
-
-func (s *Service) probeWithInternalRetry(ctx context.Context, baseURL, key, model string) monitor.ProbeResult {
-	retries, interval := s.probeInternalRetryPolicy(ctx)
-	probe := s.Client.Probe(ctx, baseURL, key, model)
+func (s *ProbeService) probeWithInternalRetry(ctx context.Context, baseURL, key, model string) monitor.ProbeResult {
+	retries, interval := s.app.probeInternalRetryPolicy(ctx)
+	probe := s.app.Prober.Probe(ctx, baseURL, key, model)
 	for attempt := 0; attempt < retries; attempt++ {
 		if probe.Success || !monitor.IsInternalProbeError(probe.Error) {
 			break
@@ -304,47 +286,24 @@ func (s *Service) probeWithInternalRetry(ctx context.Context, baseURL, key, mode
 			case <-timer.C:
 			}
 		}
-		probe = s.Client.Probe(ctx, baseURL, key, model)
+		probe = s.app.Prober.Probe(ctx, baseURL, key, model)
 	}
 	return probe
 }
 
 func probeAlertKind(card domain.ModelCard, probe monitor.ProbeResult) (string, string) {
-	if IsQuotaProbeError(probe.Error) {
-		return "quota:" + card.ID, card.Name + " 余额不足/成本池不可用: " + probe.Error
-	}
-	return "ping:" + card.ID, card.Name + " 探测失败: " + probe.Error
+	return domain.ProbeAlertKind(card.Name, card.ID, probe.Error)
 }
 
-func IsQuotaProbeError(errText string) bool {
-	lower := strings.ToLower(errText)
-	for _, needle := range []string{
-		"余额不足",
-		"额度不足",
-		"预扣费不足",
-		"insufficient_quota",
-		"not enough quota",
-		"not enough balance",
-		"pre-deduct",
-		"prepaid balance",
-		"quota exceeded",
-	} {
-		if strings.Contains(lower, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Service) MonitorStatus(ctx context.Context, window string) (map[string]any, error) {
+func (s *ProbeService) MonitorStatus(ctx context.Context, window string) (map[string]any, error) {
 	return s.monitorStatus(ctx, window, false)
 }
 
-func (s *Service) PublicMonitorStatus(ctx context.Context, window string) (map[string]any, error) {
+func (s *ProbeService) PublicMonitorStatus(ctx context.Context, window string) (map[string]any, error) {
 	return s.monitorStatus(ctx, window, true)
 }
 
-func (s *Service) monitorStatus(ctx context.Context, window string, publicOnly bool) (map[string]any, error) {
+func (s *ProbeService) monitorStatus(ctx context.Context, window string, publicOnly bool) (map[string]any, error) {
 	since, label, _ := windowSince(window)
 	cards, err := s.enrichedCards(ctx, since, 0)
 	if err != nil {
@@ -463,7 +422,7 @@ func probeStatusLabel(status string) string {
 	}
 }
 
-func (s *Service) ListCards(ctx context.Context) ([]domain.ModelCard, error) {
+func (s *ProbeService) ListCards(ctx context.Context) ([]domain.ModelCard, error) {
 	cards, err := s.enrichedCards(ctx, time.Now().Add(-time.Hour), 60)
 	if err != nil {
 		return nil, err
@@ -471,48 +430,39 @@ func (s *Service) ListCards(ctx context.Context) ([]domain.ModelCard, error) {
 	return domain.PublicModelCards(cards), nil
 }
 
-func (s *Service) enrichedCards(ctx context.Context, since time.Time, probeLimit int) ([]domain.ModelCard, error) {
-	cards, err := s.Store.ListCards(ctx)
+func (s *ProbeService) enrichedCards(ctx context.Context, since time.Time, probeLimit int) ([]domain.ModelCard, error) {
+	cards, err := s.app.Cards.ListCards(ctx)
 	if err != nil {
 		return nil, err
 	}
-	muteAt := s.probeMuteFailureThreshold(ctx)
+	muteAt := s.app.probeMuteFailureThreshold(ctx)
 	for i := range cards {
 		var u domain.Upstream
 		if cards[i].UpstreamID != "" {
 			var err error
-			u, err = s.Store.Upstream(ctx, cards[i].UpstreamID)
+			u, err = s.app.Store.Upstream(ctx, cards[i].UpstreamID)
 			if err == nil {
 				cards[i].UpstreamName = u.Name
 				cards[i].Type = u.Type
 			}
 		}
 		if cards[i].KeyID != "" {
-			if k, err := s.Store.Key(ctx, cards[i].KeyID); err == nil {
+			if k, err := s.app.Store.Key(ctx, cards[i].KeyID); err == nil {
 				cards[i].KeyName = k.Name
 				cards[i].KeyGroup = k.Group
 				cards[i].KeyRatio = k.GroupRatio
-				cards[i].EffectiveRatio = effectiveRatio(k.GroupRatio, domain.BalanceRate(u))
+				cards[i].EffectiveRatio = domain.EffectiveRatio(k.GroupRatio, domain.BalanceRate(u))
 			}
 		} else if cards[i].BaseURL != "" && cards[i].ManualCostRatio != "" {
 			cards[i].EffectiveRatio = cards[i].ManualCostRatio
 		}
-		history, err := s.Store.ProbesForCardSince(ctx, cards[i].ID, since, probeLimit)
+		history, err := s.app.Store.ProbesForCardSince(ctx, cards[i].ID, since, probeLimit)
 		if err != nil {
 			return nil, err
 		}
 		reverse(history)
 		cards[i].History = history
-		cards[i].ProbeMuted = cardProbeMuted(cards[i], muteAt)
+		cards[i].ProbeMuted = domain.ProbeMuted(cards[i].FailureCount, muteAt, cards[i].SchedulerAutoDisabled)
 	}
 	return cards, nil
-}
-
-func effectiveRatio(groupRatio string, balanceRate float64) string {
-	ratio, err := strconv.ParseFloat(strings.TrimSpace(groupRatio), 64)
-	if err != nil {
-		return groupRatio
-	}
-	out := fmt.Sprintf("%.6f", ratio*balanceRate)
-	return strings.TrimRight(strings.TrimRight(out, "0"), ".")
 }

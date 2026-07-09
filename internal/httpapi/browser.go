@@ -15,7 +15,7 @@ import (
 )
 
 func (s *Server) browserLogin(w http.ResponseWriter, r *http.Request) {
-	u, err := s.App.Store.Upstream(r.Context(), r.PathValue("id"))
+	u, err := s.App.GetUpstream(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
@@ -28,7 +28,7 @@ func (s *Server) browserLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) browserCapture(w http.ResponseWriter, r *http.Request) {
-	u, err := s.App.Store.Upstream(r.Context(), r.PathValue("id"))
+	u, err := s.App.GetUpstream(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
@@ -47,13 +47,7 @@ func (s *Server) browserCapture(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "没有在浏览器 localStorage/sessionStorage/cookie 里找到 token")
 		return
 	}
-	if access != "" {
-		u.Sub2APIAccessToken = access
-	}
-	if refresh != "" {
-		u.Sub2APIRefreshToken = refresh
-	}
-	_, err = s.App.Store.UpdateUpstream(r.Context(), u)
+	_, err = s.App.CaptureUpstreamBrowserTokens(r.Context(), u.ID, access, refresh)
 	writeJSONOrError(w, map[string]bool{"access_token": access != "", "refresh_token": refresh != ""}, err)
 }
 

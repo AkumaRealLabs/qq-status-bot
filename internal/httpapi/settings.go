@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"ai-upstream-monitor/internal/app"
 	"ai-upstream-monitor/internal/domain"
-	"ai-upstream-monitor/internal/store"
 )
 
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
@@ -14,12 +14,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(w http.ResponseWriter, r *http.Request) {
-	cfg, err := s.App.Store.Settings(r.Context())
+	siteName, siteIcon, err := s.App.PublicSiteSettings(r.Context())
 	if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
 	}
-	writeJSON(w, map[string]string{"site_name": cfg.SiteName, "site_icon": cfg.SiteIcon})
+	writeJSON(w, map[string]string{"site_name": siteName, "site_icon": siteIcon})
 }
 
 func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +32,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) exportData(w http.ResponseWriter, r *http.Request) {
-	out, err := s.App.Store.ExportData(r.Context())
+	out, err := s.App.ExportData(r.Context())
 	if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
@@ -45,9 +45,9 @@ func (s *Server) exportData(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
-	var in store.ExportData
+	var in app.ExportData
 	if !decodeJSON(w, r, &in, 0) {
 		return
 	}
-	writeNoContentOrError(w, s.App.Store.ImportData(r.Context(), in))
+	writeNoContentOrError(w, s.App.ImportData(r.Context(), in))
 }

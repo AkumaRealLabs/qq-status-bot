@@ -49,7 +49,7 @@ func (s *Server) tgSessionPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listTGChannels(w http.ResponseWriter, r *http.Request) {
-	out, err := s.App.Store.ListTGChannels(r.Context())
+	out, err := s.App.ListTGChannels(r.Context())
 	writeJSONOrError(w, out, err)
 }
 
@@ -88,7 +88,7 @@ func (s *Server) updateTGChannel(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	old, err := s.App.Store.TGChannel(r.Context(), r.PathValue("id"))
+	old, err := s.App.GetTGChannel(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
@@ -115,7 +115,7 @@ func (s *Server) updateTGChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteTGChannel(w http.ResponseWriter, r *http.Request) {
-	writeNoContentOrError(w, s.App.Store.DeleteTGChannel(r.Context(), r.PathValue("id")))
+	writeNoContentOrError(w, s.App.DeleteTGChannel(r.Context(), r.PathValue("id")))
 }
 
 func (s *Server) syncTGChannels(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +125,7 @@ func (s *Server) syncTGChannels(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listTGMessages(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, err := s.App.Store.TGMessages(r.Context(), r.URL.Query().Get("channel_id"), limit)
+	out, err := s.App.ListTGMessages(r.Context(), r.URL.Query().Get("channel_id"), limit)
 	writeJSONOrError(w, out, err)
 }
 
@@ -140,11 +140,11 @@ func (s *Server) refreshTGMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) clearTGMessages(w http.ResponseWriter, r *http.Request) {
-	writeNoContentOrError(w, s.App.Store.DeleteAllTGMessages(r.Context()))
+	writeNoContentOrError(w, s.App.DeleteAllTGMessages(r.Context()))
 }
 
 func (s *Server) deleteTGMessage(w http.ResponseWriter, r *http.Request) {
-	writeNoContentOrError(w, s.App.Store.DeleteTGMessage(r.Context(), r.PathValue("id")))
+	writeNoContentOrError(w, s.App.DeleteTGMessage(r.Context(), r.PathValue("id")))
 }
 
 func (s *Server) tgMedia(w http.ResponseWriter, r *http.Request) {

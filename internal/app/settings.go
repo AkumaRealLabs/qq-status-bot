@@ -12,6 +12,11 @@ func (s *Service) Settings(ctx context.Context) (domain.Settings, error) {
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, cfg domain.Settings) (domain.Settings, error) {
+	old, err := s.Store.Settings(ctx)
+	if err != nil {
+		return domain.Settings{}, err
+	}
+	cfg = cfg.MergeUpdate(old)
 	out, err := s.Store.UpdateSettings(ctx, cfg)
 	return out.Public(), err
 }
