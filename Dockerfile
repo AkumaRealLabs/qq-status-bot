@@ -4,7 +4,7 @@ ARG VITE_BUILD_VERSION=dev
 ENV VITE_BUILD_VERSION=$VITE_BUILD_VERSION
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate && pnpm install --frozen-lockfile
 COPY frontend ./
 RUN pnpm build
 
