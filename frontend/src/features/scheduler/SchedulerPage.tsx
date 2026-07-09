@@ -607,16 +607,27 @@ function schedulerStatus(status: number) {
 }
 
 function logAction(action: SchedulerLog['action']) {
-  if (action === 'group_sync') return '分组同步'
+  if (action === 'group_sync') return '自动分组'
   return action === 'restore' ? '恢复' : '关闭'
 }
 
 function schedulerLogTitle(log: SchedulerLog) {
-  if (log.action === 'group_sync') return '自动分组'
+  if (log.action === 'group_sync') return '自动分组变更'
   const card = log.card_name || log.card_id
   const channel = log.channel_name || log.channel_id
-  if (card && channel && card !== channel) return `${card} · ${channel}`
+  if (card && channel && card !== channel) {
+    const normalizedCard = normalizeSchedulerName(card)
+    const normalizedChannel = normalizeSchedulerName(channel)
+    if (normalizedCard && normalizedChannel && (normalizedCard === normalizedChannel || normalizedCard.includes(normalizedChannel) || normalizedChannel.includes(normalizedCard))) {
+      return card.length >= channel.length ? card : channel
+    }
+    return `${card} · ${channel}`
+  }
   return card || channel || '未知渠道'
+}
+
+function normalizeSchedulerName(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '')
 }
 
 function logStatus(status: SchedulerLog['status']) {
