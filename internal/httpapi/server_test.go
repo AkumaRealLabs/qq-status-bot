@@ -52,12 +52,12 @@ func TestAuthSessionFlow(t *testing.T) {
 		return resp
 	}
 
-	resp := post("/api/setup", `{"username":"admin","password":"secret"}`, nil)
+	resp := post("/api/setup", `{"username":"admin","password":"secret12"}`, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("setup status = %d", resp.StatusCode)
 	}
 	resp.Body.Close()
-	resp = post("/api/auth/login", `{"username":"admin","password":"secret"}`, nil)
+	resp = post("/api/auth/login", `{"username":"admin","password":"secret12"}`, nil)
 	if resp.StatusCode != http.StatusOK || len(resp.Cookies()) == 0 {
 		t.Fatalf("login status=%d cookies=%v", resp.StatusCode, resp.Cookies())
 	}
@@ -92,7 +92,7 @@ func TestDecodeRejectsLargeJSONBody(t *testing.T) {
 	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
 	defer ts.Close()
 
-	body := `{"username":"` + strings.Repeat("a", defaultJSONBodyLimit) + `","password":"secret"}`
+	body := `{"username":"` + strings.Repeat("a", defaultJSONBodyLimit) + `","password":"secret12"}`
 	resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestLoginRateLimit(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
-	if resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(`{"username":"admin","password":"secret"}`)); err != nil {
+	if resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(`{"username":"admin","password":"secret12"}`)); err != nil {
 		t.Fatal(err)
 	} else {
 		resp.Body.Close()
@@ -131,7 +131,7 @@ func TestLoginRateLimit(t *testing.T) {
 			t.Fatalf("attempt %d status = %d", i, resp.StatusCode)
 		}
 	}
-	resp, err := ts.Client().Post(ts.URL+"/api/auth/login", "application/json", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	resp, err := ts.Client().Post(ts.URL+"/api/auth/login", "application/json", strings.NewReader(`{"username":"admin","password":"secret12"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,13 +152,13 @@ func TestSecureCookieBehindHTTPSProxy(t *testing.T) {
 	}
 	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
 	defer ts.Close()
-	if resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(`{"username":"admin","password":"secret"}`)); err != nil {
+	if resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(`{"username":"admin","password":"secret12"}`)); err != nil {
 		t.Fatal(err)
 	} else {
 		resp.Body.Close()
 	}
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", strings.NewReader(`{"username":"admin","password":"secret12"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-Proto", "https")
 	resp, err := ts.Client().Do(req)
@@ -183,7 +183,7 @@ func TestUnsafeMethodRejectsBadOrigin(t *testing.T) {
 	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
 	defer ts.Close()
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/setup", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/setup", strings.NewReader(`{"username":"admin","password":"secret12"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://evil.example")
 	resp, err := ts.Client().Do(req)

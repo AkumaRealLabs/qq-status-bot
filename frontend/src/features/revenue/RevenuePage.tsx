@@ -311,7 +311,12 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
                 <Input value={form.epay_pid} onChange={(e) => update({ epay_pid: e.target.value })} />
               </Field>
               <Field label="Key">
-                <Input type="password" value={form.epay_key} onChange={(e) => update({ epay_key: e.target.value })} />
+                <Input
+                  type="password"
+                  value={form.epay_key}
+                  placeholder={card?.epay_key_set ? '已保存，不修改请留空' : ''}
+                  onChange={(e) => update({ epay_key: e.target.value })}
+                />
               </Field>
             </>
           )}
@@ -321,13 +326,23 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
                 <Input value={form.user_id} onChange={(e) => update({ user_id: e.target.value })} />
               </Field>
               <Field label="管理员 Access Token">
-                <Input type="password" value={form.access_token} onChange={(e) => update({ access_token: e.target.value })} />
+                <Input
+                  type="password"
+                  value={form.access_token}
+                  placeholder={card?.access_token_set ? '已保存，不修改请留空' : ''}
+                  onChange={(e) => update({ access_token: e.target.value })}
+                />
               </Field>
             </>
           )}
           {form.source_type === 'sub2api_orders' && (
             <Field label="管理员 API Key">
-              <Input type="password" value={form.admin_api_key} placeholder="admin-..." onChange={(e) => update({ admin_api_key: e.target.value })} />
+              <Input
+                type="password"
+                value={form.admin_api_key}
+                placeholder={card?.admin_api_key_set ? '已保存，不修改请留空' : 'admin-...'}
+                onChange={(e) => update({ admin_api_key: e.target.value })}
+              />
             </Field>
           )}
           <Field label="启用状态">
@@ -344,7 +359,7 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
         </div>
         <div className="flex flex-wrap justify-end gap-2">
           {card && <IconAction title="删除" onClick={() => confirmDelete(card.name) && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />}
-          <Button onClick={() => save.mutate()} disabled={save.isPending || !formReady(form)}>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || !formReady(form, card)}>
             {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             保存
           </Button>
@@ -392,12 +407,16 @@ function cardPayload(form: RevenueCardForm) {
   }
 }
 
-function formReady(form: RevenueCardForm) {
+function formReady(form: RevenueCardForm, card?: RevenueCard) {
   if (!form.name.trim()) return false
-  if (!form.base_url.trim()) return false
-  if (form.source_type === 'epay_total') return Boolean(form.epay_pid.trim() && form.epay_key.trim())
-  if (form.source_type === 'newapi_orders') return Boolean(form.user_id.trim() && form.access_token.trim())
-  if (form.source_type === 'sub2api_orders') return Boolean(form.admin_api_key.trim())
+  if (!form.base_url.trim() && !card?.base_url) return false
+  if (form.source_type === 'epay_total') {
+    return Boolean((form.epay_pid.trim() || card?.epay_pid) && (form.epay_key.trim() || card?.epay_key_set))
+  }
+  if (form.source_type === 'newapi_orders') {
+    return Boolean((form.user_id.trim() || card?.user_id) && (form.access_token.trim() || card?.access_token_set))
+  }
+  if (form.source_type === 'sub2api_orders') return Boolean(form.admin_api_key.trim() || card?.admin_api_key_set)
   return false
 }
 

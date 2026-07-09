@@ -28,9 +28,10 @@ export function SetupPage({ site, onDone }: { site?: SiteSettings; onDone: () =>
           <Input name="monitor-setup-user" autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} />
         </Field>
         <Field label="密码">
-          <Input name="monitor-setup-pass" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Input name="monitor-setup-pass" type="password" autoComplete="new-password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
-        <Button type="submit" disabled={mutation.isPending}>
+        <p className="text-xs text-muted-foreground">密码至少 8 位</p>
+        <Button type="submit" disabled={mutation.isPending || password.length < 8 || !username.trim()}>
           {mutation.isPending && <Loader2 className="size-4 animate-spin" />}
           创建管理员
         </Button>

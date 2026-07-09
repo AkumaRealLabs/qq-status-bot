@@ -8,10 +8,14 @@ export type Upstream = {
   enabled: boolean
   user_id?: string
   access_token?: string
+  access_token_set?: boolean
   email?: string
   password?: string
+  password_set?: boolean
   sub2api_access_token?: string
+  sub2api_access_token_set?: boolean
   sub2api_refresh_token?: string
+  sub2api_refresh_token_set?: boolean
   balance_rate: number
   low_balance_threshold: number
   last_error?: string
@@ -21,6 +25,7 @@ export type ApiKey = {
   id: string
   upstream_id: string
   name: string
+  key_set?: boolean
   status: string
   description: string
   group: string
@@ -42,6 +47,7 @@ export type ModelCard = {
   name: string
   base_url?: string
   api_key?: string
+  api_key_set?: boolean
   upstream_id?: string
   upstream_name: string
   key_id?: string
@@ -146,6 +152,7 @@ export type PublicMonitorStatus = Omit<MonitorStatus, 'rows'> & {
 export type SettingsData = {
   check_interval_minutes: number
   telegram_bot_token?: string
+  telegram_bot_token_set?: boolean
   telegram_chat_id?: string
   probe_model: string
   site_name: string
@@ -153,6 +160,7 @@ export type SettingsData = {
   epay_base_url: string
   epay_pid: string
   epay_key: string
+  epay_key_set?: boolean
   notification_rules: NotificationRules
 }
 
@@ -169,9 +177,12 @@ export type RevenueCard = {
   base_url?: string
   user_id?: string
   access_token?: string
+  access_token_set?: boolean
   admin_api_key?: string
+  admin_api_key_set?: boolean
   epay_pid?: string
   epay_key?: string
+  epay_key_set?: boolean
   upstream_id?: string
   upstream_name?: string
   enabled: boolean
@@ -267,6 +278,7 @@ export type SchedulerConfig = {
   scheduler_base_url: string
   scheduler_user_id: string
   scheduler_access_token: string
+  scheduler_access_token_set?: boolean
   scheduler_tiers: SchedulerTier[]
 }
 
@@ -363,6 +375,9 @@ export type NotificationRules = {
   enabled: boolean
   event_types: Record<string, boolean>
   failure_threshold: number
+  mute_failure_threshold: number
+  internal_retry_count: number
+  internal_retry_interval_ms: number
   recovery: boolean
 }
 

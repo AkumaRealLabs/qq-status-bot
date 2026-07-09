@@ -36,10 +36,10 @@ func TestSetupOnlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := New(st)
-	if _, err := svc.Setup(t.Context(), "admin", "secret"); err != nil {
+	if _, err := svc.Setup(t.Context(), "admin", "secret12"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Setup(t.Context(), "admin2", "secret"); err == nil {
+	if _, err := svc.Setup(t.Context(), "admin2", "secret12"); err == nil {
 		t.Fatal("second setup succeeded")
 	}
 }
@@ -62,7 +62,7 @@ func TestSetupConcurrentCreatesOneUser(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			if _, err := svc.Setup(t.Context(), "admin"+string(rune('0'+i)), "secret"); err == nil {
+			if _, err := svc.Setup(t.Context(), "admin"+string(rune('0'+i)), "secret12"); err == nil {
 				success <- struct{}{}
 			}
 		}(i)
@@ -1954,8 +1954,15 @@ func TestSaveCardSupportsCustomAndUpstreamKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if custom.BaseURL != "https://api.example.test" || custom.APIKey != "sk-test" || custom.DisplayGroup != "生产" || !custom.PoolEnabled || !custom.PublicEnabled {
+	if custom.BaseURL != "https://api.example.test" || custom.APIKey != "" || !custom.APIKeySet || custom.DisplayGroup != "生产" || !custom.PoolEnabled || !custom.PublicEnabled {
 		t.Fatalf("custom = %+v", custom)
+	}
+	stored, err := st.Card(t.Context(), custom.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.APIKey != "sk-test" {
+		t.Fatalf("stored api key = %q", stored.APIKey)
 	}
 	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "A", Type: "newapi", BaseURL: "https://upstream.test", Enabled: true})
 	if err != nil {

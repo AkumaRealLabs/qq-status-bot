@@ -30,10 +30,7 @@ func (s *Store) UpdateCLIProxyConfig(ctx context.Context, cfg domain.CLIProxyCon
 		cfg.Name = "CLIProxyAPI"
 	}
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-	cfg.ManagementKey = strings.TrimSpace(cfg.ManagementKey)
-	if cfg.ManagementKey == "" {
-		cfg.ManagementKey = old.ManagementKey
-	}
+	cfg.ManagementKey = domain.KeepSecret(cfg.ManagementKey, old.ManagementKey)
 	_, err = s.exec(ctx, `UPDATE settings SET cliproxy_name=?, cliproxy_base_url=?, cliproxy_management_key=?, cliproxy_enabled=? WHERE id='default'`,
 		cfg.Name, cfg.BaseURL, cfg.ManagementKey, boolInt(cfg.Enabled))
 	cfg.ManagementKeySet = cfg.ManagementKey != ""

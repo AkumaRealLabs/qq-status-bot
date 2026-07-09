@@ -277,7 +277,7 @@ func TestOpsStoreCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rules.Enabled || rules.FailureThreshold != 2 || !rules.Recovery || !rules.EventTypes["probe_failed"] || !rules.EventTypes["quota_exhausted"] || rules.EventTypes["probe_internal_error"] {
+	if !rules.Enabled || rules.FailureThreshold != 2 || rules.MuteFailureThreshold != 4 || rules.InternalRetryCount != 1 || rules.InternalRetryIntervalMs != 0 || !rules.Recovery || !rules.EventTypes["probe_failed"] || !rules.EventTypes["quota_exhausted"] || rules.EventTypes["probe_internal_error"] {
 		t.Fatalf("default rules = %+v", rules)
 	}
 	rules.Enabled = false

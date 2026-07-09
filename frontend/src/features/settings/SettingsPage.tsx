@@ -88,7 +88,12 @@ export function SettingsPage() {
             <Input type="number" value={data.check_interval_minutes} onChange={(e) => setForm({ ...data, check_interval_minutes: Number(e.target.value) })} />
           </Field>
           <Field label="Telegram Bot Token">
-            <Input value={data.telegram_bot_token ?? ''} onChange={(e) => setForm({ ...data, telegram_bot_token: e.target.value })} />
+            <Input
+              type="password"
+              value={data.telegram_bot_token ?? ''}
+              placeholder={data.telegram_bot_token_set ? '已保存，不修改请留空' : ''}
+              onChange={(e) => setForm({ ...data, telegram_bot_token: e.target.value })}
+            />
           </Field>
           <Field label="Telegram Chat ID">
             <Input value={data.telegram_chat_id ?? ''} onChange={(e) => setForm({ ...data, telegram_chat_id: e.target.value })} />

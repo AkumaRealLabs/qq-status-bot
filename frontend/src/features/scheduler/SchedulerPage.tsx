@@ -27,7 +27,7 @@ export function SchedulerPage() {
   const cfg = useQuery({ queryKey: ['scheduler', 'config'], queryFn: () => api<SchedulerConfig>('/api/scheduler/config') })
   const cards = useQuery({ queryKey: ['cards'], queryFn: () => api<ModelCard[]>('/api/cards') })
   const logs = useQuery({ queryKey: ['scheduler', 'logs'], queryFn: () => api<SchedulerLog[]>('/api/scheduler/logs?limit=50') })
-  const configured = Boolean(cfg.data?.scheduler_base_url && cfg.data.scheduler_user_id && cfg.data.scheduler_access_token)
+  const configured = Boolean(cfg.data?.scheduler_base_url && cfg.data.scheduler_user_id && cfg.data.scheduler_access_token_set)
   const groups = useQuery({
     queryKey: ['scheduler', 'groups'],
     queryFn: () => api<SchedulerGroup[]>('/api/scheduler/groups'),
@@ -334,7 +334,12 @@ function SchedulerConfigDialog({
             <Input value={form.scheduler_user_id} onChange={(e) => onChange({ scheduler_user_id: e.target.value })} />
           </Field>
           <Field label="Access Token">
-            <Input type="password" value={form.scheduler_access_token} onChange={(e) => onChange({ scheduler_access_token: e.target.value })} />
+            <Input
+              type="password"
+              value={form.scheduler_access_token}
+              placeholder={form.scheduler_access_token_set ? '已保存，不修改请留空' : ''}
+              onChange={(e) => onChange({ scheduler_access_token: e.target.value })}
+            />
           </Field>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">

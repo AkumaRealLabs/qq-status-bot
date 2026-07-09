@@ -1,0 +1,109 @@
+package domain
+
+import "strings"
+
+// KeepSecret keeps the stored value when the request leaves the secret empty.
+// Empty input means "do not change"; non-empty input replaces the secret.
+func KeepSecret(in, old string) string {
+	in = strings.TrimSpace(in)
+	if in == "" {
+		return old
+	}
+	return in
+}
+
+func secretSet(v string) bool {
+	return strings.TrimSpace(v) != ""
+}
+
+func (u Upstream) Public() Upstream {
+	out := u
+	out.AccessTokenSet = secretSet(u.AccessToken)
+	out.PasswordSet = secretSet(u.Password)
+	out.Sub2APIAccessTokenSet = secretSet(u.Sub2APIAccessToken)
+	out.Sub2APIRefreshTokenSet = secretSet(u.Sub2APIRefreshToken)
+	out.AccessToken = ""
+	out.Password = ""
+	out.Sub2APIAccessToken = ""
+	out.Sub2APIRefreshToken = ""
+	return out
+}
+
+func (k APIKey) Public() APIKey {
+	out := k
+	out.KeySet = secretSet(k.Key)
+	out.Key = ""
+	return out
+}
+
+func PublicAPIKeys(keys []APIKey) []APIKey {
+	out := make([]APIKey, len(keys))
+	for i, k := range keys {
+		out[i] = k.Public()
+	}
+	return out
+}
+
+func (c ModelCard) Public() ModelCard {
+	out := c
+	out.APIKeySet = secretSet(c.APIKey)
+	out.APIKey = ""
+	return out
+}
+
+func PublicModelCards(cards []ModelCard) []ModelCard {
+	out := make([]ModelCard, len(cards))
+	for i, c := range cards {
+		out[i] = c.Public()
+	}
+	return out
+}
+
+func (s Settings) Public() Settings {
+	out := s
+	out.TelegramBotTokenSet = secretSet(s.TelegramBotToken)
+	out.EpayKeySet = secretSet(s.EpayKey)
+	out.TelegramBotToken = ""
+	out.EpayKey = ""
+	return out
+}
+
+func (c SchedulerConfig) Public() SchedulerConfig {
+	out := c
+	out.AccessTokenSet = secretSet(c.AccessToken)
+	out.AccessToken = ""
+	return out
+}
+
+func (c RevenueCard) Public() RevenueCard {
+	out := c
+	out.AccessTokenSet = secretSet(c.AccessToken)
+	out.AdminAPIKeySet = secretSet(c.AdminAPIKey)
+	out.EpayKeySet = secretSet(c.EpayKey)
+	out.AccessToken = ""
+	out.AdminAPIKey = ""
+	out.EpayKey = ""
+	return out
+}
+
+func PublicRevenueCards(cards []RevenueCard) []RevenueCard {
+	out := make([]RevenueCard, len(cards))
+	for i, c := range cards {
+		out[i] = c.Public()
+	}
+	return out
+}
+
+func (r RevenueRow) Public() RevenueRow {
+	out := r
+	out.RevenueCard = r.RevenueCard.Public()
+	return out
+}
+
+func PublicRevenueRows(rows []RevenueRow) []RevenueRow {
+	out := make([]RevenueRow, len(rows))
+	for i, r := range rows {
+		out[i] = r.Public()
+	}
+	return out
+}

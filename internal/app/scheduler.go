@@ -21,7 +21,8 @@ import (
 var errSchedulerNotConfigured = errors.New("scheduler not configured")
 
 func (s *Service) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, error) {
-	return s.Store.SchedulerConfig(ctx)
+	cfg, err := s.Store.SchedulerConfig(ctx)
+	return cfg.Public(), err
 }
 
 func (s *Service) SaveSchedulerConfig(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerConfig, error) {
@@ -32,7 +33,7 @@ func (s *Service) SaveSchedulerConfig(ctx context.Context, cfg domain.SchedulerC
 	if err == nil {
 		err = s.recordCurrentSaleSnapshots(ctx)
 	}
-	return out, err
+	return out.Public(), err
 }
 
 func (s *Service) SeedSchedulerSnapshots(ctx context.Context) error {
@@ -361,14 +362,15 @@ func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID stri
 	}
 	card.SchedulerAutoDisabled = false
 	s.logSchedulerAction(ctx, card, schedulerAction(status), "success", schedulerManualMessage(status))
-	return card, nil
+	return card.Public(), nil
 }
 
 func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {
 	if !card.PoolEnabled || card.SchedulerChannelID == "" {
 		return nil
 	}
-	if !success && failures == probeMuteFailureThreshold {
+	muteAt := s.probeMuteFailureThreshold(ctx)
+	if !success && failures == muteAt {
 		if card.SchedulerAutoDisabled {
 			return nil
 		}
@@ -384,7 +386,7 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
 			return err
 		}
-		s.logSchedulerAction(ctx, card, "disable", "success", "连续失败 4 次，已关闭调度器渠道")
+		s.logSchedulerAction(ctx, card, "disable", "success", fmt.Sprintf("连续失败 %d 次，已关闭调度器渠道", muteAt))
 		return nil
 	}
 	if success && card.SchedulerAutoDisabled && s.schedulerRestoreReady(ctx, card) {

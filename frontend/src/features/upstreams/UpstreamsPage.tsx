@@ -511,7 +511,12 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
                 <Input value={form.user_id ?? ''} onChange={(e) => update({ user_id: e.target.value })} />
               </Field>
               <Field label="Access Token">
-                <Input value={form.access_token ?? ''} onChange={(e) => update({ access_token: e.target.value })} />
+                <Input
+                  type="password"
+                  value={form.access_token ?? ''}
+                  placeholder={form.access_token_set ? '已保存，不修改请留空' : ''}
+                  onChange={(e) => update({ access_token: e.target.value })}
+                />
               </Field>
             </>
           )}

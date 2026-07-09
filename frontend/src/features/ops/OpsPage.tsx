@@ -252,7 +252,10 @@ function NotificationsTab() {
   })
   const test = useMutation({ mutationFn: () => api('/api/ops/notifications/test', { method: 'POST', body: '{}' }), onError: (error) => window.alert(errorMessage(error)) })
   if (!data) return <ShellLoading />
-  const update = (patch: Partial<NotificationRules>) => setDraft({ ...data, ...patch })
+  const muteThreshold = data.mute_failure_threshold > 0 ? data.mute_failure_threshold : 4
+  const internalRetries = data.internal_retry_count > 0 ? data.internal_retry_count : 1
+  const retryIntervalMs = data.internal_retry_interval_ms >= 0 ? data.internal_retry_interval_ms : 0
+  const update = (patch: Partial<NotificationRules>) => setDraft({ ...data, mute_failure_threshold: muteThreshold, internal_retry_count: internalRetries, internal_retry_interval_ms: retryIntervalMs, ...patch })
   return (
     <section className="grid max-w-2xl gap-3">
       <FormError error={q.error || save.error} />
@@ -265,8 +268,19 @@ function NotificationsTab() {
               <SelectContent><SelectItem value="true">启用</SelectItem><SelectItem value="false">停用</SelectItem></SelectContent>
             </Select>
           </Field>
-          <Field label="失败次数阈值">
+          <Field label="告警失败次数阈值">
             <Input type="number" min={1} value={data.failure_threshold} onChange={(event) => update({ failure_threshold: Number(event.target.value) })} />
+          </Field>
+          <Field label="静默/自动关渠阈值">
+            <Input type="number" min={1} value={muteThreshold} onChange={(event) => update({ mute_failure_threshold: Number(event.target.value) })} />
+            <p className="text-xs text-muted-foreground">连续失败达到该次数时发送失败告警并自动关闭调度渠道；之后静默直到恢复。</p>
+          </Field>
+          <Field label="本地错误内部重试次数">
+            <Input type="number" min={1} max={5} value={internalRetries} onChange={(event) => update({ internal_retry_count: Number(event.target.value) })} />
+            <p className="text-xs text-muted-foreground">仅对本地/内部探测错误重试；上游业务失败不重试。默认 1。</p>
+          </Field>
+          <Field label="内部重试间隔 (ms)">
+            <Input type="number" min={0} max={30000} step={100} value={retryIntervalMs} onChange={(event) => update({ internal_retry_interval_ms: Number(event.target.value) })} />
           </Field>
           <Field label="恢复通知">
             <Select value={data.recovery ? 'true' : 'false'} onValueChange={(value) => update({ recovery: value === 'true' })}>

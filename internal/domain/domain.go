@@ -9,23 +9,27 @@ import (
 const ProbeModel = "gpt-5.5"
 
 type Upstream struct {
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	Type                string    `json:"type"`
-	BaseURL             string    `json:"base_url"`
-	Enabled             bool      `json:"enabled"`
-	UserID              string    `json:"user_id,omitempty"`
-	AccessToken         string    `json:"access_token,omitempty"`
-	Email               string    `json:"email,omitempty"`
-	Password            string    `json:"password,omitempty"`
-	Sub2APIAccessToken  string    `json:"sub2api_access_token,omitempty"`
-	Sub2APIRefreshToken string    `json:"sub2api_refresh_token,omitempty"`
-	BalanceRate         float64   `json:"balance_rate"`
-	LowBalanceThreshold float64   `json:"low_balance_threshold"`
-	LastError           string    `json:"last_error"`
-	FailureCount        int       `json:"failure_count"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ID                     string    `json:"id"`
+	Name                   string    `json:"name"`
+	Type                   string    `json:"type"`
+	BaseURL                string    `json:"base_url"`
+	Enabled                bool      `json:"enabled"`
+	UserID                 string    `json:"user_id,omitempty"`
+	AccessToken            string    `json:"access_token,omitempty"`
+	AccessTokenSet         bool      `json:"access_token_set,omitempty"`
+	Email                  string    `json:"email,omitempty"`
+	Password               string    `json:"password,omitempty"`
+	PasswordSet            bool      `json:"password_set,omitempty"`
+	Sub2APIAccessToken     string    `json:"sub2api_access_token,omitempty"`
+	Sub2APIAccessTokenSet  bool      `json:"sub2api_access_token_set,omitempty"`
+	Sub2APIRefreshToken    string    `json:"sub2api_refresh_token,omitempty"`
+	Sub2APIRefreshTokenSet bool      `json:"sub2api_refresh_token_set,omitempty"`
+	BalanceRate            float64   `json:"balance_rate"`
+	LowBalanceThreshold    float64   `json:"low_balance_threshold"`
+	LastError              string    `json:"last_error"`
+	FailureCount           int       `json:"failure_count"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 type APIKey struct {
@@ -34,6 +38,7 @@ type APIKey struct {
 	RemoteID    string    `json:"remote_id"`
 	Name        string    `json:"name"`
 	Key         string    `json:"key,omitempty"`
+	KeySet      bool      `json:"key_set,omitempty"`
 	Status      string    `json:"status"`
 	Description string    `json:"description"`
 	Group       string    `json:"group"`
@@ -49,6 +54,7 @@ type ModelCard struct {
 	Name                    string     `json:"name"`
 	BaseURL                 string     `json:"base_url,omitempty"`
 	APIKey                  string     `json:"api_key,omitempty"`
+	APIKeySet               bool       `json:"api_key_set,omitempty"`
 	UpstreamID              string     `json:"upstream_id,omitempty"`
 	UpstreamName            string     `json:"upstream_name,omitempty"`
 	Type                    string     `json:"type,omitempty"`
@@ -150,6 +156,7 @@ type BalanceRechargeLog struct {
 type Settings struct {
 	CheckIntervalMinutes int               `json:"check_interval_minutes"`
 	TelegramBotToken     string            `json:"telegram_bot_token,omitempty"`
+	TelegramBotTokenSet  bool              `json:"telegram_bot_token_set,omitempty"`
 	TelegramChatID       string            `json:"telegram_chat_id,omitempty"`
 	ProbeModel           string            `json:"probe_model"`
 	SiteName             string            `json:"site_name"`
@@ -157,14 +164,16 @@ type Settings struct {
 	EpayBaseURL          string            `json:"epay_base_url"`
 	EpayPID              string            `json:"epay_pid"`
 	EpayKey              string            `json:"epay_key"`
+	EpayKeySet           bool              `json:"epay_key_set,omitempty"`
 	NotificationRules    NotificationRules `json:"notification_rules"`
 }
 
 type SchedulerConfig struct {
-	BaseURL     string          `json:"scheduler_base_url"`
-	UserID      string          `json:"scheduler_user_id"`
-	AccessToken string          `json:"scheduler_access_token"`
-	Tiers       []SchedulerTier `json:"scheduler_tiers"`
+	BaseURL        string          `json:"scheduler_base_url"`
+	UserID         string          `json:"scheduler_user_id"`
+	AccessToken    string          `json:"scheduler_access_token"`
+	AccessTokenSet bool            `json:"scheduler_access_token_set,omitempty"`
+	Tiers          []SchedulerTier `json:"scheduler_tiers"`
 }
 
 type SchedulerTier struct {
@@ -304,21 +313,24 @@ type SchedulerGroupSaleSnapshot struct {
 }
 
 type RevenueCard struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	SourceType   string    `json:"source_type"`
-	BaseURL      string    `json:"base_url,omitempty"`
-	UserID       string    `json:"user_id,omitempty"`
-	AccessToken  string    `json:"access_token,omitempty"`
-	AdminAPIKey  string    `json:"admin_api_key,omitempty"`
-	EpayPID      string    `json:"epay_pid,omitempty"`
-	EpayKey      string    `json:"epay_key,omitempty"`
-	UpstreamID   string    `json:"upstream_id,omitempty"`
-	UpstreamName string    `json:"upstream_name,omitempty"`
-	Enabled      bool      `json:"enabled"`
-	SortOrder    int       `json:"sort_order"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	SourceType      string    `json:"source_type"`
+	BaseURL         string    `json:"base_url,omitempty"`
+	UserID          string    `json:"user_id,omitempty"`
+	AccessToken     string    `json:"access_token,omitempty"`
+	AccessTokenSet  bool      `json:"access_token_set,omitempty"`
+	AdminAPIKey     string    `json:"admin_api_key,omitempty"`
+	AdminAPIKeySet  bool      `json:"admin_api_key_set,omitempty"`
+	EpayPID         string    `json:"epay_pid,omitempty"`
+	EpayKey         string    `json:"epay_key,omitempty"`
+	EpayKeySet      bool      `json:"epay_key_set,omitempty"`
+	UpstreamID      string    `json:"upstream_id,omitempty"`
+	UpstreamName    string    `json:"upstream_name,omitempty"`
+	Enabled         bool      `json:"enabled"`
+	SortOrder       int       `json:"sort_order"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type RevenueRow struct {
