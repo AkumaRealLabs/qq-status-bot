@@ -218,7 +218,7 @@ export function SchedulerPage() {
                             <StatusBadge ok={badge.ok} okText={badge.text} failText={badge.text} />
                           </div>
                         </CardHeader>
-                        <CardContent className="grid h-full content-start gap-3">
+                        <CardContent className="grid h-full grid-rows-[auto_auto_1fr] gap-3">
                           <div className="grid grid-cols-2 gap-2">
                             <InfoCell label="上游 Key 原始分组" value={originalKeyGroup(card)} />
                             <InfoCell label="上游成本" value={upstreamCost(card)} />
@@ -246,7 +246,7 @@ export function SchedulerPage() {
                           <Button
                             variant={!canToggle ? 'outline' : nextStatus === 1 ? 'default' : 'danger'}
                             size="sm"
-                            className={cn(canToggle && nextStatus === 1 && 'bg-success text-primary-foreground hover:bg-success/90 focus-visible:ring-success/20')}
+                            className={cn('self-end', canToggle && nextStatus === 1 && 'bg-success text-primary-foreground hover:bg-success/90 focus-visible:ring-success/20')}
                             disabled={!card.scheduler_channel_id || !canToggle || setStatus.isPending}
                             onClick={() => setStatus.mutate({ card, status: nextStatus })}
                           >

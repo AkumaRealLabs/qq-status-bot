@@ -530,6 +530,139 @@ func TestApplySchedulerGroupsKeepsManualGroupsAndCountsUnchanged(t *testing.T) {
 	}
 }
 
+func TestApplySchedulerGroupsClearsEmptyTargetGroup(t *testing.T) {
+	currentGroups := map[int]string{9: "gpt_stable"}
+	var puts int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/channel/" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
+				{"id": 9, "name": "expensive", "group": currentGroups[9]},
+			}}})
+		case http.MethodPut:
+			var body struct {
+				ID    int    `json:"id"`
+				Group string `json:"group"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			currentGroups[body.ID] = body.Group
+			puts++
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "A", Type: "newapi", BaseURL: "https://api.example.test", BalanceRate: 1, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveKeys(t.Context(), u.ID, []monitor.APIKey{{RemoteID: "expensive", Name: "expensive", GroupRatio: "0.5"}}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := st.ListKeys(t.Context(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "expensive", UpstreamID: u.ID, KeyID: keys[0].ID, SchedulerChannelID: "9", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
+		BaseURL: ts.URL, UserID: "42", AccessToken: "token",
+		Tiers: []domain.SchedulerTier{{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0.1, PriceMax: 0.15, SalePrice: 0.25}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := svc.ApplySchedulerGroups(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs, err := svc.SchedulerLogs(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Updated != 1 || out.Skipped != 0 || puts != 1 || currentGroups[9] != "" || len(logs) != 1 || !strings.Contains(logs[0].Message, "expensive: gpt_stable ->") {
+		t.Fatalf("out=%+v puts=%d logs=%+v", out, puts, logs)
+	}
+}
+
+func TestApplySchedulerGroupsDoesNotLogWhenClearIsIgnored(t *testing.T) {
+	var puts int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/channel/" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
+				{"id": 9, "name": "expensive", "group": "gpt_stable"},
+			}}})
+		case http.MethodPut:
+			puts++
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	u, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "A", Type: "newapi", BaseURL: "https://api.example.test", BalanceRate: 1, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveKeys(t.Context(), u.ID, []monitor.APIKey{{RemoteID: "expensive", Name: "expensive", GroupRatio: "0.5"}}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := st.ListKeys(t.Context(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "expensive", UpstreamID: u.ID, KeyID: keys[0].ID, SchedulerChannelID: "9", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{
+		BaseURL: ts.URL, UserID: "42", AccessToken: "token",
+		Tiers: []domain.SchedulerTier{{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0.1, PriceMax: 0.15, SalePrice: 0.25}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := svc.ApplySchedulerGroups(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs, err := svc.SchedulerLogs(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Updated != 0 || out.Skipped != 1 || puts != 1 || len(logs) != 0 {
+		t.Fatalf("out=%+v puts=%d logs=%+v", out, puts, logs)
+	}
+}
+
 func TestCheckAllSyncsSchedulerGroupsOnce(t *testing.T) {
 	var channelGets, channelPuts, tokenHits int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

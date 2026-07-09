@@ -280,6 +280,16 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 		if err := s.setSchedulerChannelGroup(ctx, cfg, card.SchedulerChannelID, group); err != nil {
 			return out, err
 		}
+		if group == "" {
+			actual, found, err := s.schedulerChannelGroup(ctx, cfg, card.SchedulerChannelID)
+			if err != nil {
+				return out, err
+			}
+			if !found || !schedulerSameGroups(schedulerSplitGroups(actual), groups) {
+				out.Skipped++
+				continue
+			}
+		}
 		changes = append(changes, fmt.Sprintf("%s: %s -> %s", firstNonEmpty(channelNames[card.SchedulerChannelID], card.SchedulerChannelName, card.SchedulerChannelID), firstNonEmpty(current, "-"), group))
 		out.Updated++
 	}
@@ -291,6 +301,19 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 		})
 	}
 	return out, nil
+}
+
+func (s *Service) schedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID string) (string, bool, error) {
+	channels, err := s.fetchSchedulerChannels(ctx, cfg, "")
+	if err != nil {
+		return "", false, err
+	}
+	for _, channel := range channels {
+		if channel.ID == channelID {
+			return channel.Group, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 func schedulerGroupSyncMessage(out domain.SchedulerApplyResult, changes []string) string {
