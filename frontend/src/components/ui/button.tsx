@@ -4,7 +4,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const variants = cva(
-  'inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-sm px-5 text-sm font-medium leading-none text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:pointer-events-none disabled:bg-primary-disabled disabled:text-muted-foreground disabled:opacity-100 [&_svg]:pointer-events-none [&_svg:not([class*=size-])]:size-4',
+  'inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md px-5 text-sm font-medium leading-none text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:pointer-events-none disabled:bg-primary-disabled disabled:text-muted-foreground disabled:opacity-100 [&_svg]:pointer-events-none [&_svg:not([class*=size-])]:size-4',
   {
     variants: {
       variant: {
@@ -16,7 +16,7 @@ const variants = cva(
       },
       size: {
         default: 'h-10 px-5',
-        sm: 'h-9 gap-1.5 px-3 text-sm',
+        sm: 'h-9 gap-1.5 rounded-md px-3 text-sm',
         icon: 'size-9 rounded-full px-0',
       },
     },

@@ -1,21 +1,44 @@
 import { useState, type CSSProperties, type ElementType, type ReactNode } from 'react'
-import { CheckCircle2, Loader2, XCircle } from 'lucide-react'
+import { CheckCircle2, Loader2, Save, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { feedbackTone } from '@/lib/feedback'
 import { errorMessage } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 const windows = ['1h', '3h', '5h', '1d', '7d', '15d']
 
-export function FormError({ error }: { error: unknown }) {
-  if (!error) return null
+export function InlineMessage({
+  message,
+  tone = 'neutral',
+  className,
+}: {
+  message: string
+  tone?: 'neutral' | 'success' | 'error' | 'warning'
+  className?: string
+}) {
+  if (!message) return null
   return (
-    <div className="min-w-0 animate-in break-words rounded-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive fade-in slide-in-from-top-1">
-      {errorMessage(error)}
+    <div
+      className={cn(
+        'min-w-0 animate-in break-words rounded-md border px-3 py-2 text-sm fade-in slide-in-from-top-1',
+        tone === 'error' && 'border-destructive/30 bg-destructive/10 text-destructive',
+        tone === 'success' && 'border-success/30 bg-success/10 text-success',
+        tone === 'warning' && 'border-warning/30 bg-warning/10 text-warning',
+        tone === 'neutral' && 'border-border bg-secondary text-muted-foreground',
+        className,
+      )}
+    >
+      {message}
     </div>
   )
+}
+
+export function FormError({ error }: { error: unknown }) {
+  if (!error) return null
+  return <InlineMessage message={errorMessage(error)} tone="error" />
 }
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -30,7 +53,7 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 export function Metric({ label, value, accent }: { label: string; value: ReactNode; accent?: 'success' | 'danger' }) {
   return (
     <Card className="gap-1.5 bg-card py-3">
-      <CardContent className="px-3.5">
+      <CardContent className="px-4">
         <div className="text-xs text-muted-foreground">{label}</div>
         <div className={cn('font-display mt-0.5 break-words text-2xl font-normal', accent === 'success' && 'text-success', accent === 'danger' && 'text-destructive')}>
           {value}
@@ -42,7 +65,7 @@ export function Metric({ label, value, accent }: { label: string; value: ReactNo
 
 export function MiniStat({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="min-w-0 rounded-sm border border-border bg-background px-2.5 py-1.5">
+    <div className="min-w-0 rounded-md border border-border bg-background px-2.5 py-1.5">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-sm font-medium">{value}</div>
     </div>
@@ -114,7 +137,7 @@ export function HoverText({
       {children ?? <span data-hover-text className="block truncate">{text}</span>}
       {text !== '-' && showTooltip && (
         <span
-          className="pointer-events-none fixed z-50 w-max min-w-56 max-w-[min(520px,calc(100vw-32px))] rounded-md border border-border bg-popover text-left text-popover-foreground shadow-lg"
+          className="pointer-events-none fixed z-50 w-max min-w-56 max-w-[min(520px,calc(100vw-32px))] rounded-md border border-border bg-popover text-left text-popover-foreground shadow-[0_1px_3px_rgba(20,20,19,0.08)]"
           style={tooltipStyle}
         >
           {content ?? <span className="block whitespace-pre-wrap break-words px-3 py-2 text-sm leading-[1.55]">{text}</span>}
@@ -139,7 +162,7 @@ export function StatusBadge({ ok, okText, failText }: { ok: boolean; okText: str
 
 export function WindowSelect({ value, setValue }: { value: string; setValue: (value: string) => void }) {
   return (
-    <div className="max-w-full overflow-x-auto rounded-sm border border-border bg-background">
+    <div className="max-w-full overflow-x-auto rounded-md border border-border bg-background">
       <div className="flex min-w-max">
         {windows.map((item) => (
           <button
@@ -175,5 +198,81 @@ export function IconAction({
       {pending ? <Loader2 className="size-4 animate-spin" /> : <Icon className="size-4" />}
       <span className="sr-only">{title}</span>
     </Button>
+  )
+}
+
+/** Footer row for dialogs / forms: right-aligned actions. */
+export function ActionRow({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn('flex flex-wrap items-center justify-end gap-2', className)}>{children}</div>
+}
+
+/**
+ * Primary save button with pending / success labels.
+ * Pass `message === successLabel` (default 已保存) to flip label after success.
+ */
+export function SaveButton({
+  onClick,
+  pending,
+  disabled,
+  message = '',
+  label = '保存',
+  pendingLabel = '保存中...',
+  successLabel = '已保存',
+  icon: Icon = Save,
+  className,
+}: {
+  onClick: () => void
+  pending: boolean
+  disabled?: boolean
+  message?: string
+  label?: string
+  pendingLabel?: string
+  successLabel?: string
+  icon?: ElementType
+  className?: string
+}) {
+  const done = !pending && message === successLabel
+  return (
+    <Button onClick={onClick} disabled={pending || disabled} className={className}>
+      {pending ? <Loader2 className="size-4 animate-spin" /> : <Icon className="size-4" />}
+      {pending ? pendingLabel : done ? successLabel : label}
+    </Button>
+  )
+}
+
+/** InlineMessage + common tone derivation for action feedback. */
+export function FeedbackBanner({
+  message,
+  error,
+  success = '已保存',
+  className,
+}: {
+  message: string
+  error?: boolean
+  success?: string | string[]
+  className?: string
+}) {
+  return <InlineMessage message={message} tone={feedbackTone(message, { error, success })} className={className} />
+}
+
+/** Shared bordered scroll table shell used by ops / pools / revenue. */
+export function DataTable({
+  minWidthClass,
+  head,
+  children,
+  className,
+}: {
+  minWidthClass?: string
+  head: ReactNode
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn('overflow-x-auto rounded-md border border-border', className)}>
+      <table className={cn('w-full text-left text-sm', minWidthClass)}>
+        <thead className="bg-secondary text-xs text-muted-foreground">{head}</thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
   )
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, Loader2, RefreshCcw, RotateCcw, Save, Settings2, Trash2, Upload } from 'lucide-react'
-import { EmptyPanel, Field, FormError, IconAction, Metric } from '@/components/common'
+import { Download, Loader2, RefreshCcw, RotateCcw, Settings2, Trash2, Upload } from 'lucide-react'
+import { ActionRow, DataTable, EmptyPanel, Field, FormError, FeedbackBanner, IconAction, Metric, SaveButton } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/
 import { Input, Textarea } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api, ApiError } from '@/lib/api'
-import { errorMessage, fmtTime } from '@/lib/format'
+import { errorMessage, fmtShortTime, fmtTime } from '@/lib/format'
+import { alertError, closeAfterSave, confirmDelete, secretPlaceholder, useFeedback } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
 import type { CLIProxyAccount, CLIProxyConfig, CLIProxyQuota, CLIProxyQuotaWindow } from '@/types'
 
@@ -41,14 +42,14 @@ export function CLIProxyPoolPage() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['cliproxy', 'accounts'] })
     },
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
   })
   const reset = useMutation({
     mutationFn: (name: string) => api(`/api/pools/cliproxy/accounts/${encodeURIComponent(name)}/reset-quota`, { method: 'POST', body: JSON.stringify({}) }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['cliproxy', 'accounts'] })
     },
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
   })
 
   if (cfg.isLoading) return <ShellLoading />
@@ -83,67 +84,65 @@ export function CLIProxyPoolPage() {
       {configured && rows.length > 0 && (
         <Card className="min-w-0 bg-card">
           <CardContent>
-            <div className="overflow-x-auto rounded-sm border border-border">
-              <table className="w-full min-w-[1360px] text-left text-sm">
-                <thead className="bg-secondary text-xs text-muted-foreground">
-                  <tr>
-                    <th className="w-64 whitespace-nowrap px-3 py-2 font-medium">文件</th>
-                    <th className="w-28 whitespace-nowrap px-3 py-2 font-medium">状态</th>
-                    <th className="w-64 whitespace-nowrap px-3 py-2 font-medium">账号</th>
-                    <th className="w-32 whitespace-nowrap px-3 py-2 font-medium">类型</th>
-                    <th className="w-72 whitespace-nowrap px-3 py-2 font-medium">额度</th>
-                    <th className="w-24 whitespace-nowrap px-3 py-2 font-medium">成功/失败</th>
-                    <th className="w-40 whitespace-nowrap px-3 py-2 font-medium">更新时间</th>
-                    <th className="w-36 whitespace-nowrap px-3 py-2 text-right font-medium">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((account) => (
-                    <tr key={account.name} className="border-t border-border align-top">
-                      <td className="w-64 max-w-64 px-3 py-2">
-                        <div className="truncate font-medium text-foreground">{account.name}</div>
-                        <div className="truncate text-xs text-muted-foreground">{account.auth_index ? `#${account.auth_index}` : sizeText(account.size)}</div>
-                      </td>
-                      <td className="w-28 whitespace-nowrap px-3 py-2">
-                        <AccountBadge account={account} />
-                        {account.status_message && <div className="mt-1 max-w-56 truncate text-xs text-muted-foreground">{account.status_message}</div>}
-                      </td>
-                      <td className="w-64 max-w-64 px-3 py-2">
-                        <div className="truncate">{account.email || account.account || '-'}</div>
-                        {account.source && <div className="truncate text-xs text-muted-foreground">{account.source}</div>}
-                      </td>
-                      <td className="w-32 whitespace-nowrap px-3 py-2">
-                        <div className="truncate">{account.provider || account.type || '-'}</div>
-                        <div className="truncate text-xs text-muted-foreground">{account.account_type || '-'}</div>
-                      </td>
-                      <td className="w-72 px-3 py-2">
-                        <AccountQuota account={account} refreshToken={quotaRefreshToken} />
-                      </td>
-                      <td className="w-24 whitespace-nowrap px-3 py-2">
-                        <span className="text-success">{account.success ?? 0}</span>
-                        <span className="text-muted-foreground"> / </span>
-                        <span className={cn((account.failed ?? 0) > 0 && 'text-destructive')}>{account.failed ?? 0}</span>
-                      </td>
-                      <td className="w-40 whitespace-nowrap px-3 py-2 text-muted-foreground">{fmtTime(account.updated_at || account.modtime || account.last_refresh)}</td>
-                      <td className="w-36 whitespace-nowrap px-3 py-2">
-                        <div className="flex justify-end gap-1.5">
-                          <IconAction title="下载" icon={Download} pending={false} onClick={() => void downloadAccount(account.name).catch((error) => window.alert(errorMessage(error)))} />
-                          <IconAction
-                            title="重置额度"
-                            icon={RotateCcw}
-                            pending={reset.isPending}
-                            disabled={!account.auth_index}
-                            onClick={() => account.auth_index && reset.mutate(account.name)}
-                          />
-                          <IconAction title="删除" icon={Trash2} pending={remove.isPending} danger onClick={() => confirmDelete(account.name) && remove.mutate(account.name)} />
-                        </div>
-                        {!account.auth_index && <div className="mt-1 text-right text-xs text-muted-foreground">无 auth_index</div>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              minWidthClass="min-w-[1360px]"
+              head={
+                <tr>
+                  <th className="w-64 whitespace-nowrap px-3 py-2 font-medium">文件</th>
+                  <th className="w-28 whitespace-nowrap px-3 py-2 font-medium">状态</th>
+                  <th className="w-64 whitespace-nowrap px-3 py-2 font-medium">账号</th>
+                  <th className="w-32 whitespace-nowrap px-3 py-2 font-medium">类型</th>
+                  <th className="w-72 whitespace-nowrap px-3 py-2 font-medium">额度</th>
+                  <th className="w-24 whitespace-nowrap px-3 py-2 font-medium">成功/失败</th>
+                  <th className="w-40 whitespace-nowrap px-3 py-2 font-medium">更新时间</th>
+                  <th className="w-36 whitespace-nowrap px-3 py-2 text-right font-medium">操作</th>
+                </tr>
+              }
+            >
+              {rows.map((account) => (
+                <tr key={account.name} className="border-t border-border align-top">
+                  <td className="w-64 max-w-64 px-3 py-2">
+                    <div className="truncate font-medium text-foreground">{account.name}</div>
+                    <div className="truncate text-xs text-muted-foreground">{account.auth_index ? `#${account.auth_index}` : sizeText(account.size)}</div>
+                  </td>
+                  <td className="w-28 whitespace-nowrap px-3 py-2">
+                    <AccountBadge account={account} />
+                    {account.status_message && <div className="mt-1 max-w-56 truncate text-xs text-muted-foreground">{account.status_message}</div>}
+                  </td>
+                  <td className="w-64 max-w-64 px-3 py-2">
+                    <div className="truncate">{account.email || account.account || '-'}</div>
+                    {account.source && <div className="truncate text-xs text-muted-foreground">{account.source}</div>}
+                  </td>
+                  <td className="w-32 whitespace-nowrap px-3 py-2">
+                    <div className="truncate">{account.provider || account.type || '-'}</div>
+                    <div className="truncate text-xs text-muted-foreground">{account.account_type || '-'}</div>
+                  </td>
+                  <td className="w-72 px-3 py-2">
+                    <AccountQuota account={account} refreshToken={quotaRefreshToken} />
+                  </td>
+                  <td className="w-24 whitespace-nowrap px-3 py-2">
+                    <span className="text-success">{account.success ?? 0}</span>
+                    <span className="text-muted-foreground"> / </span>
+                    <span className={cn((account.failed ?? 0) > 0 && 'text-destructive')}>{account.failed ?? 0}</span>
+                  </td>
+                  <td className="w-40 whitespace-nowrap px-3 py-2 text-muted-foreground">{fmtTime(account.updated_at || account.modtime || account.last_refresh)}</td>
+                  <td className="w-36 whitespace-nowrap px-3 py-2">
+                    <div className="flex justify-end gap-1.5">
+                      <IconAction title="下载" icon={Download} pending={false} onClick={() => void downloadAccount(account.name).catch(alertError)} />
+                      <IconAction
+                        title="重置额度"
+                        icon={RotateCcw}
+                        pending={reset.isPending}
+                        disabled={!account.auth_index}
+                        onClick={() => account.auth_index && reset.mutate(account.name)}
+                      />
+                      <IconAction title="删除" icon={Trash2} pending={remove.isPending} danger onClick={() => confirmDelete(account.name) && remove.mutate(account.name)} />
+                    </div>
+                    {!account.auth_index && <div className="mt-1 text-right text-xs text-muted-foreground">无 auth_index</div>}
+                  </td>
+                </tr>
+              ))}
+            </DataTable>
           </CardContent>
         </Card>
       )}
@@ -155,21 +154,31 @@ function ConfigDialog({ config }: { config: CLIProxyConfig }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<CLIProxyConfig>(config)
+  const fb = useFeedback()
   const save = useMutation({
     mutationFn: () => api<CLIProxyConfig>('/api/pools/cliproxy/config', { method: 'PATCH', body: JSON.stringify(form) }),
+    onMutate: () => fb.pending(),
     onSuccess: async (data) => {
-      setOpen(false)
+      fb.success()
       await qc.setQueryData(['cliproxy', 'config'], data)
       await qc.invalidateQueries({ queryKey: ['cliproxy'] })
+      closeAfterSave(setOpen, 450)
     },
+    onError: fb.fail,
   })
-  const update = (patch: Partial<CLIProxyConfig>) => setForm((value) => ({ ...value, ...patch }))
+  const update = (patch: Partial<CLIProxyConfig>) => {
+    fb.clear()
+    setForm((value) => ({ ...value, ...patch }))
+  }
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
         setOpen(next)
-        if (next) setForm({ ...emptyConfig, ...config, management_key: '' })
+        if (next) {
+          fb.clear()
+          setForm({ ...emptyConfig, ...config, management_key: '' })
+        }
       }}
     >
       <DialogTrigger asChild>
@@ -180,7 +189,6 @@ function ConfigDialog({ config }: { config: CLIProxyConfig }) {
       </DialogTrigger>
       <DialogContent>
         <DialogTitle>CLIProxyAPI 配置</DialogTitle>
-        <FormError error={save.error} />
         <div className="grid min-w-0 gap-4 md:grid-cols-2">
           <Field label="名称">
             <Input value={form.name} onChange={(event) => update({ name: event.target.value })} />
@@ -206,18 +214,16 @@ function ConfigDialog({ config }: { config: CLIProxyConfig }) {
               <Input
                 type="password"
                 value={form.management_key ?? ''}
-                placeholder={config.management_key_set ? '已保存，不修改请留空' : ''}
+                placeholder={secretPlaceholder(config.management_key_set)}
                 onChange={(event) => update({ management_key: event.target.value })}
               />
             </Field>
           </div>
         </div>
-        <div className="flex justify-end">
-          <Button onClick={() => save.mutate()} disabled={save.isPending || !form.name || !form.base_url}>
-            {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            保存
-          </Button>
-        </div>
+        <FeedbackBanner message={fb.message} error={save.isError} />
+        <ActionRow>
+          <SaveButton onClick={() => save.mutate()} pending={save.isPending} disabled={!form.name || !form.base_url} message={fb.message} />
+        </ActionRow>
       </DialogContent>
     </Dialog>
   )
@@ -265,7 +271,7 @@ function UploadDialog({ disabled }: { disabled: boolean }) {
         <div className="grid min-w-0 gap-4">
           <div
             className={cn(
-              'rounded-sm border border-dashed border-border bg-secondary/40 p-4 text-center transition-colors',
+              'rounded-md border border-dashed border-border bg-secondary/40 p-4 text-center transition-colors',
               dragging && 'border-primary bg-primary/5',
             )}
             onDragOver={(event) => {
@@ -391,13 +397,6 @@ function planText(plan?: string) {
   return value
 }
 
-function fmtShortTime(value?: string) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
-}
-
 function quotaBarColor(percent?: number) {
   if (percent === undefined) return 'bg-muted-foreground/40'
   if (percent < 30) return 'bg-destructive'
@@ -466,6 +465,3 @@ async function downloadAccount(name: string) {
   URL.revokeObjectURL(url)
 }
 
-function confirmDelete(name: string) {
-  return window.confirm(`删除 ${name}？`)
-}

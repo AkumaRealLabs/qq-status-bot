@@ -1,16 +1,14 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, Loader2, Save, Upload } from 'lucide-react'
-import { Field } from '@/components/common'
+import { Download, Loader2, Upload } from 'lucide-react'
+import { Field, FeedbackBanner, SaveButton } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
-import { errorMessage } from '@/lib/format'
-import { useAutoClear } from '@/lib/hooks'
+import { secretPlaceholder, useFeedback } from '@/lib/feedback'
 import { invalidateMonitor } from '@/lib/query'
-import { cn } from '@/lib/utils'
 import type { SettingsData } from '@/types'
 
 const buildVersion = import.meta.env.VITE_BUILD_VERSION || 'dev'
@@ -19,35 +17,33 @@ export function SettingsPage() {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ['settings'], queryFn: () => api<SettingsData>('/api/settings') })
   const [form, setForm] = useState<SettingsData | null>(null)
-  const [message, setMessage] = useState('')
-  const [backupMessage, setBackupMessage] = useState('')
+  const saveFb = useFeedback('已保存')
+  const backupFb = useFeedback('已导出|导入完成')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const data = form ?? q.data
-  useAutoClear(message, '已保存', setMessage)
-  useAutoClear(backupMessage, '已导出|导入完成', setBackupMessage)
   const save = useMutation({
     mutationFn: () => api('/api/settings', { method: 'PATCH', body: JSON.stringify(data) }),
-    onMutate: () => setMessage('保存中...'),
+    onMutate: () => saveFb.pending(),
     onSuccess: () => {
-      setMessage('已保存')
+      saveFb.success()
       setForm(null)
       void qc.invalidateQueries({ queryKey: ['settings'] })
     },
-    onError: (error) => setMessage(errorMessage(error)),
+    onError: saveFb.fail,
   })
   const importData = useMutation({
     mutationFn: (text: string) => api('/api/settings/import', { method: 'POST', body: text }),
-    onMutate: () => setBackupMessage('导入中...'),
+    onMutate: () => backupFb.pending('导入中...'),
     onSuccess: () => {
-      setBackupMessage('导入完成')
+      backupFb.success('导入完成')
       setForm(null)
       void invalidateMonitor(qc)
       void qc.invalidateQueries({ queryKey: ['settings'] })
     },
-    onError: (error) => setBackupMessage(errorMessage(error)),
+    onError: backupFb.fail,
   })
   async function exportData() {
-    setBackupMessage('导出中...')
+    backupFb.pending('导出中...')
     try {
       const res = await fetch('/api/settings/export', { credentials: 'include' })
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`)
@@ -58,9 +54,9 @@ export function SettingsPage() {
       a.download = `ai-upstream-monitor-sensitive-${new Date().toISOString().slice(0, 10)}.json`
       a.click()
       URL.revokeObjectURL(url)
-      setBackupMessage('已导出')
+      backupFb.success('已导出')
     } catch (error) {
-      setBackupMessage(errorMessage(error))
+      backupFb.fail(error)
     }
   }
   async function onImportFile(file?: File) {
@@ -91,7 +87,7 @@ export function SettingsPage() {
             <Input
               type="password"
               value={data.telegram_bot_token ?? ''}
-              placeholder={data.telegram_bot_token_set ? '已保存，不修改请留空' : ''}
+              placeholder={secretPlaceholder(data.telegram_bot_token_set)}
               onChange={(e) => setForm({ ...data, telegram_bot_token: e.target.value })}
             />
           </Field>
@@ -107,12 +103,9 @@ export function SettingsPage() {
         </CardContent>
       </Card>
       <div className="grid w-full max-w-2xl gap-3">
-        {message && <div className={cn('rounded-sm px-3 py-2 text-sm', save.isError ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}>{message}</div>}
+        <FeedbackBanner message={saveFb.message} error={save.isError} />
         <div>
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
-            {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            保存设置
-          </Button>
+          <SaveButton onClick={() => save.mutate()} pending={save.isPending} message={saveFb.message} label="保存设置" />
         </div>
       </div>
       <Card className="w-full max-w-2xl bg-card">
@@ -121,9 +114,11 @@ export function SettingsPage() {
           <CardDescription>导出文件包含密钥、Token 和 Telegram 会话，请按敏感备份保存</CardDescription>
         </CardHeader>
         <CardContent className="grid min-w-0 gap-4">
-          {backupMessage && (
-            <div className={cn('rounded-sm px-3 py-2 text-sm', importData.isError ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground')}>{backupMessage}</div>
-          )}
+          <FeedbackBanner
+            message={backupFb.message}
+            error={importData.isError || isBackupError(backupFb.message)}
+            success="已导出|导入完成"
+          />
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => void exportData()}>
               <Download className="size-4" />
@@ -139,4 +134,9 @@ export function SettingsPage() {
       </Card>
     </Page>
   )
+}
+
+function isBackupError(message: string) {
+  if (!message) return false
+  return !['已导出', '导入完成', '导出中...', '导入中...'].includes(message)
 }

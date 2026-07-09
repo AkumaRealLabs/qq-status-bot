@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
-import { fmtTime } from '@/lib/format'
+import { confirmDelete } from '@/lib/feedback'
+import { displayTime } from '@/lib/format'
 import type { TGChannel, TGLoginForm, TGMessage, TGSessionStatus } from '@/types'
 
 const emptyLogin: TGLoginForm = { api_id: '', api_hash: '', phone: '', code: '', password: '' }
@@ -81,7 +82,7 @@ function SessionPanel({ status, loading }: { status?: TGSessionStatus; loading: 
             {status?.api_id && <span className="text-sm text-muted-foreground">API ID {status.api_id}</span>}
           </div>
         </div>
-        {status?.last_error && <HoverText value={status.last_error} className="max-w-md rounded-sm bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive" alwaysTooltip />}
+        {status?.last_error && <HoverText value={status.last_error} className="max-w-md rounded-md bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive" alwaysTooltip />}
       </CardContent>
     </Card>
   )
@@ -493,19 +494,19 @@ function ChannelAvatar({ name, url }: { name: string; url?: string }) {
 function MediaPreview({ message }: { message: TGMessage }) {
   if (!message.media_type) return null
   if (!message.media_cached || !message.media_url) {
-    return <div className="grid min-h-36 place-items-center rounded-sm border border-dashed border-border text-xs text-muted-foreground">媒体未缓存</div>
+    return <div className="grid min-h-36 place-items-center rounded-md border border-dashed border-border text-xs text-muted-foreground">媒体未缓存</div>
   }
   if (message.media_type === 'photo' || message.media_type === 'image' || message.media_url.endsWith('.jpg')) {
     return (
       <Dialog>
         <DialogTrigger asChild>
-          <button type="button" className="block overflow-hidden rounded-sm border border-border bg-background text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/30">
+          <button type="button" className="block overflow-hidden rounded-md border border-border bg-background text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/30">
             <img src={message.media_url} alt="" className="h-40 w-full object-cover sm:h-44" />
           </button>
         </DialogTrigger>
         <DialogContent className="max-w-[960px] bg-background">
           <DialogTitle>图片预览</DialogTitle>
-          <div className="overflow-hidden rounded-sm border border-border bg-card">
+          <div className="overflow-hidden rounded-md border border-border bg-card">
             <img src={message.media_url} alt="" className="max-h-[70vh] w-full object-contain" />
           </div>
           <div className="flex justify-end">
@@ -518,7 +519,7 @@ function MediaPreview({ message }: { message: TGMessage }) {
     )
   }
   if (message.media_type === 'video') {
-    return <video src={message.media_url} controls className="h-40 w-full rounded-sm border border-border bg-background object-cover sm:h-44" />
+    return <video src={message.media_url} controls className="h-40 w-full rounded-md border border-border bg-background object-cover sm:h-44" />
   }
   return (
     <Button asChild variant="outline" size="sm" className="self-start">
@@ -531,15 +532,8 @@ function mediaLabel(type: string) {
   return ({ photo: '图片', image: '图片', video: '视频', audio: '音频', document: '文件' } as Record<string, string>)[type] ?? type
 }
 
-function displayTime(value?: string) {
-  if (!value || value.startsWith('0001-')) return '-'
-  return fmtTime(value)
-}
-
 function avatarText(value: string) {
   return value.trim().replace(/^@/, '').slice(0, 1).toUpperCase() || 'T'
 }
 
-function confirmDelete(name: string) {
-  return window.confirm(`确认删除 ${name}？`)
-}
+

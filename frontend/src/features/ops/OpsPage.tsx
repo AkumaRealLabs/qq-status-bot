@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell, Check, ChevronDown, ChevronRight, Loader2, RefreshCcw, ShieldCheck } from 'lucide-react'
-import { EmptyPanel, Field, FormError, Metric } from '@/components/common'
+import { DataTable, EmptyPanel, Field, FormError, FeedbackBanner, Metric, SaveButton } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
-import { errorMessage, fmtTime, num } from '@/lib/format'
+import { fmtTime, num } from '@/lib/format'
+import { useFeedback } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
 import type {
   AuditLog,
@@ -107,7 +108,7 @@ function EventsTab() {
             <CardContent className="grid gap-3">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="ghost" size="icon" className="size-7 rounded-sm" onClick={() => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }))}>
+                  <Button variant="ghost" size="icon" className="size-7 rounded-md" onClick={() => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }))}>
                     {expanded[key] ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
                     <span className="sr-only">展开</span>
                   </Button>
@@ -150,7 +151,7 @@ function EventDetails({ state, type, targetType, targetID }: { state: string, ty
   return (
     <div className="grid gap-2 border-t border-border pt-3">
       {(q.data ?? []).map((event) => (
-        <div key={event.id} className="min-w-0 rounded-sm border border-border bg-background p-3">
+        <div key={event.id} className="min-w-0 rounded-md border border-border bg-background p-3">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <SeverityBadge severity={event.severity} />
             <span>{event.title || eventLabels[event.type] || event.type}</span>
@@ -207,16 +208,21 @@ function AuditTab() {
       {(q.data ?? []).length > 0 && (
         <Card className="bg-card">
           <CardContent>
-            <div className="overflow-x-auto rounded-sm border border-border">
-              <table className="w-full min-w-[900px] text-left text-sm">
-                <thead className="bg-secondary text-xs text-muted-foreground">
-                  <tr><th className="px-3 py-2">时间</th><th className="px-3 py-2">用户</th><th className="px-3 py-2">动作</th><th className="px-3 py-2">目标</th><th className="px-3 py-2">字段</th><th className="px-3 py-2">摘要</th></tr>
-                </thead>
-                <tbody>
-                  {(q.data ?? []).map((row) => <AuditRow key={row.id} row={row} />)}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              minWidthClass="min-w-[900px]"
+              head={
+                <tr>
+                  <th className="px-3 py-2">时间</th>
+                  <th className="px-3 py-2">用户</th>
+                  <th className="px-3 py-2">动作</th>
+                  <th className="px-3 py-2">目标</th>
+                  <th className="px-3 py-2">字段</th>
+                  <th className="px-3 py-2">摘要</th>
+                </tr>
+              }
+            >
+              {(q.data ?? []).map((row) => <AuditRow key={row.id} row={row} />)}
+            </DataTable>
           </CardContent>
         </Card>
       )}
@@ -242,23 +248,36 @@ function NotificationsTab() {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ['ops', 'notifications'], queryFn: () => api<NotificationRules>('/api/ops/notifications') })
   const [draft, setDraft] = useState<NotificationRules | null>(null)
+  const fb = useFeedback('已保存|测试消息已发送')
   const data = draft ?? q.data
   const save = useMutation({
     mutationFn: () => api<NotificationRules>('/api/ops/notifications', { method: 'PATCH', body: JSON.stringify(data) }),
+    onMutate: () => fb.pending(),
     onSuccess: async (rules) => {
       setDraft(null)
       qc.setQueryData(['ops', 'notifications'], rules)
+      fb.success()
     },
+    onError: fb.fail,
   })
-  const test = useMutation({ mutationFn: () => api('/api/ops/notifications/test', { method: 'POST', body: '{}' }), onError: (error) => window.alert(errorMessage(error)) })
+  const test = useMutation({
+    mutationFn: () => api('/api/ops/notifications/test', { method: 'POST', body: '{}' }),
+    onMutate: () => fb.pending('测试发送中...'),
+    onSuccess: () => fb.success('测试消息已发送'),
+    onError: fb.fail,
+  })
   if (!data) return <ShellLoading />
   const muteThreshold = data.mute_failure_threshold > 0 ? data.mute_failure_threshold : 4
   const internalRetries = data.internal_retry_count > 0 ? data.internal_retry_count : 1
   const retryIntervalMs = data.internal_retry_interval_ms >= 0 ? data.internal_retry_interval_ms : 0
-  const update = (patch: Partial<NotificationRules>) => setDraft({ ...data, mute_failure_threshold: muteThreshold, internal_retry_count: internalRetries, internal_retry_interval_ms: retryIntervalMs, ...patch })
+  const update = (patch: Partial<NotificationRules>) => {
+    fb.clear()
+    setDraft({ ...data, mute_failure_threshold: muteThreshold, internal_retry_count: internalRetries, internal_retry_interval_ms: retryIntervalMs, ...patch })
+  }
+  const feedbackError = save.isError || test.isError
   return (
     <section className="grid max-w-2xl gap-3">
-      <FormError error={q.error || save.error} />
+      <FormError error={q.error} />
       <Card className="bg-card">
         <CardHeader><CardTitle className="flex items-center gap-2"><Bell className="size-4" />Telegram 通知</CardTitle></CardHeader>
         <CardContent className="grid gap-4">
@@ -290,15 +309,19 @@ function NotificationsTab() {
           </Field>
           <div className="grid gap-2 sm:grid-cols-2">
             {Object.keys(eventLabels).map((key) => (
-              <label key={key} className="flex items-center gap-2 rounded-sm border border-border bg-background px-3 py-2 text-sm">
+              <label key={key} className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm">
                 <input type="checkbox" checked={data.event_types[key] ?? false} onChange={(event) => update({ event_types: { ...data.event_types, [key]: event.target.checked } })} />
                 {eventLabels[key]}
               </label>
             ))}
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}保存</Button>
-            <Button variant="outline" onClick={() => test.mutate()} disabled={test.isPending}>{test.isPending ? <Loader2 className="size-4 animate-spin" /> : <Bell className="size-4" />}测试</Button>
+          <FeedbackBanner message={fb.message} error={feedbackError} success="已保存|测试消息已发送" />
+          <div className="flex flex-wrap items-center gap-2">
+            <SaveButton onClick={() => save.mutate()} pending={save.isPending} disabled={test.isPending} message={fb.message} icon={Check} />
+            <Button variant="outline" onClick={() => test.mutate()} disabled={test.isPending || save.isPending}>
+              {test.isPending ? <Loader2 className="size-4 animate-spin" /> : <Bell className="size-4" />}
+              {test.isPending ? '发送中...' : '测试'}
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -342,38 +365,46 @@ function ProfitTab() {
               <ProfitMini label="利润" value={num(pool.profit)} />
               <ProfitMini label="未匹配收入" value={num(pool.missing_revenue)} />
             </div>
-            <div className="overflow-x-auto rounded-sm border border-border">
-              <table className="w-full min-w-[980px] text-left text-sm">
-                <thead className="bg-secondary text-xs text-muted-foreground">
-                  <tr><th className="px-3 py-2">渠道</th><th className="px-3 py-2">绑定卡片</th><th className="px-3 py-2">上游 Key</th><th className="px-3 py-2">成本/刀</th><th className="px-3 py-2">用量</th><th className="px-3 py-2">收入</th><th className="px-3 py-2">成本</th><th className="px-3 py-2">利润</th><th className="px-3 py-2">状态</th></tr>
-                </thead>
-                <tbody>
-                  {pool.channels.map((row) => (
-                    <tr key={row.channel_id || row.channel_name} className={cn('border-t border-border align-top', !row.complete && 'bg-destructive/5')}>
-                      <td className="px-3 py-2">{row.channel_name || row.channel_id || '-'}</td>
-                      <td className="px-3 py-2">{row.card_name || '-'}</td>
-                      <td className="px-3 py-2">{[row.upstream_name, row.key_name].filter(Boolean).join(' / ') || '-'}</td>
-                      <td className="px-3 py-2">
-                        {row.complete ? (
-                          <div>
-                            <div>{num(row.cost_per_unit)}</div>
-                            <div className="text-xs text-muted-foreground">{costSourceLabel(row.cost_source)} · {effectiveLabel(row.cost_effective_from)}</div>
-                          </div>
-                        ) : '-'}
-                      </td>
-                      <td className="px-3 py-2">{num(row.usage)}</td>
-                      <td className="px-3 py-2">
-                        <div>{num(row.revenue)}</div>
-                        {row.sale_effective_from && <div className="text-xs text-muted-foreground">售价 {effectiveLabel(row.sale_effective_from)}</div>}
-                      </td>
-                      <td className="px-3 py-2">{row.complete ? num(row.cost) : '-'}</td>
-                      <td className="px-3 py-2">{row.complete ? num(row.profit) : '-'}</td>
-                      <td className="px-3 py-2">{row.complete ? <Badge variant="success">已确认</Badge> : <Badge variant="amber">{row.missing_reason || '缺成本绑定'}</Badge>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              minWidthClass="min-w-[980px]"
+              head={
+                <tr>
+                  <th className="px-3 py-2">渠道</th>
+                  <th className="px-3 py-2">绑定卡片</th>
+                  <th className="px-3 py-2">上游 Key</th>
+                  <th className="px-3 py-2">成本/刀</th>
+                  <th className="px-3 py-2">用量</th>
+                  <th className="px-3 py-2">收入</th>
+                  <th className="px-3 py-2">成本</th>
+                  <th className="px-3 py-2">利润</th>
+                  <th className="px-3 py-2">状态</th>
+                </tr>
+              }
+            >
+              {pool.channels.map((row) => (
+                <tr key={row.channel_id || row.channel_name} className={cn('border-t border-border align-top', !row.complete && 'bg-destructive/5')}>
+                  <td className="px-3 py-2">{row.channel_name || row.channel_id || '-'}</td>
+                  <td className="px-3 py-2">{row.card_name || '-'}</td>
+                  <td className="px-3 py-2">{[row.upstream_name, row.key_name].filter(Boolean).join(' / ') || '-'}</td>
+                  <td className="px-3 py-2">
+                    {row.complete ? (
+                      <div>
+                        <div>{num(row.cost_per_unit)}</div>
+                        <div className="text-xs text-muted-foreground">{costSourceLabel(row.cost_source)} · {effectiveLabel(row.cost_effective_from)}</div>
+                      </div>
+                    ) : '-'}
+                  </td>
+                  <td className="px-3 py-2">{num(row.usage)}</td>
+                  <td className="px-3 py-2">
+                    <div>{num(row.revenue)}</div>
+                    {row.sale_effective_from && <div className="text-xs text-muted-foreground">售价 {effectiveLabel(row.sale_effective_from)}</div>}
+                  </td>
+                  <td className="px-3 py-2">{row.complete ? num(row.cost) : '-'}</td>
+                  <td className="px-3 py-2">{row.complete ? num(row.profit) : '-'}</td>
+                  <td className="px-3 py-2">{row.complete ? <Badge variant="success">已确认</Badge> : <Badge variant="amber">{row.missing_reason || '缺成本绑定'}</Badge>}</td>
+                </tr>
+              ))}
+            </DataTable>
           </CardContent>
         </Card>
       ))}
@@ -383,7 +414,7 @@ function ProfitTab() {
 
 function ProfitMini({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-sm border border-border bg-background px-3 py-2">
+    <div className="rounded-md border border-border bg-background px-3 py-2">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 font-medium">{value}</div>
     </div>

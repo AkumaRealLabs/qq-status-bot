@@ -8,7 +8,7 @@ export function NavItem({ item, active, onClick }: { item: NavTab; active: boole
   return (
     <button
       className={cn(
-        'flex h-9 items-center gap-2 rounded-sm px-3 text-sm font-medium transition-colors',
+        'flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors',
         active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground',
       )}
       onClick={onClick}
@@ -68,11 +68,11 @@ export function Page({
   children: ReactNode
 }) {
   return (
-    <section className="grid min-w-0 animate-in fade-in-50 slide-in-from-bottom-1 gap-4 duration-300">
+    <section className="grid min-w-0 animate-in fade-in-50 slide-in-from-bottom-1 gap-5 duration-300">
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h1 className="break-words font-display text-3xl font-normal leading-tight sm:text-4xl">{title}</h1>
-          {description && <p className="text-sm text-muted-foreground">{description}</p>}
+          <h1 className="break-words font-display text-3xl font-normal leading-tight tracking-tight sm:text-4xl">{title}</h1>
+          {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
         </div>
         {actions && <div className="min-w-0 sm:shrink-0">{actions}</div>}
       </div>

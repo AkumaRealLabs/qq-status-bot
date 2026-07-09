@@ -1,19 +1,19 @@
 import { useState, type ReactNode } from 'react'
-import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { GripVertical, Loader2, Pencil, Plus, RefreshCcw, Save, Trash2 } from 'lucide-react'
-import { EmptyPanel, Field, FormError, HoverText, IconAction, SkeletonCardGrid, StatusBadge } from '@/components/common'
+import { Loader2, Pencil, Plus, RefreshCcw, Save, Trash2 } from 'lucide-react'
+import { ActionRow, DataTable, EmptyPanel, Field, FormError, FeedbackBanner, HoverText, IconAction, SaveButton, SkeletonCardGrid, StatusBadge } from '@/components/common'
 import { Page } from '@/components/layout'
+import { DragHandle, SortableGrid, SortableItem } from '@/components/sortable'
+import { reorderByDragEnd, type DragEndEvent } from '@/lib/sortable'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
-import { errorMessage, fmtTime, num } from '@/lib/format'
-import { cn } from '@/lib/utils'
+import { displayTime, errorMessage, num } from '@/lib/format'
+import { alertError, closeAfterSave, confirmDelete, secretPlaceholder, useFeedback } from '@/lib/feedback'
+import { cn, sameIDs } from '@/lib/utils'
 import type { RevenueCard, RevenueCardForm, RevenueOrder, RevenueRow } from '@/types'
 
 const emptyRevenueForm: RevenueCardForm = {
@@ -36,24 +36,15 @@ export function RevenuePage() {
   const rows = q.data ?? []
   const shownRows = layoutEditing ? draftRows : rows
   const sortDirty = !sameIDs(rows, draftRows)
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
   const sortCards = useMutation({
     mutationFn: (ids: string[]) => api('/api/revenue/cards/order', { method: 'POST', body: JSON.stringify({ ids }) }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['revenue'] })
     },
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
   })
   const onDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    const oldIndex = draftRows.findIndex((row) => row.id === active.id)
-    const newIndex = draftRows.findIndex((row) => row.id === over.id)
-    if (oldIndex < 0 || newIndex < 0) return
-    setDraftRows((value) => arrayMove(value, oldIndex, newIndex))
+    setDraftRows((value) => reorderByDragEnd(value, event) ?? value)
   }
   const saveSort = () => {
     sortCards.mutate(draftRows.map((row) => row.id).filter(Boolean), { onSuccess: () => setLayoutEditing(false) })
@@ -74,7 +65,7 @@ export function RevenuePage() {
               <Button variant="outline" size="sm" onClick={() => { setDraftRows(rows); setLayoutEditing(false) }} disabled={sortCards.isPending}>取消</Button>
               <Button size="sm" onClick={saveSort} disabled={!sortDirty || sortCards.isPending}>
                 {sortCards.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                保存排序
+                {sortCards.isPending ? '保存中...' : '保存排序'}
               </Button>
             </>
           ) : (
@@ -88,13 +79,18 @@ export function RevenuePage() {
       {q.isError && <EmptyPanel text={errorMessage(q.error)} />}
       {!q.isLoading && !q.isError && shownRows.length > 0 && (
         layoutEditing ? (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-            <SortableContext items={shownRows.map((row) => row.id)} strategy={rectSortingStrategy}>
-              <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {shownRows.map((row) => <SortableRevenueCard key={row.id} row={row} sorting={sortCards.isPending} />)}
-              </div>
-            </SortableContext>
-          </DndContext>
+          <SortableGrid itemIds={shownRows.map((row) => row.id)} onDragEnd={onDragEnd}>
+            {shownRows.map((row) => (
+              <SortableItem key={row.id} id={row.id}>
+                {({ attributes, listeners }) => (
+                  <RevenueCardView
+                    row={row}
+                    dragHandle={<DragHandle sorting={sortCards.isPending} attributes={attributes} listeners={listeners} />}
+                  />
+                )}
+              </SortableItem>
+            ))}
+          </SortableGrid>
         ) : (
           <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {shownRows.map((row) => <RevenueCardView key={row.id} row={row} />)}
@@ -103,29 +99,6 @@ export function RevenuePage() {
       )}
       {!q.isLoading && !q.isError && rows.length === 0 && <EmptyPanel text="暂无收入卡片" />}
     </Page>
-  )
-}
-
-function SortableRevenueCard({
-  row,
-  sorting,
-}: {
-  row: RevenueRow
-  sorting: boolean
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.id })
-  return (
-    <div ref={setNodeRef} className={cn('min-w-0', isDragging && 'z-10 opacity-80')} style={{ transform: CSS.Transform.toString(transform), transition }}>
-      <RevenueCardView
-        row={row}
-        dragHandle={
-          <Button variant="outline" size="icon" title="拖拽排序" disabled={sorting} className="touch-none" {...attributes} {...listeners}>
-            <GripVertical className="size-4" />
-            <span className="sr-only">拖拽排序</span>
-          </Button>
-        }
-      />
-    </div>
   )
 }
 
@@ -174,7 +147,7 @@ function RevenueCardView({
             <div className="break-words font-display text-3xl font-normal">{row.enabled ? `${num(row.revenue)} 元` : '-'}</div>
             <div className="mt-1.5 text-xs text-muted-foreground">最后刷新：{displayTime(row.checked_at)}</div>
           </div>
-          {row.error && <HoverText value={row.error} className="rounded-sm bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive" alwaysTooltip />}
+          {row.error && <HoverText value={row.error} className="rounded-md bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive" alwaysTooltip />}
         </CardContent>
       </Card>
       <RevenueOrdersDialog row={row} open={ordersOpen} setOpen={setOrdersOpen} />
@@ -195,7 +168,7 @@ function RevenueOrdersDialog({ row, open, setOpen }: { row: RevenueRow; open: bo
       <DialogContent className="max-w-[860px]">
         <DialogTitle>{row.name}</DialogTitle>
         {!row.enabled ? (
-          <div className="rounded-sm border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">卡片已停用</div>
+          <div className="rounded-md border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">卡片已停用</div>
         ) : (
           <>
             <FormError error={q.error} />
@@ -203,33 +176,31 @@ function RevenueOrdersDialog({ row, open, setOpen }: { row: RevenueRow; open: bo
               <span>订单数：{orders.length}</span>
               <span>金额：{num(total)} 元</span>
             </div>
-            {q.isLoading && <div className="rounded-sm border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">加载中...</div>}
-            {!q.isLoading && !q.isError && orders.length === 0 && <div className="rounded-sm border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">暂无今日成功订单</div>}
+            {q.isLoading && <div className="rounded-md border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">加载中...</div>}
+            {!q.isLoading && !q.isError && orders.length === 0 && <div className="rounded-md border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">暂无今日成功订单</div>}
             {!q.isLoading && !q.isError && orders.length > 0 && (
-              <div className="overflow-x-auto rounded-sm border border-border">
-                <table className="w-full min-w-[640px] text-left text-sm">
-                  <thead className="bg-secondary text-xs text-muted-foreground">
-                    <tr>
-                      <th className="px-3 py-2 font-medium">订单号</th>
-                      <th className="px-3 py-2 font-medium">金额</th>
-                      <th className="px-3 py-2 font-medium">方式</th>
-                      <th className="px-3 py-2 font-medium">状态</th>
-                      <th className="px-3 py-2 font-medium">完成时间</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orders.map((order, index) => (
-                      <tr key={`${order.remote_id}-${index}`} className="border-t border-border">
-                        <td className="max-w-64 truncate px-3 py-2 font-mono text-xs">{order.remote_id || '-'}</td>
-                        <td className="px-3 py-2">{num(order.amount)} 元</td>
-                        <td className="px-3 py-2">{order.payment_type || '-'}</td>
-                        <td className="px-3 py-2">{order.status || '-'}</td>
-                        <td className="px-3 py-2">{displayTime(order.paid_at)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                minWidthClass="min-w-[640px]"
+                head={
+                  <tr>
+                    <th className="px-3 py-2 font-medium">订单号</th>
+                    <th className="px-3 py-2 font-medium">金额</th>
+                    <th className="px-3 py-2 font-medium">方式</th>
+                    <th className="px-3 py-2 font-medium">状态</th>
+                    <th className="px-3 py-2 font-medium">完成时间</th>
+                  </tr>
+                }
+              >
+                {orders.map((order, index) => (
+                  <tr key={`${order.remote_id}-${index}`} className="border-t border-border">
+                    <td className="max-w-64 truncate px-3 py-2 font-mono text-xs">{order.remote_id || '-'}</td>
+                    <td className="px-3 py-2">{num(order.amount)} 元</td>
+                    <td className="px-3 py-2">{order.payment_type || '-'}</td>
+                    <td className="px-3 py-2">{order.status || '-'}</td>
+                    <td className="px-3 py-2">{displayTime(order.paid_at)}</td>
+                  </tr>
+                ))}
+              </DataTable>
             )}
           </>
         )}
@@ -242,16 +213,20 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<RevenueCardForm>(() => cardToForm(card))
+  const fb = useFeedback()
   const save = useMutation({
     mutationFn: () =>
       api(card ? `/api/revenue/cards/${card.id}` : '/api/revenue/cards', {
         method: card ? 'PATCH' : 'POST',
         body: JSON.stringify(cardPayload(form)),
       }),
+    onMutate: () => fb.pending(),
     onSuccess: async () => {
-      setOpen(false)
+      fb.success()
       await qc.invalidateQueries({ queryKey: ['revenue'] })
+      closeAfterSave(setOpen)
     },
+    onError: fb.fail,
   })
   const remove = useMutation({
     mutationFn: () => api(`/api/revenue/cards/${card?.id ?? ''}`, { method: 'DELETE' }),
@@ -259,15 +234,21 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
       setOpen(false)
       await qc.invalidateQueries({ queryKey: ['revenue'] })
     },
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
   })
-  const update = (patch: Partial<RevenueCardForm>) => setForm((value) => ({ ...value, ...patch }))
+  const update = (patch: Partial<RevenueCardForm>) => {
+    fb.clear()
+    setForm((value) => ({ ...value, ...patch }))
+  }
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
         setOpen(next)
-        if (next) setForm(cardToForm(card))
+        if (next) {
+          fb.clear()
+          setForm(cardToForm(card))
+        }
       }}
     >
       <DialogTrigger asChild>
@@ -285,7 +266,6 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
       </DialogTrigger>
       <DialogContent>
         <DialogTitle>{card ? '编辑收入卡片' : '新增收入卡片'}</DialogTitle>
-        <FormError error={save.error} />
         <div className="grid min-w-0 gap-4 md:grid-cols-2">
           <Field label="名称">
             <Input value={form.name} onChange={(e) => update({ name: e.target.value })} />
@@ -314,7 +294,7 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
                 <Input
                   type="password"
                   value={form.epay_key}
-                  placeholder={card?.epay_key_set ? '已保存，不修改请留空' : ''}
+                  placeholder={secretPlaceholder(card?.epay_key_set)}
                   onChange={(e) => update({ epay_key: e.target.value })}
                 />
               </Field>
@@ -329,7 +309,7 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
                 <Input
                   type="password"
                   value={form.access_token}
-                  placeholder={card?.access_token_set ? '已保存，不修改请留空' : ''}
+                  placeholder={secretPlaceholder(card?.access_token_set)}
                   onChange={(e) => update({ access_token: e.target.value })}
                 />
               </Field>
@@ -340,7 +320,7 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
               <Input
                 type="password"
                 value={form.admin_api_key}
-                placeholder={card?.admin_api_key_set ? '已保存，不修改请留空' : 'admin-...'}
+                placeholder={secretPlaceholder(card?.admin_api_key_set, 'admin-...')}
                 onChange={(e) => update({ admin_api_key: e.target.value })}
               />
             </Field>
@@ -357,13 +337,11 @@ function RevenueCardDialog({ card }: { card?: RevenueCard }) {
             </Select>
           </Field>
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
+        <FeedbackBanner message={fb.message} error={save.isError} />
+        <ActionRow>
           {card && <IconAction title="删除" onClick={() => confirmDelete(card.name) && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />}
-          <Button onClick={() => save.mutate()} disabled={save.isPending || !formReady(form, card)}>
-            {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            保存
-          </Button>
-        </div>
+          <SaveButton onClick={() => save.mutate()} pending={save.isPending} disabled={!formReady(form, card)} message={fb.message} />
+        </ActionRow>
       </DialogContent>
     </Dialog>
   )
@@ -420,15 +398,3 @@ function formReady(form: RevenueCardForm, card?: RevenueCard) {
   return false
 }
 
-function sameIDs(a: RevenueRow[], b: RevenueRow[]) {
-  return a.length === b.length && a.every((item, index) => item.id === b[index]?.id)
-}
-
-function displayTime(value?: string) {
-  if (!value || value.startsWith('0001-')) return '-'
-  return fmtTime(value)
-}
-
-function confirmDelete(name: string) {
-  return window.confirm(`确认删除 ${name}？`)
-}

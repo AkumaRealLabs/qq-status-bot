@@ -110,14 +110,14 @@ export function StatusMonitorCard({
                     value={probeHoverTitle(probe)}
                     content={<ProbeTooltip probe={probe} muted={muted} />}
                     nativeTitle={false}
-                    className={cn('h-4 rounded-sm', muted ? 'bg-muted-soft' : good ? 'bg-success' : 'bg-destructive')}
+                    className={cn('h-4 rounded-xs', muted ? 'bg-muted-soft' : good ? 'bg-success' : 'bg-destructive')}
                   >
                     <span className="sr-only">{probeStatus(probe)}</span>
                   </HoverText>
                 )
               })}
               {history.length === 0 &&
-                Array.from({ length: emptyHistorySlots(windowValue) }).map((_, index) => <span key={index} className="h-4 rounded-sm bg-surface-cream-strong" />)}
+                Array.from({ length: emptyHistorySlots(windowValue) }).map((_, index) => <span key={index} className="h-4 rounded-xs bg-surface-cream-strong" />)}
             </div>
           </div>
           <div className="mt-2 flex justify-between text-xs text-muted-foreground">
@@ -129,7 +129,12 @@ export function StatusMonitorCard({
         {message && (
           <HoverText
             value={message}
-            className={cn('rounded-sm px-2.5 py-1.5 text-xs', muted ? 'bg-secondary text-muted-foreground' : card.last_error && !footerMessage ? 'bg-destructive/10 text-destructive' : footerMessage === '检查完成' ? 'bg-secondary text-muted-foreground' : footerMessage ? 'bg-secondary text-muted-foreground' : 'bg-destructive/10 text-destructive')}
+            className={cn(
+              'rounded-md border px-2.5 py-1.5 text-xs',
+              muted || footerMessage === '检查完成' || footerMessage
+                ? 'border-border bg-secondary text-muted-foreground'
+                : 'border-destructive/30 bg-destructive/10 text-destructive',
+            )}
           />
         )}
       </CardContent>

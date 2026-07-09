@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Plus, Power, PowerOff, RefreshCcw, Save, Settings2, SlidersHorizontal, Tags, Trash2 } from 'lucide-react'
-import { EmptyPanel, Field, FormError, StatusBadge } from '@/components/common'
+import { Loader2, Plus, Power, PowerOff, RefreshCcw, Settings2, SlidersHorizontal, Tags, Trash2 } from 'lucide-react'
+import { ActionRow, EmptyPanel, Field, FeedbackBanner, FormError, SaveButton, StatusBadge } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
-import { errorMessage, fmtTime } from '@/lib/format'
+import { fmtTime } from '@/lib/format'
+import { alertError, secretPlaceholder, useFeedback } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
 import type { ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig, SchedulerGroup, SchedulerLog, SchedulerTier } from '@/types'
 
@@ -23,7 +24,7 @@ const defaultTiers: SchedulerTier[] = [
 export function SchedulerPage() {
   const qc = useQueryClient()
   const [cfgDraft, setCfgDraft] = useState<SchedulerConfig | null>(null)
-  const [message, setMessage] = useState('')
+  const fb = useFeedback()
   const cfg = useQuery({ queryKey: ['scheduler', 'config'], queryFn: () => api<SchedulerConfig>('/api/scheduler/config') })
   const cards = useQuery({ queryKey: ['cards'], queryFn: () => api<ModelCard[]>('/api/cards') })
   const logs = useQuery({ queryKey: ['scheduler', 'logs'], queryFn: () => api<SchedulerLog[]>('/api/scheduler/logs?limit=50') })
@@ -41,14 +42,15 @@ export function SchedulerPage() {
   const form = cfgDraft ?? cfg.data
   const saveConfig = useMutation({
     mutationFn: () => api<SchedulerConfig>('/api/scheduler/config', { method: 'PATCH', body: JSON.stringify(form) }),
+    onMutate: () => fb.pending(),
     onSuccess: async (data) => {
-      setMessage('已保存')
+      fb.success()
       setCfgDraft(null)
       await qc.setQueryData(['scheduler', 'config'], data)
       void groups.refetch()
       void channels.refetch()
     },
-    onError: (error) => setMessage(errorMessage(error)),
+    onError: fb.fail,
   })
   const bind = useMutation({
     mutationFn: ({ card, channel }: { card: ModelCard; channel?: SchedulerChannel }) =>
@@ -62,7 +64,7 @@ export function SchedulerPage() {
     onSuccess: async () => {
       await Promise.all([qc.invalidateQueries({ queryKey: ['cards'] }), qc.invalidateQueries({ queryKey: ['status'] })])
     },
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
   })
   const setStatus = useMutation({
     mutationFn: ({ card, status }: { card: ModelCard; status: number }) =>
@@ -75,7 +77,7 @@ export function SchedulerPage() {
       ])
       void channels.refetch()
     },
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
   })
   const applyGroups = useMutation({
     mutationFn: async () => {
@@ -86,12 +88,12 @@ export function SchedulerPage() {
     },
     onSuccess: (data) => {
       setCfgDraft(null)
-      setMessage(`更新 ${data.updated} 个，保持 ${data.unchanged} 个，跳过 ${data.skipped} 个`)
+      fb.setMessage(`更新 ${data.updated} 个，保持 ${data.unchanged} 个，跳过 ${data.skipped} 个`)
       void groups.refetch()
       void channels.refetch()
       void logs.refetch()
     },
-    onError: (error) => setMessage(errorMessage(error)),
+    onError: fb.fail,
   })
   if (!form) return <ShellLoading />
   const rows = cards.data ?? []
@@ -130,16 +132,19 @@ export function SchedulerPage() {
           </Button>
           <SchedulerConfigDialog
             form={form}
-            message={message}
+            message={fb.message}
             saveError={saveConfig.isError}
             saving={saveConfig.isPending}
-            onChange={(patch) => setCfgDraft({ ...form, ...patch })}
+            onChange={(patch) => {
+              fb.clear()
+              setCfgDraft({ ...form, ...patch })
+            }}
             onSave={() => saveConfig.mutate()}
           />
           <SchedulerGroupDialog
             tiers={tiers}
             groupOptions={groupOptions}
-            message={message}
+            message={fb.message}
             saveError={saveConfig.isError || applyGroups.isError}
             saving={saveConfig.isPending}
             applying={applyGroups.isPending}
@@ -177,7 +182,7 @@ export function SchedulerPage() {
                   {group.channels.length > 0 && (
                     <div className="grid max-h-72 gap-1.5 overflow-y-auto pr-1">
                       {group.channels.map((channel) => (
-                        <div key={channel.id} className="flex min-w-0 items-center justify-between gap-2 rounded-sm border border-border bg-background px-2.5 py-1.5 text-sm">
+                        <div key={channel.id} className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm">
                           <span className="min-w-0 truncate">{channel.name || channel.id}</span>
                           <span className={cn('shrink-0 text-xs', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
                             {schedulerStatus(channel.status)}
@@ -337,18 +342,15 @@ function SchedulerConfigDialog({
             <Input
               type="password"
               value={form.scheduler_access_token}
-              placeholder={form.scheduler_access_token_set ? '已保存，不修改请留空' : ''}
+              placeholder={secretPlaceholder(form.scheduler_access_token_set)}
               onChange={(e) => onChange({ scheduler_access_token: e.target.value })}
             />
           </Field>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {message && <span className={cn('text-sm', saveError ? 'text-destructive' : 'text-muted-foreground')}>{message}</span>}
-          <Button onClick={onSave} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            保存配置
-          </Button>
-        </div>
+        <FeedbackBanner message={message} error={saveError} />
+        <ActionRow>
+          <SaveButton onClick={onSave} pending={saving} message={message} label="保存配置" />
+        </ActionRow>
       </DialogContent>
     </Dialog>
   )
@@ -404,7 +406,7 @@ function SchedulerGroupDialog({
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             {tiers.map((tier, index) => (
-              <div key={index} className="grid min-w-0 gap-3 rounded-sm border border-border bg-background p-3">
+              <div key={index} className="grid min-w-0 gap-3 rounded-md border border-border bg-background p-3">
                 <div className="flex min-w-0 items-center justify-between gap-2">
                   <Field label="名称">
                     <Input value={tier.tag} onChange={(e) => onUpdateTier(index, { tag: e.target.value })} />
@@ -443,17 +445,13 @@ function SchedulerGroupDialog({
               </div>
             ))}
           </div>
-          {message && (
-            <div className={cn('rounded-sm border px-3 py-2 text-sm', saveError ? 'border-destructive/30 bg-destructive/10 text-destructive' : 'border-success/30 bg-success/10 text-success')}>
-              {message}
-            </div>
-          )}
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <FeedbackBanner message={message} error={saveError} />
+          <ActionRow>
             <Button onClick={onApply} disabled={applying || saving}>
               {applying ? <Loader2 className="size-4 animate-spin" /> : <Tags className="size-4" />}
               {applying ? '应用中' : '应用分组'}
             </Button>
-          </div>
+          </ActionRow>
         </div>
       </DialogContent>
     </Dialog>
@@ -463,7 +461,7 @@ function SchedulerGroupDialog({
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="grid min-w-0 gap-3">
-      <h2 className="font-display text-2xl font-normal leading-tight">{title}</h2>
+      <h2 className="font-display text-2xl font-normal leading-tight tracking-tight">{title}</h2>
       {children}
     </section>
   )
@@ -472,7 +470,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function InfoCell({ label, value }: { label: string; value: string }) {
   const text = value || '-'
   return (
-    <div className="min-h-[76px] min-w-0 rounded-sm border border-border bg-background px-3 py-2">
+    <div className="min-h-[76px] min-w-0 rounded-md border border-border bg-background px-3 py-2">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 whitespace-normal break-words text-sm font-medium leading-snug" title={text}>{text}</div>
     </div>

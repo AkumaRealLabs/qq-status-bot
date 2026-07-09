@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Copy, ExternalLink, KeyRound, Loader2, Plus, RefreshCcw, Save, Trash2, WalletCards } from 'lucide-react'
-import { EmptyPanel, Field, FormError, HoverText, IconAction, MiniStat, SkeletonCardGrid, StatusBadge, TypeBadge } from '@/components/common'
+import { Copy, ExternalLink, KeyRound, Loader2, Plus, RefreshCcw, Trash2, WalletCards } from 'lucide-react'
+import { ActionRow, EmptyPanel, Field, FeedbackBanner, FormError, HoverText, IconAction, MiniStat, SaveButton, SkeletonCardGrid, StatusBadge, TypeBadge } from '@/components/common'
 import { Page } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -10,9 +10,10 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
 import { errorMessage, fmtTime, num } from '@/lib/format'
+import { alertError, closeAfterSave, confirmDelete, secretPlaceholder, useFeedback } from '@/lib/feedback'
 import { useAutoClear } from '@/lib/hooks'
 import { invalidateMonitor } from '@/lib/query'
-import { cn } from '@/lib/utils'
+import { cn, keysOf } from '@/lib/utils'
 import type { RechargeCapabilities, RechargeLog, RechargeResult, Upstream, UpstreamRow } from '@/types'
 
 const emptyUpstream: Upstream = {
@@ -77,13 +78,13 @@ function UpstreamCard({ row }: { row: UpstreamRow }) {
         </div>
         <div className="grid min-w-0 gap-1">
           <div className="text-xs text-muted-foreground">Base URL</div>
-          <HoverText value={upstream.base_url} className="rounded-sm border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground" alwaysTooltip />
+          <HoverText value={upstream.base_url} className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground" alwaysTooltip />
         </div>
         <div className="grid min-w-0 gap-1">
           <div className="text-xs text-muted-foreground">错误信息</div>
           <HoverText
             value={error || '-'}
-            className={cn('rounded-sm px-2.5 py-1.5 text-xs', error ? 'bg-destructive/10 text-destructive' : 'border border-border bg-background text-muted-foreground')}
+            className={cn('rounded-md px-2.5 py-1.5 text-xs', error ? 'bg-destructive/10 text-destructive' : 'border border-border bg-background text-muted-foreground')}
             alwaysTooltip={Boolean(error)}
           />
         </div>
@@ -99,7 +100,7 @@ function UpstreamActions({ row }: { row: UpstreamRow }) {
   const remove = useMutation({
     mutationFn: () => api(`/api/upstreams/${upstream.id}`, { method: 'DELETE' }),
     onSuccess: () => void invalidateMonitor(qc),
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
   })
   return (
     <div className="grid max-w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
@@ -213,7 +214,7 @@ export function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
         <FormError error={caps.error || createOrder.error || redeem.error} />
         {unavailable && <EmptyPanel text="该站点未开放在线充值、兑换码兑换或购买地址" />}
         {caps.data?.external_url && (
-          <div className="rounded-sm border border-border bg-secondary/50 p-3">
+          <div className="rounded-md border border-border bg-secondary/50 p-3">
             <Button asChild size="sm">
               <a href={caps.data.external_url} target="_blank" rel="noreferrer">
                 <ExternalLink className="size-4" />
@@ -223,7 +224,7 @@ export function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
           </div>
         )}
         {caps.data?.online_enabled && methods.length > 0 && (
-          <div className="grid min-w-0 items-start gap-4 rounded-sm border border-border bg-card p-3 md:grid-cols-2">
+          <div className="grid min-w-0 items-start gap-4 rounded-md border border-border bg-card p-3 md:grid-cols-2">
             <Field label="金额">
               <div className="grid gap-1.5">
                 <Input type="number" min={minAmount || 0} max={maxAmount || undefined} value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -254,7 +255,7 @@ export function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
           </div>
         )}
         {caps.data?.redeem_enabled && (
-          <div className="grid min-w-0 gap-4 rounded-sm border border-border bg-card p-3">
+          <div className="grid min-w-0 gap-4 rounded-md border border-border bg-card p-3">
             <Field label="兑换码">
               <Input value={code} onChange={(e) => setCode(e.target.value)} />
             </Field>
@@ -277,7 +278,7 @@ function RechargeResultPanel({ result }: { result: RechargeResult }) {
   const link = result.url
   const qr = result.qr_code
   return (
-    <div className="grid min-w-0 gap-3 rounded-sm border border-border bg-secondary/50 p-3">
+    <div className="grid min-w-0 gap-3 rounded-md border border-border bg-secondary/50 p-3">
       <div className="text-sm font-medium text-foreground">提交成功</div>
       {link && (
         <div className="flex min-w-0 flex-wrap gap-2">
@@ -292,7 +293,7 @@ function RechargeResultPanel({ result }: { result: RechargeResult }) {
       )}
       {qr && (
         <div className="grid min-w-0 gap-2">
-          <div className="break-all rounded-sm border border-border bg-background p-2 font-mono text-xs">{qr}</div>
+          <div className="break-all rounded-md border border-border bg-background p-2 font-mono text-xs">{qr}</div>
           <CopyButton text={qr} label="复制二维码内容" />
         </div>
       )}
@@ -329,7 +330,7 @@ function RechargeLogs({ upstreamID, logs, loading }: { upstreamID: string; logs:
         qc.invalidateQueries({ queryKey: ['balance-recharge-logs', upstreamID] }),
       ])
     },
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
     onSettled: () => setRefreshingID(''),
   })
   const remove = useMutation({
@@ -338,7 +339,7 @@ function RechargeLogs({ upstreamID, logs, loading }: { upstreamID: string; logs:
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['balance-recharge-logs', upstreamID] })
     },
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
     onSettled: () => setRemovingID(''),
   })
   if (loading) return <div className="text-sm text-muted-foreground">加载记录...</div>
@@ -379,7 +380,7 @@ function RechargeLogItem({
   onDelete: () => void
 }) {
   return (
-    <div className="grid min-w-0 gap-1 rounded-sm border border-border bg-background p-2 text-xs">
+    <div className="grid min-w-0 gap-1 rounded-md border border-border bg-background p-2 text-xs">
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
         <span className="min-w-0 truncate">{log.method === 'redeem' ? '兑换码' : paymentLabel(log.payment_type)}</span>
         <div className="flex min-w-0 items-center justify-end gap-1">
@@ -413,6 +414,7 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
   const [form, setForm] = useState<Upstream>(upstream ?? emptyUpstream)
   const [createdUpstream, setCreatedUpstream] = useState<Upstream | null>(null)
   const [tokenMessage, setTokenMessage] = useState('')
+  const fb = useFeedback()
   const persistedUpstream = upstream ?? createdUpstream
   useAutoClear(tokenMessage, '浏览器已打开|采集完成', setTokenMessage)
   const save = useMutation({
@@ -421,18 +423,22 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
         method: persistedUpstream ? 'PATCH' : 'POST',
         body: JSON.stringify(form),
       }),
+    onMutate: () => fb.pending(),
     onSuccess: (out) => {
       if (!persistedUpstream && out.type === 'sub2api') {
         setCreatedUpstream(out)
         setForm(out)
+        fb.success()
         setTokenMessage('保存成功，可以浏览器登录或采集 Token')
         void invalidateMonitor(qc)
         return
       }
       setCreatedUpstream(null)
-      setOpen(false)
+      fb.success()
       void invalidateMonitor(qc)
+      closeAfterSave(setOpen, 450)
     },
+    onError: fb.fail,
   })
   const browserLogin = useMutation({
     mutationFn: () => api<{ vnc_url: string }>(`/api/upstreams/${persistedUpstream?.id ?? ''}/browser-login`, { method: 'POST' }),
@@ -449,7 +455,10 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
     },
     onError: (error) => setTokenMessage(errorMessage(error)),
   })
-  const update = (patch: Partial<Upstream>) => setForm((value) => ({ ...value, ...patch }))
+  const update = (patch: Partial<Upstream>) => {
+    fb.clear()
+    setForm((value) => ({ ...value, ...patch }))
+  }
   return (
     <Dialog
       open={open}
@@ -459,6 +468,7 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
           setForm(upstream ?? emptyUpstream)
           setCreatedUpstream(null)
           setTokenMessage('')
+          fb.clear()
         }
       }}
     >
@@ -469,7 +479,6 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
       </DialogTrigger>
       <DialogContent>
         <DialogTitle>{upstream ? '编辑上游' : '新增上游'}</DialogTitle>
-        <FormError error={save.error} />
         <div className="grid min-w-0 gap-4 md:grid-cols-2">
           <Field label="名称">
             <Input value={form.name} onChange={(e) => update({ name: e.target.value })} />
@@ -514,7 +523,7 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
                 <Input
                   type="password"
                   value={form.access_token ?? ''}
-                  placeholder={form.access_token_set ? '已保存，不修改请留空' : ''}
+                  placeholder={secretPlaceholder(form.access_token_set)}
                   onChange={(e) => update({ access_token: e.target.value })}
                 />
               </Field>
@@ -522,7 +531,7 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
           )}
         </div>
         {form.type === 'sub2api' && persistedUpstream?.id && (
-          <div className="rounded-sm border border-border bg-secondary/50 p-3">
+          <div className="rounded-md border border-border bg-secondary/50 p-3">
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
@@ -546,12 +555,10 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
             </div>
           </div>
         )}
-        <div className="flex justify-end">
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
-            {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            保存
-          </Button>
-        </div>
+        <FeedbackBanner message={fb.message} error={save.isError} />
+        <ActionRow>
+          <SaveButton onClick={() => save.mutate()} pending={save.isPending} message={fb.message} />
+        </ActionRow>
       </DialogContent>
     </Dialog>
   )
@@ -559,16 +566,15 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
 
 function Action({ path, label }: { path: string; label: string }) {
   const qc = useQueryClient()
-  const [message, setMessage] = useState('')
-  useAutoClear(message, `${label}完成`, setMessage)
+  const fb = useFeedback(`${label}完成`)
   const mutation = useMutation({
     mutationFn: () => api(path, { method: 'POST' }),
-    onMutate: () => setMessage(`${label}中...`),
+    onMutate: () => fb.pending(`${label}中...`),
     onSuccess: async () => {
-      setMessage(`${label}完成`)
+      fb.success(`${label}完成`)
       await invalidateMonitor(qc)
     },
-    onError: (error) => setMessage(errorMessage(error)),
+    onError: fb.fail,
   })
   return (
     <div className="relative min-w-0">
@@ -576,7 +582,11 @@ function Action({ path, label }: { path: string; label: string }) {
         {mutation.isPending && <Loader2 className="size-3 animate-spin" />}
         {mutation.isPending ? `${label}中` : label}
       </Button>
-      {message && !mutation.isPending && <div className="absolute right-0 top-10 z-10 max-w-[calc(100vw-32px)] whitespace-normal break-words rounded-sm border border-border bg-background px-2 py-1 text-xs text-muted-foreground">{message}</div>}
+      {fb.message && !mutation.isPending && (
+        <div className="absolute right-0 top-10 z-10 max-w-[calc(100vw-32px)]">
+          <FeedbackBanner message={fb.message} error={mutation.isError} success={`${label}完成`} className="text-xs" />
+        </div>
+      )}
     </div>
   )
 }
@@ -603,7 +613,7 @@ function openBrowserLogin(
       if (onError) {
         onError(error)
       } else {
-        window.alert(errorMessage(error))
+        alertError(error)
       }
     },
   })
@@ -614,14 +624,6 @@ function closeBrowserLoginWindow() {
   browserLoginWindow = null
   const win = window.open('', 'ai-upstream-monitor-vnc')
   win?.close()
-}
-
-function keysOf(row: UpstreamRow | undefined) {
-  return row?.keys ?? []
-}
-
-function confirmDelete(name: string) {
-  return window.confirm(`确认删除 ${name}？`)
 }
 
 function paymentLabel(value: string) {

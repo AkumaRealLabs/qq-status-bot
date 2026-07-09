@@ -46,7 +46,7 @@ export default function PublicApp() {
 function GateError({ message, error, onRetry }: { message: string; error: unknown; onRetry: () => void }) {
   return (
     <div className="grid min-h-svh place-items-center bg-background p-4">
-      <div className="grid max-w-sm gap-3 rounded-sm border border-border bg-card p-4 text-sm">
+      <div className="grid max-w-sm gap-3 rounded-lg border border-border bg-card p-5 text-sm">
         <div className="font-medium text-foreground">{message}</div>
         <div className="break-words text-muted-foreground">{errorMessage(error)}</div>
         <Button variant="outline" size="sm" onClick={onRetry}>

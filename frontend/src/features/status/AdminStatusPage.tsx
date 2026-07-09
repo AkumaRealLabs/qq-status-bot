@@ -1,19 +1,19 @@
 import { useState, type ReactNode } from 'react'
-import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { GripVertical, KeyRound, Loader2, Pencil, RefreshCcw, Save, Trash2 } from 'lucide-react'
-import { EmptyPanel, Field, FormError, IconAction, SkeletonCardGrid, WindowSelect } from '@/components/common'
+import { KeyRound, Loader2, Pencil, RefreshCcw, Save, Trash2 } from 'lucide-react'
+import { ActionRow, EmptyPanel, Field, FeedbackBanner, IconAction, SaveButton, SkeletonCardGrid, WindowSelect } from '@/components/common'
 import { Page } from '@/components/layout'
+import { DragHandle, SortableGrid, SortableItem } from '@/components/sortable'
+import { reorderByDragEnd, type DragEndEvent } from '@/lib/sortable'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
 import { errorMessage } from '@/lib/format'
+import { alertError, closeAfterSave, confirmDelete, secretPlaceholder, useFeedback } from '@/lib/feedback'
 import { invalidateMonitor } from '@/lib/query'
-import { cn } from '@/lib/utils'
+import { keysOf, sameIDs } from '@/lib/utils'
 import type { CardForm, ModelCard, MonitorStatus, UpstreamRow } from '@/types'
 import { StatusCardGroups, StatusMonitorCard, StatusSummary } from './shared'
 
@@ -30,14 +30,6 @@ const emptyCardForm: CardForm = {
   manual_cost_ratio: '',
   enabled: true,
   public_enabled: false,
-}
-
-function keysOf(row: UpstreamRow | undefined) {
-  return row?.keys ?? []
-}
-
-function sameIDs(a: ModelCard[], b: ModelCard[]) {
-  return a.length === b.length && a.every((item, index) => item.id === b[index]?.id)
 }
 
 function cardToForm(card?: ModelCard): CardForm {
@@ -85,10 +77,6 @@ function cardFormReady(form: CardForm, card?: ModelCard) {
   return Boolean(form.upstream_id && form.key_id)
 }
 
-function confirmDelete(name: string, note?: string) {
-  return window.confirm(`确认删除 ${name}？${note ? `\n${note}` : ''}`)
-}
-
 
 export function AdminStatusPage() {
   const qc = useQueryClient()
@@ -104,27 +92,22 @@ export function AdminStatusPage() {
   const cards = q.data?.rows ?? []
   const shownCards = layoutEditing ? draftCards : cards
   const sortDirty = !sameIDs(cards, draftCards)
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
   const sortCards = useMutation({
     mutationFn: (ids: string[]) => api('/api/cards/order', { method: 'POST', body: JSON.stringify({ ids }) }),
     onSuccess: async () => {
       await Promise.all([qc.invalidateQueries({ queryKey: ['status'] }), qc.invalidateQueries({ queryKey: ['cards'] })])
     },
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
   })
   const onDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    const oldIndex = draftCards.findIndex((card) => card.id === active.id)
-    const newIndex = draftCards.findIndex((card) => card.id === over.id)
-    if (oldIndex < 0 || newIndex < 0) return
-    setDraftCards((value) => arrayMove(value, oldIndex, newIndex))
+    setDraftCards((value) => reorderByDragEnd(value, event) ?? value)
   }
   const saveSort = () => {
-    sortCards.mutate(draftCards.map((card) => card.id).filter(Boolean), { onSuccess: () => setLayoutEditing(false) })
+    sortCards.mutate(draftCards.map((card) => card.id).filter(Boolean), {
+      onSuccess: () => {
+        setLayoutEditing(false)
+      },
+    })
   }
   return (
     <Page
@@ -139,7 +122,7 @@ export function AdminStatusPage() {
               <Button variant="outline" size="sm" onClick={() => { setDraftCards(cards); setLayoutEditing(false) }} disabled={sortCards.isPending}>取消</Button>
               <Button size="sm" onClick={saveSort} disabled={!sortDirty || sortCards.isPending}>
                 {sortCards.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                保存排序
+                {sortCards.isPending ? '保存中...' : '保存排序'}
               </Button>
             </>
           ) : (
@@ -153,13 +136,21 @@ export function AdminStatusPage() {
       {q.isLoading && <SkeletonCardGrid count={6} />}
       {!q.isLoading && shownCards.length > 0 && (
         layoutEditing ? (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-            <SortableContext items={shownCards.map((card) => card.id)} strategy={rectSortingStrategy}>
-              <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {shownCards.map((card) => <SortableStatusCard key={card.id} card={card} windowValue={windowValue} rows={upstreams.data ?? []} cards={cards} sorting={sortCards.isPending} />)}
-              </div>
-            </SortableContext>
-          </DndContext>
+          <SortableGrid itemIds={shownCards.map((card) => card.id)} onDragEnd={onDragEnd}>
+            {shownCards.map((card) => (
+              <SortableItem key={card.id} id={card.id}>
+                {({ attributes, listeners }) => (
+                  <AdminStatusMonitorCard
+                    card={card}
+                    windowValue={windowValue}
+                    rows={upstreams.data ?? []}
+                    cards={cards}
+                    dragHandle={<DragHandle sorting={sortCards.isPending} attributes={attributes} listeners={listeners} />}
+                  />
+                )}
+              </SortableItem>
+            ))}
+          </SortableGrid>
         ) : (
           <StatusCardGroups cards={shownCards} render={(card) => <AdminStatusMonitorCard key={card.id} card={card} windowValue={windowValue} rows={upstreams.data ?? []} cards={cards} />} />
         )
@@ -212,51 +203,6 @@ function AdminStatusMonitorCard({
   )
 }
 
-function SortableStatusCard({
-  card,
-  windowValue,
-  rows,
-  cards,
-  sorting,
-}: {
-  card: ModelCard
-  windowValue: string
-  rows: UpstreamRow[]
-  cards: ModelCard[]
-  sorting: boolean
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id })
-  return (
-    <div
-      ref={setNodeRef}
-      className={cn('min-w-0', isDragging && 'z-10 opacity-80')}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-    >
-      <AdminStatusMonitorCard
-        card={card}
-        windowValue={windowValue}
-        rows={rows}
-        cards={cards}
-        dragHandle={
-          <Button
-            variant="outline"
-            size="icon"
-            title="拖拽排序"
-            disabled={sorting}
-            className="touch-none"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical className="size-4" />
-            <span className="sr-only">拖拽排序</span>
-          </Button>
-        }
-      />
-    </div>
-  )
-}
-
-
 function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCard[]; card?: ModelCard }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -264,16 +210,20 @@ function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCa
   const keys = keysOf(rows.find((row) => row.upstream.id === form.upstream_id))
   const displayGroups = existingDisplayGroups(cards)
   const displayGroupListID = card ? `display-groups-${card.id}` : 'display-groups-new'
+  const fb = useFeedback()
   const save = useMutation({
     mutationFn: () =>
       api(card ? `/api/cards/${card.id}` : '/api/cards', {
         method: card ? 'PATCH' : 'POST',
         body: JSON.stringify(cardPayload(form)),
       }),
+    onMutate: () => fb.pending(),
     onSuccess: () => {
-      setOpen(false)
+      fb.success()
       void invalidateMonitor(qc)
+      closeAfterSave(setOpen)
     },
+    onError: fb.fail,
   })
   const remove = useMutation({
     mutationFn: () => api(`/api/cards/${card?.id ?? ''}`, { method: 'DELETE' }),
@@ -281,15 +231,21 @@ function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCa
       setOpen(false)
       void invalidateMonitor(qc)
     },
-    onError: (error) => window.alert(errorMessage(error)),
+    onError: alertError,
   })
-  const update = (patch: Partial<CardForm>) => setForm((value) => ({ ...value, ...patch }))
+  const update = (patch: Partial<CardForm>) => {
+    fb.clear()
+    setForm((value) => ({ ...value, ...patch }))
+  }
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
         setOpen(next)
-        if (next) setForm(cardToForm(card))
+        if (next) {
+          fb.clear()
+          setForm(cardToForm(card))
+        }
       }}
     >
       <DialogTrigger asChild>
@@ -307,7 +263,6 @@ function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCa
       </DialogTrigger>
       <DialogContent>
         <DialogTitle>{card ? '编辑状态卡片' : '新增状态卡片'}</DialogTitle>
-        <FormError error={save.error} />
         <div className="grid min-w-0 gap-4 md:grid-cols-2">
           <Field label="名称">
             <Input value={form.name} onChange={(e) => update({ name: e.target.value })} />
@@ -351,7 +306,7 @@ function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCa
                 <Input
                   type="password"
                   value={form.api_key}
-                  placeholder={card?.api_key_set ? '已保存，不修改请留空' : ''}
+                  placeholder={secretPlaceholder(card?.api_key_set)}
                   onChange={(e) => update({ api_key: e.target.value })}
                 />
               </Field>
@@ -422,13 +377,11 @@ function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCa
             <Input value="gpt-5.5" disabled />
           </Field>
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
+        <FeedbackBanner message={fb.message} error={save.isError} />
+        <ActionRow>
           {card && <IconAction title="删除" onClick={() => confirmDelete(card.name, '只删除卡片，历史探测记录会保留。') && remove.mutate()} pending={remove.isPending} icon={Trash2} danger />}
-          <Button onClick={() => save.mutate()} disabled={save.isPending || !cardFormReady(form, card)}>
-            {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            保存
-          </Button>
-        </div>
+          <SaveButton onClick={() => save.mutate()} pending={save.isPending} disabled={!cardFormReady(form, card)} message={fb.message} />
+        </ActionRow>
       </DialogContent>
     </Dialog>
   )

@@ -1,30 +1,28 @@
-import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, RefreshCcw } from 'lucide-react'
-import { EmptyPanel, Metric, SkeletonCardGrid, TypeBadge, StatusBadge } from '@/components/common'
+import { EmptyPanel, FeedbackBanner, Metric, SkeletonCardGrid, TypeBadge, StatusBadge } from '@/components/common'
 import { Page } from '@/components/layout'
 import { BalanceRechargeDialog } from '@/features/upstreams/UpstreamsPage'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { api } from '@/lib/api'
-import { errorMessage, fmtTime, latestRefreshTime, num } from '@/lib/format'
-import { useAutoClear } from '@/lib/hooks'
+import { fmtTime, latestRefreshTime, num } from '@/lib/format'
+import { useFeedback } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
 import type { BalanceRow, Upstream } from '@/types'
 
 export function BalancesPage() {
   const qc = useQueryClient()
-  const [message, setMessage] = useState('')
+  const fb = useFeedback('刷新完成')
   const q = useQuery({ queryKey: ['balances'], queryFn: () => api<BalanceRow[]>('/api/monitor/balances'), refetchInterval: 60000 })
-  useAutoClear(message, '刷新完成', setMessage)
   const refresh = useMutation({
     mutationFn: () => api('/api/monitor/balances/refresh', { method: 'POST' }),
-    onMutate: () => setMessage('刷新中...'),
+    onMutate: () => fb.pending('刷新中...'),
     onSuccess: async () => {
-      setMessage('刷新完成')
+      fb.success('刷新完成')
       await Promise.all([qc.invalidateQueries({ queryKey: ['balances'] }), qc.invalidateQueries({ queryKey: ['upstreams'] })])
     },
-    onError: (error) => setMessage(errorMessage(error)),
+    onError: fb.fail,
   })
   const rows = q.data ?? []
   const total = rows.reduce((sum, row) => sum + (row.remain ?? 0), 0)
@@ -37,14 +35,14 @@ export function BalancesPage() {
       actions={
         <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
           {lastRefresh && <span className="min-w-0 text-sm text-muted-foreground">最后刷新：{fmtTime(lastRefresh)}</span>}
-          {message && <span className={cn('min-w-0 text-sm', refresh.isError ? 'text-destructive' : 'text-muted-foreground')}>{message}</span>}
           <Button variant="outline" size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
             {refresh.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCcw className="size-3" />}
-            刷新余额
+            {refresh.isPending ? '刷新中...' : fb.message === '刷新完成' ? '已刷新' : '刷新余额'}
           </Button>
         </div>
       }
     >
+      <FeedbackBanner message={fb.message} error={refresh.isError} success="刷新完成" className="max-w-2xl" />
       <div className="grid gap-3 sm:grid-cols-3">
         <Metric label="上游数量" value={rows.length} />
         <Metric label="折算余额" value={`${num(total)} 元`} />
