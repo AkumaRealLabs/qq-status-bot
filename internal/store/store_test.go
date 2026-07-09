@@ -277,7 +277,7 @@ func TestOpsStoreCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rules.Enabled || rules.FailureThreshold != 2 || !rules.Recovery || !rules.EventTypes["probe_failed"] {
+	if !rules.Enabled || rules.FailureThreshold != 2 || !rules.Recovery || !rules.EventTypes["probe_failed"] || !rules.EventTypes["quota_exhausted"] || rules.EventTypes["probe_internal_error"] {
 		t.Fatalf("default rules = %+v", rules)
 	}
 	rules.Enabled = false
@@ -287,18 +287,48 @@ func TestOpsStoreCRUD(t *testing.T) {
 	if got, err := s.NotificationRules(t.Context()); err != nil || got.Enabled {
 		t.Fatalf("rules=%+v err=%v", got, err)
 	}
-	if _, err := s.CreateOpsEvent(t.Context(), domain.OpsEvent{Type: "probe_failed", Title: "探测失败", Actions: []string{"check_card"}}); err != nil {
+	if _, err := s.CreateOpsEvent(t.Context(), domain.OpsEvent{Type: "probe_failed", Title: "探测失败", TargetType: "card", TargetID: "c1", Actions: []string{"check_card"}}); err != nil {
 		t.Fatal(err)
 	}
-	events, err := s.OpsEvents(t.Context(), "probe_failed", "unacked", 10)
+	if _, err := s.CreateOpsEvent(t.Context(), domain.OpsEvent{Type: "quota_exhausted", Title: "余额不足", TargetType: "card", TargetID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.OpsEvents(t.Context(), domain.OpsEventFilter{Type: "probe_failed", State: "unacked", TargetType: "card", TargetID: "c1", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 1 || events[0].Actions[0] != "check_card" {
 		t.Fatalf("events = %+v", events)
 	}
+	groups, err := s.OpsEventGroups(t.Context(), domain.OpsEventFilter{State: "unacked", TargetType: "card", TargetID: "c1", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 2 || groups[0].Count != 1 || groups[0].Latest.TargetID != "c1" {
+		t.Fatalf("groups = %+v", groups)
+	}
+	if err := s.MarkOpsEventsRead(t.Context(), domain.OpsEventFilter{TargetType: "card", TargetID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	readEvents, err := s.OpsEvents(t.Context(), domain.OpsEventFilter{State: "unread", TargetType: "card", TargetID: "c1", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readEvents) != 0 {
+		t.Fatalf("unread events = %+v", readEvents)
+	}
 	if err := s.AckOpsEvent(t.Context(), events[0].ID); err != nil {
 		t.Fatal(err)
+	}
+	if err := s.AckOpsEvents(t.Context(), domain.OpsEventFilter{TargetType: "card", TargetID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	events, err = s.OpsEvents(t.Context(), domain.OpsEventFilter{State: "unacked", TargetType: "card", TargetID: "c1", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("unacked events = %+v", events)
 	}
 	if err := s.CreateAudit(t.Context(), domain.AuditLog{Actor: "admin", Action: "PATCH /api/settings", Fields: []string{"telegram_bot_token"}}); err != nil {
 		t.Fatal(err)

@@ -240,6 +240,15 @@ func TestCodexCLIErrorKeepsUpstreamMessage(t *testing.T) {
 	}
 }
 
+func TestIsInternalProbeError(t *testing.T) {
+	if !IsInternalProbeError("model instructions file is empty: /tmp/aum-codex-probe-123") {
+		t.Fatal("expected internal probe error")
+	}
+	if IsInternalProbeError("insufficient_quota") {
+		t.Fatal("upstream quota error is not internal")
+	}
+}
+
 func TestProbeCodexCLIRealOptIn(t *testing.T) {
 	if os.Getenv("AUM_REAL_CODEX_CLI_TEST") != "1" {
 		t.Skip("set AUM_REAL_CODEX_CLI_TEST=1 with AUM_REAL_CODEX_BASE_URL and AUM_REAL_CODEX_API_KEY")

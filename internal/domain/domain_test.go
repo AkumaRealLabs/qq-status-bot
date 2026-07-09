@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestConvertedBalanceValues(t *testing.T) {
 	_, _, remain := ConvertedBalanceValues("newapi", 0.1, 5000000, 0, 5000000)
@@ -37,5 +40,16 @@ func TestNormalizeSchedulerTiersKeepsCustomRows(t *testing.T) {
 		{Tag: "b", Group: "gpt_low", PriceMin: 0, PriceMax: 1},
 	}); err == nil {
 		t.Fatal("duplicate scheduler group passed")
+	}
+}
+
+func TestDecideAlertQuotaCooldown(t *testing.T) {
+	now := time.Now()
+	prev := AlertState{Active: true, LastAt: now.Add(-2 * time.Hour)}
+	if _, send := DecideAlert(now, "ping:c1", true, "failed", prev); !send {
+		t.Fatal("ping alert should cool down after one hour")
+	}
+	if _, send := DecideAlert(now, "quota:c1", true, "failed", prev); send {
+		t.Fatal("quota alert should cool down for six hours")
 	}
 }

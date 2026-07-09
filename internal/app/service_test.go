@@ -1086,14 +1086,26 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	if err := svc.applySchedulerAutomation(t.Context(), card, false, 2); err != nil {
 		t.Fatal(err)
 	}
-	card, _ = st.Card(t.Context(), card.ID)
-	if len(statuses) != 1 || statuses[0] != 2 || !card.SchedulerAutoDisabled {
-		t.Fatalf("disable statuses=%v card=%+v", statuses, card)
+	if len(statuses) != 0 {
+		t.Fatalf("second failure changed scheduler: %+v", statuses)
 	}
 	if err := svc.applySchedulerAutomation(t.Context(), card, false, 3); err != nil {
 		t.Fatal(err)
 	}
-	if len(statuses) != 2 || statuses[1] != 2 {
+	if len(statuses) != 0 {
+		t.Fatalf("third failure changed scheduler: %+v", statuses)
+	}
+	if err := svc.applySchedulerAutomation(t.Context(), card, false, 4); err != nil {
+		t.Fatal(err)
+	}
+	card, _ = st.Card(t.Context(), card.ID)
+	if len(statuses) != 1 || statuses[0] != 2 || !card.SchedulerAutoDisabled {
+		t.Fatalf("disable statuses=%v card=%+v", statuses, card)
+	}
+	if err := svc.applySchedulerAutomation(t.Context(), card, false, 5); err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 1 {
 		t.Fatalf("retry disable statuses=%v", statuses)
 	}
 	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
@@ -1102,7 +1114,7 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	if err := svc.applySchedulerAutomation(t.Context(), card, true, 0); err != nil {
 		t.Fatal(err)
 	}
-	if len(statuses) != 2 {
+	if len(statuses) != 1 {
 		t.Fatalf("first success restored scheduler: %+v", statuses)
 	}
 	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
@@ -1111,8 +1123,19 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	if err := svc.applySchedulerAutomation(t.Context(), card, true, 0); err != nil {
 		t.Fatal(err)
 	}
+	if len(statuses) != 1 {
+		t.Fatalf("second success restored too early: %+v", statuses)
+	}
+	old := time.Now().Add(-16 * time.Minute)
+	card.SchedulerAutoDisabledAt = &old
+	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.applySchedulerAutomation(t.Context(), card, true, 0); err != nil {
+		t.Fatal(err)
+	}
 	card, _ = st.Card(t.Context(), card.ID)
-	if len(statuses) != 3 || statuses[2] != 1 || card.SchedulerAutoDisabled {
+	if len(statuses) != 2 || statuses[1] != 1 || card.SchedulerAutoDisabled {
 		t.Fatalf("restore statuses=%v card=%+v", statuses, card)
 	}
 	logs, err := svc.SchedulerLogs(t.Context(), 10)
@@ -1188,7 +1211,7 @@ func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.applySchedulerAutomation(t.Context(), unconfigured, false, 2); err != nil {
+	if err := svc.applySchedulerAutomation(t.Context(), unconfigured, false, 4); err != nil {
 		t.Fatal(err)
 	}
 	unconfigured, _ = st.Card(t.Context(), unconfigured.ID)
@@ -1214,7 +1237,7 @@ func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.applySchedulerAutomation(t.Context(), card, false, 2); err == nil {
+	if err := svc.applySchedulerAutomation(t.Context(), card, false, 4); err == nil {
 		t.Fatal("success:false should fail")
 	}
 	got, err := st.Card(t.Context(), card.ID)
@@ -1233,6 +1256,105 @@ func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	}
 	if _, err := svc.SchedulerChannels(t.Context(), ""); err == nil {
 		t.Fatal("success:false channel list should fail")
+	}
+}
+
+func TestQuotaProbeUsesQuotaEventAndCooldown(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "insufficient_quota: not enough balance"}})
+	}))
+	defer ts.Close()
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: ts.URL, APIKey: "sk", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client(), ProbeMode: monitor.ProbeModeHTTP}
+	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	events, err := st.OpsEvents(t.Context(), domain.OpsEventFilter{Type: "quota_exhausted", TargetType: "card", TargetID: card.ID, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Title != "余额不足/成本池不可用" {
+		t.Fatalf("quota events = %+v", events)
+	}
+	if events, err := st.OpsEvents(t.Context(), domain.OpsEventFilter{Type: "probe_failed", TargetType: "card", TargetID: card.ID, Limit: 10}); err != nil || len(events) != 0 {
+		t.Fatalf("probe events = %+v err=%v", events, err)
+	}
+	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	events, err = st.OpsEvents(t.Context(), domain.OpsEventFilter{Type: "quota_exhausted", TargetType: "card", TargetID: card.ID, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("quota cooldown failed: %+v", events)
+	}
+}
+
+func TestInternalProbeErrorRetriesWithoutFailureCountOrTelegram(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	countPath := filepath.Join(dir, "count")
+	fake := filepath.Join(dir, "codex")
+	script := "#!/bin/sh\nprintf x >> " + countPath + "\necho 'model instructions file is empty /tmp/aum-codex-probe' >&2\nexit 1\n"
+	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{ProbeMode: monitor.ProbeModeCLI, CodexPath: fake}
+	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	count, err := os.ReadFile(countPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(count) != "xx" {
+		t.Fatalf("retry count = %q", count)
+	}
+	got, err := st.Card(t.Context(), card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FailureCount != 0 || got.LastError != "" || got.SchedulerAutoDisabled {
+		t.Fatalf("card state = %+v", got)
+	}
+	events, err := st.OpsEvents(t.Context(), domain.OpsEventFilter{Type: "probe_internal_error", TargetType: "card", TargetID: card.ID, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("internal events = %+v", events)
+	}
+	if logs, err := svc.SchedulerLogs(t.Context(), 10); err != nil || len(logs) != 0 {
+		t.Fatalf("scheduler logs = %+v err=%v", logs, err)
 	}
 }
 

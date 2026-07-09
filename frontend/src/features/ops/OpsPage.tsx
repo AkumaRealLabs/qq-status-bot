@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bell, Check, Loader2, RefreshCcw, ShieldCheck } from 'lucide-react'
+import { Bell, Check, ChevronDown, ChevronRight, Loader2, RefreshCcw, ShieldCheck } from 'lucide-react'
 import { EmptyPanel, Field, FormError, Metric } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
@@ -15,12 +16,15 @@ import type {
   AuditLog,
   NotificationRules,
   OpsEvent,
+  OpsEventGroup,
   ProfitResponse,
   SelfCheckResponse,
 } from '@/types'
 
 const eventLabels: Record<string, string> = {
   probe_failed: '探测失败',
+  quota_exhausted: '余额不足/成本池不可用',
+  probe_internal_error: '本地探测错误',
   balance_low: '余额低',
   credential_invalid: '凭据失效',
   balance_query_failed: '额度查询失败',
@@ -49,34 +53,142 @@ export function SelfCheckPage() {
 }
 
 function EventsTab() {
-  const q = useQuery({ queryKey: ['ops', 'events'], queryFn: () => api<OpsEvent[]>('/api/ops/events'), refetchInterval: 30000 })
+  const qc = useQueryClient()
+  const [state, setState] = useState('unacked')
+  const [type, setType] = useState('all')
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [confirmBulk, setConfirmBulk] = useState(false)
+  const filter = eventFilterParams({ state, type })
+  const groups = useQuery({
+    queryKey: ['ops', 'event-groups', state, type],
+    queryFn: () => api<OpsEventGroup[]>(`/api/ops/event-groups?${filter}`),
+    refetchInterval: 30000,
+  })
+  const ack = useMutation({
+    mutationFn: (body: Record<string, string>) => api('/api/ops/events/ack', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: async () => qc.invalidateQueries({ queryKey: ['ops'] }),
+  })
+  const read = useMutation({
+    mutationFn: (body: Record<string, string>) => api('/api/ops/events/read', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: async () => qc.invalidateQueries({ queryKey: ['ops'] }),
+  })
+  const bulkBody = eventFilterBody({ state, type })
   return (
     <section className="grid min-w-0 gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        {q.isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-        <Button variant="outline" size="sm" onClick={() => void q.refetch()}><RefreshCcw className="size-4" />刷新</Button>
+        <Select value={state} onValueChange={setState}>
+          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="unacked">未确认</SelectItem>
+            <SelectItem value="unread">未读</SelectItem>
+            <SelectItem value="acked">已确认</SelectItem>
+            <SelectItem value="all">全部</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={type} onValueChange={setType}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部类型</SelectItem>
+            {Object.entries(eventLabels).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {groups.isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+        <Button variant="outline" size="sm" onClick={() => void groups.refetch()}><RefreshCcw className="size-4" />刷新</Button>
+        <Button variant="outline" size="sm" onClick={() => setConfirmBulk(true)} disabled={ack.isPending || (groups.data?.length ?? 0) === 0}><Check className="size-4" />批量确认</Button>
       </div>
-      <FormError error={q.error} />
-      {q.isLoading && <EmptyPanel text="加载中..." />}
-      {!q.isLoading && (q.data?.length ?? 0) === 0 && <EmptyPanel text="暂无事件" />}
+      <FormError error={groups.error || ack.error || read.error} />
+      {groups.isLoading && <EmptyPanel text="加载中..." />}
+      {!groups.isLoading && (groups.data?.length ?? 0) === 0 && <EmptyPanel text="暂无事件" />}
       <div className="grid min-w-0 gap-3">
-        {(q.data ?? []).map((event) => (
-          <Card key={event.id} className="bg-card">
+        {(groups.data ?? []).map((group) => {
+          const key = eventGroupKey(group)
+          return (
+          <Card key={key} className="bg-card">
             <CardContent className="grid gap-3">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <SeverityBadge severity={event.severity} />
-                  <span className="font-medium text-foreground">{event.title || eventLabels[event.type] || event.type}</span>
-                  <span className="text-xs text-muted-foreground">{fmtTime(event.created_at)}</span>
+                  <Button variant="ghost" size="icon" className="size-7 rounded-sm" onClick={() => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }))}>
+                    {expanded[key] ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                    <span className="sr-only">展开</span>
+                  </Button>
+                  <SeverityBadge severity={group.latest.severity} />
+                  <span className="font-medium text-foreground">{eventLabels[group.type] || group.latest.title || group.type}</span>
+                  <Badge variant="outline">{group.count} 条</Badge>
+                  {group.unread_count > 0 && <Badge variant="outline">未读 {group.unread_count}</Badge>}
+                  {group.unacked_count > 0 && <Badge variant="outline">未确认 {group.unacked_count}</Badge>}
+                  <span className="text-xs text-muted-foreground">{fmtTime(group.latest.created_at)}</span>
                 </div>
-                <div className="mt-1 break-words text-sm text-muted-foreground">{event.message}</div>
+                <div className="mt-1 break-words text-sm text-muted-foreground">{group.latest.message}</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => read.mutate(eventGroupFilter(group))} disabled={read.isPending}><Check className="size-4" />标为已读</Button>
+                  <Button variant="outline" size="sm" onClick={() => ack.mutate(eventGroupFilter(group))} disabled={ack.isPending}><ShieldCheck className="size-4" />确认</Button>
+                </div>
               </div>
+              {expanded[key] && <EventDetails state={state} type={group.type} targetType={group.target_type ?? ''} targetID={group.target_id ?? ''} />}
             </CardContent>
           </Card>
-        ))}
+        )})}
       </div>
+      <Dialog open={confirmBulk} onOpenChange={setConfirmBulk}>
+        <DialogContent className="max-w-md">
+          <DialogTitle>确认当前筛选</DialogTitle>
+          <p className="text-sm text-muted-foreground">将当前筛选下的事件全部标为已读并确认。</p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmBulk(false)}>取消</Button>
+            <Button onClick={() => ack.mutate(bulkBody, { onSuccess: () => setConfirmBulk(false) })} disabled={ack.isPending}>{ack.isPending ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}确认</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </section>
   )
+}
+
+function EventDetails({ state, type, targetType, targetID }: { state: string, type: string, targetType: string, targetID: string }) {
+  const params = eventFilterParams({ state, type, targetType, targetID, limit: 50 })
+  const q = useQuery({ queryKey: ['ops', 'events', state, type, targetType, targetID], queryFn: () => api<OpsEvent[]>(`/api/ops/events?${params}`) })
+  if (q.isLoading) return <EmptyPanel text="加载中..." />
+  return (
+    <div className="grid gap-2 border-t border-border pt-3">
+      {(q.data ?? []).map((event) => (
+        <div key={event.id} className="min-w-0 rounded-sm border border-border bg-background p-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <SeverityBadge severity={event.severity} />
+            <span>{event.title || eventLabels[event.type] || event.type}</span>
+            <span>{fmtTime(event.created_at)}</span>
+            {event.read && <span>已读</span>}
+            {event.acked && <span>已确认</span>}
+          </div>
+          <div className="mt-1 break-words text-sm">{event.message}</div>
+        </div>
+      ))}
+      {(q.data?.length ?? 0) === 0 && <EmptyPanel text="暂无明细" />}
+    </div>
+  )
+}
+
+function eventFilterParams(filter: { state?: string, type?: string, targetType?: string, targetID?: string, limit?: number }) {
+  const params = new URLSearchParams()
+  if (filter.state && filter.state !== 'all') params.set('state', filter.state)
+  if (filter.type && filter.type !== 'all') params.set('type', filter.type)
+  if (filter.targetType) params.set('target_type', filter.targetType)
+  if (filter.targetID) params.set('target_id', filter.targetID)
+  if (filter.limit) params.set('limit', String(filter.limit))
+  return params.toString()
+}
+
+function eventFilterBody(filter: { state?: string, type?: string }) {
+  return {
+    ...(filter.state && filter.state !== 'all' ? { state: filter.state } : {}),
+    ...(filter.type && filter.type !== 'all' ? { type: filter.type } : {}),
+  }
+}
+
+function eventGroupFilter(group: OpsEventGroup) {
+  return { type: group.type, target_type: group.target_type ?? '', target_id: group.target_id ?? '' }
+}
+
+function eventGroupKey(group: OpsEventGroup) {
+  return [group.type, group.target_type ?? '', group.target_id ?? ''].join(':')
 }
 
 function AuditTab() {

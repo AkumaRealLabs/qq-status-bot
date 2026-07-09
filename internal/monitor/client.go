@@ -286,6 +286,23 @@ func (c Client) Probe(ctx context.Context, baseURL, key, model string) ProbeResu
 	return c.probeHTTP(ctx, baseURL, key, model)
 }
 
+func IsInternalProbeError(errText string) bool {
+	lower := strings.ToLower(errText)
+	for _, needle := range []string{
+		"model instructions file is empty",
+		"/tmp/aum-codex-probe",
+		"aum-codex-probe-",
+		"codex-home",
+		"approval_policy",
+		"exec: \"codex\"",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c Client) probeHTTP(ctx context.Context, baseURL, key, model string) ProbeResult {
 	start := time.Now()
 	var raw map[string]any
@@ -395,6 +412,9 @@ func codexCLIError(err error, output []byte, key string) string {
 	text := string(output)
 	if key != "" {
 		text = strings.ReplaceAll(text, key, "[redacted]")
+	}
+	if IsInternalProbeError(text) {
+		return limitText(err.Error()+": "+strings.TrimSpace(text), 2000)
 	}
 	if msg := upstreamErrorMessage(text); msg != "" {
 		return err.Error() + ": " + msg

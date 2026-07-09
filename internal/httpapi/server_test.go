@@ -15,6 +15,14 @@ import (
 	"ai-upstream-monitor/internal/store"
 )
 
+func TestAuditActionDoesNotDuplicateMethod(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPatch, "/api/cards/1", nil)
+	r.Pattern = "PATCH /api/cards/{id}"
+	if got := auditAction(r); got != "PATCH /api/cards/{id}" {
+		t.Fatalf("action = %q", got)
+	}
+}
+
 func TestAuthSessionFlow(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
 	if err != nil {

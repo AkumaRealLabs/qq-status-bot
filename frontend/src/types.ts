@@ -56,6 +56,7 @@ export type ModelCard = {
   scheduler_channel_id?: string
   scheduler_channel_name?: string
   scheduler_auto_disabled: boolean
+  scheduler_auto_disabled_at?: string
   enabled: boolean
   public_enabled: boolean
   sort_order: number
@@ -377,6 +378,16 @@ export type OpsEvent = {
   acked: boolean
   created_at: string
   updated_at: string
+}
+
+export type OpsEventGroup = {
+  type: string
+  target_type?: string
+  target_id?: string
+  count: number
+  unread_count: number
+  unacked_count: number
+  latest: OpsEvent
 }
 
 export type AuditLog = {

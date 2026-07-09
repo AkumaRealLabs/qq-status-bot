@@ -323,7 +323,10 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 	if !card.PoolEnabled || card.SchedulerChannelID == "" {
 		return nil
 	}
-	if !success && failures >= 2 {
+	if !success && failures >= 4 {
+		if card.SchedulerAutoDisabled {
+			return nil
+		}
 		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 2); err != nil {
 			if errors.Is(err, errSchedulerNotConfigured) {
 				s.logSchedulerAction(ctx, card, "disable", "skipped", "调度器未配置")
@@ -332,17 +335,14 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
 			return err
 		}
-		if card.SchedulerAutoDisabled {
-			return nil
-		}
 		if err := s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true); err != nil {
 			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
 			return err
 		}
-		s.logSchedulerAction(ctx, card, "disable", "success", "连续失败 2 次，已关闭调度器渠道")
+		s.logSchedulerAction(ctx, card, "disable", "success", "连续失败 4 次，已关闭调度器渠道")
 		return nil
 	}
-	if success && card.SchedulerAutoDisabled && s.lastTwoProbesSucceeded(ctx, card.ID) {
+	if success && card.SchedulerAutoDisabled && s.schedulerRestoreReady(ctx, card) {
 		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 1); err != nil {
 			if errors.Is(err, errSchedulerNotConfigured) {
 				s.logSchedulerAction(ctx, card, "restore", "skipped", "调度器未配置")
@@ -355,7 +355,7 @@ func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.Mode
 			s.logSchedulerAction(ctx, card, "restore", "error", err.Error())
 			return err
 		}
-		s.logSchedulerAction(ctx, card, "restore", "success", "连续成功 2 次，已恢复调度器渠道")
+		s.logSchedulerAction(ctx, card, "restore", "success", "连续成功 3 次且已关闭至少 15 分钟，已恢复调度器渠道")
 		return nil
 	}
 	return nil
@@ -401,12 +401,21 @@ func (s *Service) logSchedulerAction(ctx context.Context, card domain.ModelCard,
 	}
 }
 
-func (s *Service) lastTwoProbesSucceeded(ctx context.Context, cardID string) bool {
-	probes, err := s.Store.RecentProbesForCard(ctx, cardID, 2)
-	if err != nil || len(probes) < 2 {
+func (s *Service) schedulerRestoreReady(ctx context.Context, card domain.ModelCard) bool {
+	if card.SchedulerAutoDisabledAt == nil {
+		now := time.Now().UTC()
+		_ = s.Store.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true)
+		card.SchedulerAutoDisabledAt = &now
 		return false
 	}
-	return probes[0].Success && probes[1].Success
+	if time.Since(*card.SchedulerAutoDisabledAt) < 15*time.Minute {
+		return false
+	}
+	probes, err := s.Store.RecentProbesForCard(ctx, card.ID, 3)
+	if err != nil || len(probes) < 3 {
+		return false
+	}
+	return probes[0].Success && probes[1].Success && probes[2].Success
 }
 
 func (s *Service) cardPrice(ctx context.Context, card domain.ModelCard) (float64, bool) {

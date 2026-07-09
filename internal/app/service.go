@@ -445,6 +445,7 @@ func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) 
 	card.ID = old.ID
 	card.LastError = old.LastError
 	card.FailureCount = old.FailureCount
+	card.SchedulerAutoDisabledAt = old.SchedulerAutoDisabledAt
 	card.SortOrder = old.SortOrder
 	card.CreatedAt = old.CreatedAt
 	out, err := s.Store.UpdateCard(ctx, card)
@@ -585,9 +586,12 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 	if err != nil {
 		return err
 	}
-	probe := s.Client.Probe(ctx, u.BaseURL, key.Key, domain.ProbeModel)
+	probe := s.probeWithInternalRetry(ctx, u.BaseURL, key.Key, domain.ProbeModel)
 	if _, err := s.Store.SaveProbe(ctx, u.ID, card.ID, probe); err != nil {
 		return err
+	}
+	if monitor.IsInternalProbeError(probe.Error) {
+		return s.alert(ctx, u, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
 	}
 	failures := 0
 	lastErr := ""
@@ -599,7 +603,13 @@ func (s *Service) CheckCard(ctx context.Context, cardID string) error {
 		return err
 	}
 	_ = s.applySchedulerAutomation(ctx, card, probe.Success, failures)
-	return s.alert(ctx, u, "ping:"+card.ID, !probe.Success && failures >= s.alertFailureThreshold(ctx), card.Name+" 探测失败: "+probe.Error)
+	if probe.Success {
+		_ = s.alert(ctx, u, "internal:"+card.ID, false, card.Name+" 本地探测已恢复")
+		_ = s.alert(ctx, u, "quota:"+card.ID, false, card.Name+" 余额不足状态已恢复")
+		return s.alert(ctx, u, "ping:"+card.ID, false, card.Name+" 探测已恢复")
+	}
+	kind, msg := probeAlertKind(card, probe)
+	return s.alert(ctx, u, kind, failures >= s.alertFailureThreshold(ctx), msg)
 }
 
 func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) error {
@@ -614,9 +624,13 @@ func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) er
 		}
 		return s.applySchedulerAutomation(ctx, card, false, failures)
 	}
-	probe := s.Client.Probe(ctx, card.BaseURL, card.APIKey, domain.ProbeModel)
+	probe := s.probeWithInternalRetry(ctx, card.BaseURL, card.APIKey, domain.ProbeModel)
 	if _, err := s.Store.SaveProbe(ctx, "", card.ID, probe); err != nil {
 		return err
+	}
+	pseudo := domain.Upstream{ID: "card:" + card.ID, Name: card.Name}
+	if monitor.IsInternalProbeError(probe.Error) {
+		return s.alert(ctx, pseudo, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
 	}
 	failures := 0
 	lastErr := ""
@@ -627,13 +641,50 @@ func (s *Service) checkCustomCard(ctx context.Context, card domain.ModelCard) er
 	if err := s.Store.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
 		return err
 	}
-	if !probe.Success && failures >= s.alertFailureThreshold(ctx) {
-		_, _ = s.Store.CreateOpsEvent(ctx, domain.OpsEvent{
-			Type: "probe_failed", Severity: "warning", Title: "探测失败", Message: card.Name + " 探测失败: " + probe.Error,
-			TargetType: "card", TargetID: card.ID, Actions: []string{"check_card"},
-		})
+	if probe.Success {
+		_ = s.alert(ctx, pseudo, "internal:"+card.ID, false, card.Name+" 本地探测已恢复")
+		_ = s.alert(ctx, pseudo, "quota:"+card.ID, false, card.Name+" 余额不足状态已恢复")
+		_ = s.alert(ctx, pseudo, "ping:"+card.ID, false, card.Name+" 探测已恢复")
+	} else {
+		kind, msg := probeAlertKind(card, probe)
+		_ = s.alert(ctx, pseudo, kind, failures >= s.alertFailureThreshold(ctx), msg)
 	}
 	return s.applySchedulerAutomation(ctx, card, probe.Success, failures)
+}
+
+func (s *Service) probeWithInternalRetry(ctx context.Context, baseURL, key, model string) monitor.ProbeResult {
+	probe := s.Client.Probe(ctx, baseURL, key, model)
+	if !probe.Success && monitor.IsInternalProbeError(probe.Error) {
+		return s.Client.Probe(ctx, baseURL, key, model)
+	}
+	return probe
+}
+
+func probeAlertKind(card domain.ModelCard, probe monitor.ProbeResult) (string, string) {
+	if IsQuotaProbeError(probe.Error) {
+		return "quota:" + card.ID, card.Name + " 余额不足/成本池不可用: " + probe.Error
+	}
+	return "ping:" + card.ID, card.Name + " 探测失败: " + probe.Error
+}
+
+func IsQuotaProbeError(errText string) bool {
+	lower := strings.ToLower(errText)
+	for _, needle := range []string{
+		"余额不足",
+		"额度不足",
+		"预扣费不足",
+		"insufficient_quota",
+		"not enough quota",
+		"not enough balance",
+		"pre-deduct",
+		"prepaid balance",
+		"quota exceeded",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func rechargeStatus(err error, out monitor.RechargeOrderResult) (string, string) {

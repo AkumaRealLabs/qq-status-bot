@@ -19,8 +19,12 @@ import (
 	"ai-upstream-monitor/internal/domain"
 )
 
-func (s *Service) OpsEvents(ctx context.Context, eventType, state string, limit int) ([]domain.OpsEvent, error) {
-	return s.Store.OpsEvents(ctx, eventType, state, limit)
+func (s *Service) OpsEvents(ctx context.Context, filter domain.OpsEventFilter) ([]domain.OpsEvent, error) {
+	return s.Store.OpsEvents(ctx, filter)
+}
+
+func (s *Service) OpsEventGroups(ctx context.Context, filter domain.OpsEventFilter) ([]domain.OpsEventGroup, error) {
+	return s.Store.OpsEventGroups(ctx, filter)
 }
 
 func (s *Service) AuditLogs(ctx context.Context, action, target string, limit int) ([]domain.AuditLog, error) {
@@ -67,6 +71,12 @@ func alertOpsType(kind string, recover bool) (string, string, string) {
 	if strings.HasPrefix(kind, "ping:") {
 		return "probe_failed", "card", strings.TrimPrefix(kind, "ping:")
 	}
+	if strings.HasPrefix(kind, "quota:") {
+		return "quota_exhausted", "card", strings.TrimPrefix(kind, "quota:")
+	}
+	if strings.HasPrefix(kind, "internal:") {
+		return "probe_internal_error", "card", strings.TrimPrefix(kind, "internal:")
+	}
 	switch kind {
 	case "balance":
 		return "balance_low", "upstream", ""
@@ -89,6 +99,10 @@ func alertOpsTitle(eventType string, recover bool) string {
 	switch eventType {
 	case "probe_failed":
 		return "探测失败"
+	case "quota_exhausted":
+		return "余额不足/成本池不可用"
+	case "probe_internal_error":
+		return "本地探测错误"
 	case "balance_low":
 		return "余额低"
 	case "credential_invalid":
@@ -102,7 +116,7 @@ func alertOpsTitle(eventType string, recover bool) string {
 
 func alertOpsActions(eventType string) []string {
 	switch eventType {
-	case "probe_failed":
+	case "probe_failed", "quota_exhausted", "probe_internal_error":
 		return []string{"check_card"}
 	case "credential_invalid", "balance_query_failed":
 		return []string{"check_upstream", "sync_keys"}

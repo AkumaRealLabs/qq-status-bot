@@ -45,35 +45,36 @@ type APIKey struct {
 }
 
 type ModelCard struct {
-	ID                    string     `json:"id"`
-	Name                  string     `json:"name"`
-	BaseURL               string     `json:"base_url,omitempty"`
-	APIKey                string     `json:"api_key,omitempty"`
-	UpstreamID            string     `json:"upstream_id,omitempty"`
-	UpstreamName          string     `json:"upstream_name,omitempty"`
-	Type                  string     `json:"type,omitempty"`
-	KeyID                 string     `json:"key_id,omitempty"`
-	KeyName               string     `json:"key_name,omitempty"`
-	KeyGroup              string     `json:"key_group,omitempty"`
-	KeyRatio              string     `json:"key_group_ratio,omitempty"`
-	EffectiveRatio        string     `json:"effective_ratio,omitempty"`
-	Model                 string     `json:"model"`
-	DisplayGroup          string     `json:"display_group"`
-	PoolEnabled           bool       `json:"pool_enabled"`
-	PoolEnabledSet        bool       `json:"-"`
-	ManualCostRatio       string     `json:"manual_cost_ratio,omitempty"`
-	SchedulerGroup        string     `json:"scheduler_group,omitempty"`
-	SchedulerChannelID    string     `json:"scheduler_channel_id,omitempty"`
-	SchedulerChannelName  string     `json:"scheduler_channel_name,omitempty"`
-	SchedulerAutoDisabled bool       `json:"scheduler_auto_disabled"`
-	Enabled               bool       `json:"enabled"`
-	PublicEnabled         bool       `json:"public_enabled"`
-	SortOrder             int        `json:"sort_order"`
-	LastError             string     `json:"last_error"`
-	FailureCount          int        `json:"failure_count"`
-	History               []ProbeRun `json:"history,omitempty"`
-	CreatedAt             time.Time  `json:"created_at"`
-	UpdatedAt             time.Time  `json:"updated_at"`
+	ID                      string     `json:"id"`
+	Name                    string     `json:"name"`
+	BaseURL                 string     `json:"base_url,omitempty"`
+	APIKey                  string     `json:"api_key,omitempty"`
+	UpstreamID              string     `json:"upstream_id,omitempty"`
+	UpstreamName            string     `json:"upstream_name,omitempty"`
+	Type                    string     `json:"type,omitempty"`
+	KeyID                   string     `json:"key_id,omitempty"`
+	KeyName                 string     `json:"key_name,omitempty"`
+	KeyGroup                string     `json:"key_group,omitempty"`
+	KeyRatio                string     `json:"key_group_ratio,omitempty"`
+	EffectiveRatio          string     `json:"effective_ratio,omitempty"`
+	Model                   string     `json:"model"`
+	DisplayGroup            string     `json:"display_group"`
+	PoolEnabled             bool       `json:"pool_enabled"`
+	PoolEnabledSet          bool       `json:"-"`
+	ManualCostRatio         string     `json:"manual_cost_ratio,omitempty"`
+	SchedulerGroup          string     `json:"scheduler_group,omitempty"`
+	SchedulerChannelID      string     `json:"scheduler_channel_id,omitempty"`
+	SchedulerChannelName    string     `json:"scheduler_channel_name,omitempty"`
+	SchedulerAutoDisabled   bool       `json:"scheduler_auto_disabled"`
+	SchedulerAutoDisabledAt *time.Time `json:"scheduler_auto_disabled_at,omitempty"`
+	Enabled                 bool       `json:"enabled"`
+	PublicEnabled           bool       `json:"public_enabled"`
+	SortOrder               int        `json:"sort_order"`
+	LastError               string     `json:"last_error"`
+	FailureCount            int        `json:"failure_count"`
+	History                 []ProbeRun `json:"history,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
 }
 
 type PublicModelCard struct {
@@ -453,7 +454,7 @@ func DecideAlert(now time.Time, kind string, failing bool, message string, prev 
 		}
 		return AlertDecision{NewState: prev}, false
 	}
-	if prev.Active && now.Sub(prev.LastAt) < time.Hour {
+	if prev.Active && now.Sub(prev.LastAt) < alertCooldown(kind) {
 		return AlertDecision{NewState: prev}, false
 	}
 	return AlertDecision{
@@ -461,4 +462,11 @@ func DecideAlert(now time.Time, kind string, failing bool, message string, prev 
 		Message:  message,
 		NewState: AlertState{Active: true, LastAt: now},
 	}, true
+}
+
+func alertCooldown(kind string) time.Duration {
+	if strings.HasPrefix(kind, "quota:") {
+		return 6 * time.Hour
+	}
+	return time.Hour
 }

@@ -16,6 +16,8 @@ func DefaultNotificationRules() NotificationRules {
 		Recovery:         true,
 		EventTypes: map[string]bool{
 			"probe_failed":         true,
+			"quota_exhausted":      true,
+			"probe_internal_error": false,
 			"balance_low":          true,
 			"credential_invalid":   true,
 			"balance_query_failed": true,
@@ -55,6 +57,24 @@ type OpsEvent struct {
 	Acked      bool      `json:"acked"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type OpsEventFilter struct {
+	Type       string `json:"type,omitempty"`
+	State      string `json:"state,omitempty"`
+	TargetType string `json:"target_type,omitempty"`
+	TargetID   string `json:"target_id,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
+}
+
+type OpsEventGroup struct {
+	Type         string   `json:"type"`
+	TargetType   string   `json:"target_type,omitempty"`
+	TargetID     string   `json:"target_id,omitempty"`
+	Count        int      `json:"count"`
+	UnreadCount  int      `json:"unread_count"`
+	UnackedCount int      `json:"unacked_count"`
+	Latest       OpsEvent `json:"latest"`
 }
 
 type AuditLog struct {

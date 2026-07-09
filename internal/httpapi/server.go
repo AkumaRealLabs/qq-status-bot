@@ -92,6 +92,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/settings/export", s.auth(s.exportData))
 	mux.HandleFunc("POST /api/settings/import", s.auth(s.importData))
 	mux.HandleFunc("GET /api/ops/events", s.auth(s.opsEvents))
+	mux.HandleFunc("GET /api/ops/event-groups", s.auth(s.opsEventGroups))
+	mux.HandleFunc("POST /api/ops/events/read", s.auth(s.markOpsEventsRead))
+	mux.HandleFunc("POST /api/ops/events/ack", s.auth(s.ackOpsEvents))
 	mux.HandleFunc("POST /api/ops/events/{id}/read", s.auth(s.markOpsEventRead))
 	mux.HandleFunc("POST /api/ops/events/{id}/ack", s.auth(s.ackOpsEvent))
 	mux.HandleFunc("GET /api/ops/audit", s.auth(s.auditLogs))
@@ -263,6 +266,9 @@ func auditAction(r *http.Request) string {
 	pattern := r.Pattern
 	if pattern == "" {
 		pattern = r.URL.Path
+	}
+	if strings.HasPrefix(pattern, r.Method+" ") {
+		return pattern
 	}
 	return r.Method + " " + pattern
 }
@@ -784,8 +790,12 @@ func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) opsEvents(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, err := s.App.OpsEvents(r.Context(), r.URL.Query().Get("type"), r.URL.Query().Get("state"), limit)
+	out, err := s.App.OpsEvents(r.Context(), opsEventFilterFromQuery(r))
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) opsEventGroups(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.OpsEventGroups(r.Context(), opsEventFilterFromQuery(r))
 	writeJSONOrError(w, out, err)
 }
 
@@ -795,6 +805,41 @@ func (s *Server) markOpsEventRead(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ackOpsEvent(w http.ResponseWriter, r *http.Request) {
 	writeNoContentOrError(w, s.App.Store.AckOpsEvent(r.Context(), r.PathValue("id")))
+}
+
+func (s *Server) markOpsEventsRead(w http.ResponseWriter, r *http.Request) {
+	filter, ok := opsEventFilterFromBody(w, r)
+	if !ok {
+		return
+	}
+	writeNoContentOrError(w, s.App.Store.MarkOpsEventsRead(r.Context(), filter))
+}
+
+func (s *Server) ackOpsEvents(w http.ResponseWriter, r *http.Request) {
+	filter, ok := opsEventFilterFromBody(w, r)
+	if !ok {
+		return
+	}
+	writeNoContentOrError(w, s.App.Store.AckOpsEvents(r.Context(), filter))
+}
+
+func opsEventFilterFromQuery(r *http.Request) domain.OpsEventFilter {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	return domain.OpsEventFilter{
+		Type:       r.URL.Query().Get("type"),
+		State:      r.URL.Query().Get("state"),
+		TargetType: r.URL.Query().Get("target_type"),
+		TargetID:   r.URL.Query().Get("target_id"),
+		Limit:      limit,
+	}
+}
+
+func opsEventFilterFromBody(w http.ResponseWriter, r *http.Request) (domain.OpsEventFilter, bool) {
+	var filter domain.OpsEventFilter
+	if !decode(w, r, &filter) {
+		return filter, false
+	}
+	return filter, true
 }
 
 func (s *Server) auditLogs(w http.ResponseWriter, r *http.Request) {

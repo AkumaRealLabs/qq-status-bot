@@ -59,24 +59,9 @@ func (s *Store) CreateOpsEvent(ctx context.Context, event domain.OpsEvent) (doma
 	return event, err
 }
 
-func (s *Store) OpsEvents(ctx context.Context, eventType, state string, limit int) ([]domain.OpsEvent, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	where := []string{"1=1"}
-	args := []any{}
-	if strings.TrimSpace(eventType) != "" {
-		where = append(where, "type=?")
-		args = append(args, strings.TrimSpace(eventType))
-	}
-	switch strings.TrimSpace(state) {
-	case "unread":
-		where = append(where, "read=0")
-	case "unacked":
-		where = append(where, "acked=0")
-	case "acked":
-		where = append(where, "acked=1")
-	}
+func (s *Store) OpsEvents(ctx context.Context, filter domain.OpsEventFilter) ([]domain.OpsEvent, error) {
+	limit := opsEventLimit(filter.Limit)
+	where, args := opsEventWhere(filter)
 	args = append(args, limit)
 	rows, err := s.query(ctx, `SELECT id, type, severity, title, message, target_type, target_id, actions, read, acked, created_at, updated_at
 		FROM ops_events WHERE `+strings.Join(where, " AND ")+` ORDER BY created_at DESC LIMIT ?`, args...)
@@ -95,11 +80,92 @@ func (s *Store) OpsEvents(ctx context.Context, eventType, state string, limit in
 	return out, rows.Err()
 }
 
+func (s *Store) OpsEventGroups(ctx context.Context, filter domain.OpsEventFilter) ([]domain.OpsEventGroup, error) {
+	limit := opsEventLimit(filter.Limit)
+	where, args := opsEventWhere(filter)
+	args = append(args, limit)
+	rows, err := s.query(ctx, `SELECT e.id, e.type, e.severity, e.title, e.message, e.target_type, e.target_id, e.actions, e.read, e.acked, e.created_at, e.updated_at,
+		g.count, g.unread_count, g.unacked_count
+		FROM (
+			SELECT type, target_type, target_id, COUNT(*) count, SUM(CASE WHEN read=0 THEN 1 ELSE 0 END) unread_count, SUM(CASE WHEN acked=0 THEN 1 ELSE 0 END) unacked_count, MAX(created_at) latest_at
+			FROM ops_events WHERE `+strings.Join(where, " AND ")+`
+			GROUP BY type, target_type, target_id
+			ORDER BY latest_at DESC LIMIT ?
+		) g
+		JOIN ops_events e ON e.id = (
+			SELECT id FROM ops_events
+			WHERE type=g.type AND target_type=g.target_type AND target_id=g.target_id
+				AND created_at=g.latest_at
+			ORDER BY id DESC LIMIT 1
+		)
+		ORDER BY e.created_at DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.OpsEventGroup{}
+	for rows.Next() {
+		var group domain.OpsEventGroup
+		event, err := scanOpsEventGroupRows(rows, &group)
+		if err != nil {
+			return nil, err
+		}
+		group.Type, group.TargetType, group.TargetID, group.Latest = event.Type, event.TargetType, event.TargetID, event
+		out = append(out, group)
+	}
+	return out, rows.Err()
+}
+
+func opsEventLimit(limit int) int {
+	if limit <= 0 || limit > 500 {
+		return 100
+	}
+	return limit
+}
+
+func opsEventWhere(filter domain.OpsEventFilter) ([]string, []any) {
+	where := []string{"1=1"}
+	args := []any{}
+	if strings.TrimSpace(filter.Type) != "" {
+		where = append(where, "type=?")
+		args = append(args, strings.TrimSpace(filter.Type))
+	}
+	if strings.TrimSpace(filter.TargetType) != "" {
+		where = append(where, "target_type=?")
+		args = append(args, strings.TrimSpace(filter.TargetType))
+	}
+	if strings.TrimSpace(filter.TargetID) != "" {
+		where = append(where, "target_id=?")
+		args = append(args, strings.TrimSpace(filter.TargetID))
+	}
+	switch strings.TrimSpace(filter.State) {
+	case "unread":
+		where = append(where, "read=0")
+	case "unacked":
+		where = append(where, "acked=0")
+	case "acked":
+		where = append(where, "acked=1")
+	}
+	return where, args
+}
+
 func scanOpsEventRows(rows *sql.Rows) (domain.OpsEvent, error) {
 	var event domain.OpsEvent
 	var actions, created, updated string
 	var read, acked int
 	err := rows.Scan(&event.ID, &event.Type, &event.Severity, &event.Title, &event.Message, &event.TargetType, &event.TargetID, &actions, &read, &acked, &created, &updated)
+	_ = json.Unmarshal([]byte(actions), &event.Actions)
+	event.Read = boolFromInt(read)
+	event.Acked = boolFromInt(acked)
+	event.CreatedAt, event.UpdatedAt = parseTime(created), parseTime(updated)
+	return event, err
+}
+
+func scanOpsEventGroupRows(rows *sql.Rows, group *domain.OpsEventGroup) (domain.OpsEvent, error) {
+	var event domain.OpsEvent
+	var actions, created, updated string
+	var read, acked int
+	err := rows.Scan(&event.ID, &event.Type, &event.Severity, &event.Title, &event.Message, &event.TargetType, &event.TargetID, &actions, &read, &acked, &created, &updated, &group.Count, &group.UnreadCount, &group.UnackedCount)
 	_ = json.Unmarshal([]byte(actions), &event.Actions)
 	event.Read = boolFromInt(read)
 	event.Acked = boolFromInt(acked)
@@ -114,6 +180,20 @@ func (s *Store) MarkOpsEventRead(ctx context.Context, id string) error {
 
 func (s *Store) AckOpsEvent(ctx context.Context, id string) error {
 	_, err := s.exec(ctx, `UPDATE ops_events SET read=1, acked=1, updated_at=? WHERE id=?`, nowText(), id)
+	return err
+}
+
+func (s *Store) MarkOpsEventsRead(ctx context.Context, filter domain.OpsEventFilter) error {
+	where, args := opsEventWhere(filter)
+	args = append([]any{nowText()}, args...)
+	_, err := s.exec(ctx, `UPDATE ops_events SET read=1, updated_at=? WHERE `+strings.Join(where, " AND "), args...)
+	return err
+}
+
+func (s *Store) AckOpsEvents(ctx context.Context, filter domain.OpsEventFilter) error {
+	where, args := opsEventWhere(filter)
+	args = append([]any{nowText()}, args...)
+	_, err := s.exec(ctx, `UPDATE ops_events SET read=1, acked=1, updated_at=? WHERE `+strings.Join(where, " AND "), args...)
 	return err
 }
 
