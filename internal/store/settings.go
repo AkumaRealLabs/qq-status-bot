@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"ai-upstream-monitor/internal/domain"
 )
@@ -25,35 +24,20 @@ func (s *Store) Settings(ctx context.Context) (domain.Settings, error) {
 	cfg.CheckIntervalMinutes = domain.NormalizeCheckInterval(cfg.CheckIntervalMinutes)
 	cfg.ProbeModel = domain.ProbeModel
 	if cfg.SiteName == "" {
-		cfg.SiteName = "AI 上游监控"
+		cfg.SiteName = domain.DefaultSiteName
 	}
 	return cfg, nil
 }
 
+// UpdateSettings persists settings as provided. Callers (app layer) should MergeUpdate first.
+// Defensive KeepSecret remains for direct store callers (tests / legacy).
 func (s *Store) UpdateSettings(ctx context.Context, cfg domain.Settings) (domain.Settings, error) {
 	old, err := s.Settings(ctx)
 	if err != nil {
 		return cfg, err
 	}
-	cfg.CheckIntervalMinutes = domain.NormalizeCheckInterval(cfg.CheckIntervalMinutes)
-	cfg.ProbeModel = domain.ProbeModel
-	if cfg.SiteName == "" {
-		cfg.SiteName = "AI 上游监控"
-	}
-	cfg.TelegramBotToken = domain.KeepSecret(cfg.TelegramBotToken, old.TelegramBotToken)
-	cfg.TelegramChatID = strings.TrimSpace(cfg.TelegramChatID)
-	cfg.EpayBaseURL = strings.TrimRight(strings.TrimSpace(cfg.EpayBaseURL), "/")
-	cfg.EpayPID = strings.TrimSpace(cfg.EpayPID)
-	cfg.EpayKey = domain.KeepSecret(cfg.EpayKey, old.EpayKey)
-	if cfg.NotificationRules.EventTypes == nil && cfg.NotificationRules.FailureThreshold == 0 {
-		current, err := s.NotificationRules(ctx)
-		if err != nil {
-			return cfg, err
-		}
-		cfg.NotificationRules = current
-	} else {
-		cfg.NotificationRules = domain.NormalizeNotificationRules(cfg.NotificationRules)
-	}
+	// Defensive: if caller skipped app merge, still keep secrets and partial notification rules.
+	cfg = cfg.MergeUpdate(old)
 	rules, err := json.Marshal(cfg.NotificationRules)
 	if err != nil {
 		return cfg, err

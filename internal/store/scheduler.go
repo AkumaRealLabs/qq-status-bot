@@ -20,15 +20,14 @@ func (s *Store) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, er
 	return cfg, err
 }
 
+// UpdateSchedulerConfig persists scheduler config. Callers should MergeUpdate first.
+// Defensive MergeUpdate remains for direct store callers.
 func (s *Store) UpdateSchedulerConfig(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerConfig, error) {
 	old, err := s.SchedulerConfig(ctx)
 	if err != nil {
 		return cfg, err
 	}
-	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-	cfg.UserID = strings.TrimSpace(cfg.UserID)
-	cfg.AccessToken = domain.KeepSecret(cfg.AccessToken, old.AccessToken)
-	cfg.Tiers = domain.NormalizeSchedulerTiers(cfg.Tiers)
+	cfg = cfg.MergeUpdate(old)
 	b, err := json.Marshal(cfg.Tiers)
 	if err != nil {
 		return cfg, err
