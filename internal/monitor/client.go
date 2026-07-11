@@ -290,9 +290,6 @@ func IsInternalProbeError(errText string) bool {
 	lower := strings.ToLower(errText)
 	for _, needle := range []string{
 		"model instructions file is empty",
-		"/tmp/aum-codex-probe",
-		"aum-codex-probe-",
-		"codex-home",
 		"approval_policy",
 		"exec: \"codex\"",
 	} {

@@ -244,8 +244,19 @@ func TestIsInternalProbeError(t *testing.T) {
 	if !IsInternalProbeError("model instructions file is empty: /tmp/aum-codex-probe-123") {
 		t.Fatal("expected internal probe error")
 	}
-	if IsInternalProbeError("insufficient_quota") {
-		t.Fatal("upstream quota error is not internal")
+	for _, output := range []string{
+		`WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "/tmp" (codex_home: AbsolutePathBuf("/tmp/aum-codex-probe-123/codex-home"))
+ERROR: unexpected status 502 Bad Gateway: error code: 502`,
+		`WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "/tmp" (codex_home: AbsolutePathBuf("/tmp/aum-codex-probe-123/codex-home"))
+ERROR: unexpected status 503 Service Unavailable: Service temporarily unavailable`,
+	} {
+		if IsInternalProbeError(output) {
+			t.Fatalf("upstream CLI failure misclassified as internal: %q", output)
+		}
+		got := codexCLIError(errors.New("exit status 1"), []byte(output), "")
+		if !strings.Contains(got, "unexpected status") {
+			t.Fatalf("upstream CLI failure was not preserved: %q", got)
+		}
 	}
 }
 
