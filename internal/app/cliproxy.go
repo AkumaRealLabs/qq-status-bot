@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -489,6 +490,37 @@ func (s *CLIProxyService) CLIProxyAccountQuota(ctx context.Context, name, authIn
 		return domain.CLIProxyQuota{}, ErrBadRequest("CLIProxyAPI 额度响应为空")
 	}
 	return cliproxyCodexQuota(account, payload), nil
+}
+
+// refreshCLIProxyQuotas 为可用账号采样配额；停用的号池不产生外部请求。
+func (s *CLIProxyService) refreshCLIProxyQuotas(ctx context.Context) (attempted bool, err error) {
+	cfg, err := s.app.Store.CLIProxyConfig(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !cfg.Enabled {
+		return false, nil
+	}
+	accounts, err := s.CLIProxyAccounts(ctx)
+	if err != nil {
+		return true, err
+	}
+	var firstErr error
+	for _, account := range accounts {
+		if err := ctx.Err(); err != nil {
+			return true, err
+		}
+		if account.Disabled || account.Unavailable || strings.TrimSpace(account.AuthIndex) == "" {
+			continue
+		}
+		if _, err := s.CLIProxyAccountQuota(ctx, account.Name, account.AuthIndex, account.Account, account.AccountType); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			log.Printf("scheduler: CLIProxy quota refresh account=%q: %v", account.Name, err)
+		}
+	}
+	return true, firstErr
 }
 
 func (s *CLIProxyService) saveCLIProxyQuotaSnapshot(ctx context.Context, account domain.CLIProxyAuthFile, quota domain.CLIProxyQuota, err error) {

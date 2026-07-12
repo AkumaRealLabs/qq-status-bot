@@ -393,9 +393,16 @@ env_key = %q
 		"HOME="+homeDir,
 		codexAPIKeyEnv+"="+key,
 	)
+	configureProbeCommand(cmd)
 	output, err := cmd.CombinedOutput()
 	latency := time.Since(start)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return ProbeResult{Latency: latency, Status: StatusFailed, Input: probeInput, Error: "Codex CLI 探测超时"}
+		}
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return ProbeResult{Latency: latency, Status: StatusError, Input: probeInput, Error: "Codex CLI 探测已取消"}
+		}
 		return ProbeResult{Latency: latency, Status: StatusError, Input: probeInput, Error: codexCLIError(err, output, key)}
 	}
 	answer, err := os.ReadFile(answerPath)

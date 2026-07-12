@@ -97,11 +97,15 @@ func TestSchedulerRestoreReady(t *testing.T) {
 }
 
 func TestIsQuotaProbeError(t *testing.T) {
-	if !IsQuotaProbeError("余额不足，请充值") {
-		t.Fatal("cn quota")
-	}
-	if !IsQuotaProbeError("insufficient_quota for model") {
-		t.Fatal("en quota")
+	for _, text := range []string{
+		"余额不足，请充值",
+		"insufficient_quota for model",
+		"预扣费额度失败，用户剩余额度不足",
+		"Insufficient account balance",
+	} {
+		if !IsQuotaProbeError(text) {
+			t.Fatalf("quota error not classified: %q", text)
+		}
 	}
 	if IsQuotaProbeError("connection refused") {
 		t.Fatal("not quota")

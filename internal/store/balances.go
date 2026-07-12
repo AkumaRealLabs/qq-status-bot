@@ -44,6 +44,32 @@ func (s *Store) BalanceRechargeLogs(ctx context.Context, upstreamID string, limi
 	return out, rows.Err()
 }
 
+// PendingBalanceRechargeLogs 返回需要后台核验的充值订单，不复用面向 UI 的分页查询。
+func (s *Store) PendingBalanceRechargeLogs(ctx context.Context, limit int) ([]domain.BalanceRechargeLog, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.query(ctx, `SELECT id, upstream_id, method, amount, payment_type, remote_order_id, status, message, raw_status, created_at
+		FROM balance_recharge_logs
+		WHERE method='order' AND status='pending' AND TRIM(remote_order_id)<>''
+		ORDER BY created_at LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.BalanceRechargeLog{}
+	for rows.Next() {
+		var log domain.BalanceRechargeLog
+		var created string
+		if err := rows.Scan(&log.ID, &log.UpstreamID, &log.Method, &log.Amount, &log.PaymentType, &log.RemoteOrderID, &log.Status, &log.Message, &log.RawStatus, &created); err != nil {
+			return nil, err
+		}
+		log.CreatedAt = parseTime(created)
+		out = append(out, log)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) BalanceRechargeLog(ctx context.Context, upstreamID, id string) (domain.BalanceRechargeLog, error) {
 	var log domain.BalanceRechargeLog
 	var created string

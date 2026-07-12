@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -9,6 +11,8 @@ import (
 	"ai-upstream-monitor/internal/monitor"
 	"ai-upstream-monitor/internal/store"
 )
+
+const pendingRechargeRefreshBatchSize = 100
 
 func (s *Service) RefreshBalances(ctx context.Context) error {
 	upstreams, err := s.Store.ListUpstreams(ctx)
@@ -112,6 +116,10 @@ func (s *Service) BalanceRechargeLogs(ctx context.Context, upstreamID string) ([
 }
 
 func (s *Service) RefreshBalanceRechargeLog(ctx context.Context, upstreamID, logID string) (domain.BalanceRechargeLog, error) {
+	return s.refreshBalanceRechargeLog(ctx, upstreamID, logID, true)
+}
+
+func (s *Service) refreshBalanceRechargeLog(ctx context.Context, upstreamID, logID string, refreshBalance bool) (domain.BalanceRechargeLog, error) {
 	u, err := s.Store.Upstream(ctx, upstreamID)
 	if err != nil {
 		return domain.BalanceRechargeLog{}, err
@@ -138,10 +146,63 @@ func (s *Service) RefreshBalanceRechargeLog(ctx context.Context, upstreamID, log
 	if err := s.Store.UpdateBalanceRechargeLog(ctx, log); err != nil {
 		return log, err
 	}
-	if log.Status == "success" {
+	if refreshBalance && log.Status == "success" {
 		_ = s.CheckUpstream(ctx, u.ID)
 	}
 	return log, nil
+}
+
+// RefreshPendingBalanceRechargeLogs 定期核验未完成的充值订单；单条失败不阻塞其余订单。
+func (s *Service) RefreshPendingBalanceRechargeLogs(ctx context.Context) error {
+	logs, err := s.Store.PendingBalanceRechargeLogs(ctx, pendingRechargeRefreshBatchSize)
+	if err != nil {
+		return err
+	}
+	upstreams, err := s.Store.ListUpstreams(ctx)
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]domain.Upstream, len(upstreams))
+	for _, upstream := range upstreams {
+		byID[upstream.ID] = upstream
+	}
+	var firstErr error
+	refreshUpstreams := map[string]domain.Upstream{}
+	for _, recharge := range logs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		upstream, ok := byID[recharge.UpstreamID]
+		if !ok || !upstream.Enabled {
+			continue
+		}
+		updated, err := s.refreshBalanceRechargeLog(ctx, recharge.UpstreamID, recharge.ID, false)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			log.Printf("scheduler: pending recharge refresh upstream_id=%s upstream=%q recharge_id=%s: %v", upstream.ID, upstream.Name, recharge.ID, err)
+			continue
+		}
+		if updated.Status == "success" {
+			refreshUpstreams[upstream.ID] = upstream
+		}
+	}
+	for upstreamID, upstream := range refreshUpstreams {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := s.CheckUpstream(ctx, upstreamID); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			log.Printf("scheduler: pending recharge balance refresh upstream_id=%s upstream=%q: %v", upstream.ID, upstream.Name, err)
+		}
+	}
+	if firstErr != nil {
+		return fmt.Errorf("刷新待处理充值订单: %w", firstErr)
+	}
+	return nil
 }
 
 func (s *Service) DeleteBalanceRechargeLog(ctx context.Context, upstreamID, logID string) error {

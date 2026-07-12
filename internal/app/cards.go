@@ -198,23 +198,36 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 		return err
 	}
 	muteAt := s.app.probeMuteFailureThreshold(ctx)
-	probe := s.probeWithInternalRetry(ctx, u.BaseURL, key.Key, domain.ProbeModel)
+	probe := s.probeCard(ctx, u.BaseURL, key.Key, domain.ProbeModel)
+	if probeParentDeadlineExceeded(ctx) {
+		return s.persistCanceledCardProbe(ctx, card, u.ID, probe)
+	}
 	if _, err := s.app.Store.SaveProbe(ctx, u.ID, card.ID, probe); err != nil {
+		if probeParentDeadlineExceeded(ctx) {
+			return s.persistCanceledCardProbe(ctx, card, u.ID, probe)
+		}
 		return err
+	}
+	if probeParentDeadlineExceeded(ctx) {
+		return s.persistCanceledCardState(ctx, card, probe)
 	}
 	if monitor.IsInternalProbeError(probe.Error) {
 		return s.app.alert(ctx, u, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
 	}
-	failures := 0
-	lastErr := ""
-	if !probe.Success {
-		failures = card.FailureCount + 1
-		lastErr = probe.Error
-	}
+	failures, lastErr := probeCardState(card, probe)
 	if err := s.app.Cards.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
+		if probeParentDeadlineExceeded(ctx) {
+			return s.persistCanceledCardState(ctx, card, probe)
+		}
 		return err
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	_ = s.app.applySchedulerAutomation(ctx, card, probe.Success, failures)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if probe.Success {
 		_ = s.app.alert(ctx, u, "internal:"+card.ID, false, card.Name+" 本地探测已恢复")
 		_ = s.app.alert(ctx, u, "quota:"+card.ID, false, card.Name+" 余额不足状态已恢复")
@@ -240,22 +253,32 @@ func (s *ProbeService) checkCustomCard(ctx context.Context, card domain.ModelCar
 		}
 		return s.app.applySchedulerAutomation(ctx, card, false, failures)
 	}
-	probe := s.probeWithInternalRetry(ctx, card.BaseURL, card.APIKey, domain.ProbeModel)
+	probe := s.probeCard(ctx, card.BaseURL, card.APIKey, domain.ProbeModel)
+	if probeParentDeadlineExceeded(ctx) {
+		return s.persistCanceledCardProbe(ctx, card, "", probe)
+	}
 	if _, err := s.app.Store.SaveProbe(ctx, "", card.ID, probe); err != nil {
+		if probeParentDeadlineExceeded(ctx) {
+			return s.persistCanceledCardProbe(ctx, card, "", probe)
+		}
 		return err
+	}
+	if probeParentDeadlineExceeded(ctx) {
+		return s.persistCanceledCardState(ctx, card, probe)
 	}
 	pseudo := domain.Upstream{ID: "card:" + card.ID, Name: card.Name}
 	if monitor.IsInternalProbeError(probe.Error) {
 		return s.app.alert(ctx, pseudo, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
 	}
-	failures := 0
-	lastErr := ""
-	if !probe.Success {
-		failures = card.FailureCount + 1
-		lastErr = probe.Error
-	}
+	failures, lastErr := probeCardState(card, probe)
 	if err := s.app.Cards.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
+		if probeParentDeadlineExceeded(ctx) {
+			return s.persistCanceledCardState(ctx, card, probe)
+		}
 		return err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if probe.Success {
 		_ = s.app.alert(ctx, pseudo, "internal:"+card.ID, false, card.Name+" 本地探测已恢复")
@@ -267,7 +290,75 @@ func (s *ProbeService) checkCustomCard(ctx context.Context, card domain.ModelCar
 			_ = s.app.alert(ctx, pseudo, kind, failures >= muteAt, msg)
 		}
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return s.app.applySchedulerAutomation(ctx, card, probe.Success, failures)
+}
+
+var cardProbeTimeout = 45 * time.Second
+
+const canceledProbePersistenceTimeout = 3 * time.Second
+
+// probeCard 为一张卡片提供总预算，内部重试共享同一个 deadline。
+func (s *ProbeService) probeCard(ctx context.Context, baseURL, key, model string) monitor.ProbeResult {
+	probeCtx, cancel := context.WithTimeout(ctx, cardProbeTimeout)
+	defer cancel()
+	probe := s.probeWithInternalRetry(probeCtx, baseURL, key, model)
+	if ctx.Err() == nil && errors.Is(probeCtx.Err(), context.DeadlineExceeded) && !probe.Success {
+		probe.Status = monitor.StatusFailed
+		probe.Output = ""
+		probe.Error = "探测超时（卡片总预算已耗尽）"
+		if probe.Input == "" {
+			probe.Input = "ping"
+		}
+		if probe.Latency <= 0 {
+			probe.Latency = cardProbeTimeout
+		}
+	}
+	return probe
+}
+
+func probeCardState(card domain.ModelCard, probe monitor.ProbeResult) (failures int, lastErr string) {
+	if probe.Success {
+		return 0, ""
+	}
+	return card.FailureCount + 1, probe.Error
+}
+
+// 父检查已结束时仍需留下可追踪的探测结果，但不能再触发外部副作用。
+func (s *ProbeService) persistCanceledCardProbe(parent context.Context, card domain.ModelCard, upstreamID string, probe monitor.ProbeResult) error {
+	persistCtx, cancel := canceledProbePersistenceContext(parent)
+	defer cancel()
+	if _, err := s.app.Store.SaveProbe(persistCtx, upstreamID, card.ID, probe); err != nil {
+		return err
+	}
+	if err := s.persistCardProbeState(persistCtx, card, probe); err != nil {
+		return err
+	}
+	return parent.Err()
+}
+
+func (s *ProbeService) persistCanceledCardState(parent context.Context, card domain.ModelCard, probe monitor.ProbeResult) error {
+	persistCtx, cancel := canceledProbePersistenceContext(parent)
+	defer cancel()
+	if err := s.persistCardProbeState(persistCtx, card, probe); err != nil {
+		return err
+	}
+	return parent.Err()
+}
+
+func (s *ProbeService) persistCardProbeState(ctx context.Context, card domain.ModelCard, probe monitor.ProbeResult) error {
+	failures, lastErr := probeCardState(card, probe)
+	return s.app.Cards.UpdateCardProbeState(ctx, card.ID, lastErr, failures)
+}
+
+func canceledProbePersistenceContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), canceledProbePersistenceTimeout)
+}
+
+func probeParentDeadlineExceeded(ctx context.Context) bool {
+	return errors.Is(ctx.Err(), context.DeadlineExceeded)
 }
 
 func (s *ProbeService) probeWithInternalRetry(ctx context.Context, baseURL, key, model string) monitor.ProbeResult {

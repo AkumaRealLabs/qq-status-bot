@@ -35,6 +35,7 @@ func (s *ProbeService) CheckDue(ctx context.Context) error {
 }
 
 func (s *ProbeService) CheckAll(ctx context.Context) error {
+	batch := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
 	upstreams, err := s.app.Store.ListUpstreams(ctx)
 	if err != nil {
 		return err
@@ -46,8 +47,15 @@ func (s *ProbeService) CheckAll(ctx context.Context) error {
 		}
 	}
 	upOK, upFail := s.runLimited(ctx, len(enabledUpstreams), checkConcurrency, func(i int) error {
-		return s.checkUpstream(ctx, enabledUpstreams[i].ID, false)
+		u := enabledUpstreams[i]
+		if err := s.checkUpstream(ctx, u.ID, false); err != nil {
+			return fmt.Errorf("batch=%s upstream_id=%s upstream=%q: %w", batch, u.ID, u.Name, err)
+		}
+		return nil
 	})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if len(enabledUpstreams) > 0 {
 		s.app.syncSchedulerGroupsBestEffort(ctx)
 	}
@@ -62,9 +70,13 @@ func (s *ProbeService) CheckAll(ctx context.Context) error {
 		}
 	}
 	cardOK, cardFail := s.runLimited(ctx, len(enabledCards), checkConcurrency, func(i int) error {
-		return s.CheckCard(ctx, enabledCards[i].ID)
+		card := enabledCards[i]
+		if err := s.CheckCard(ctx, card.ID); err != nil {
+			return fmt.Errorf("batch=%s card_id=%s card=%q upstream_id=%s: %w", batch, card.ID, card.Name, card.UpstreamID, err)
+		}
+		return nil
 	})
-	log.Printf("scheduler: check finished upstreams ok=%d fail=%d cards ok=%d fail=%d", upOK, upFail, cardOK, cardFail)
+	log.Printf("scheduler: check finished batch=%s upstreams_ok=%d upstreams_fail=%d cards_ok=%d cards_fail=%d", batch, upOK, upFail, cardOK, cardFail)
 	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return ctx.Err()
 	}
@@ -108,7 +120,7 @@ func (s *ProbeService) runLimited(ctx context.Context, n, limit int, fn func(i i
 				fail++
 				mu.Unlock()
 				if !errors.Is(err, context.Canceled) {
-					log.Printf("scheduler: task %d failed: %v", i, err)
+					log.Printf("scheduler: check failed: %v", err)
 				}
 				return
 			}
