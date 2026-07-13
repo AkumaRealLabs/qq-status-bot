@@ -23,6 +23,7 @@ const emptyCardForm: CardForm = {
   source: 'custom',
   base_url: '',
   api_key: '',
+  model: 'gpt-5.5',
   upstream_id: '',
   key_id: '',
   display_group: '',
@@ -40,6 +41,7 @@ function cardToForm(card?: ModelCard): CardForm {
     source: custom ? 'custom' : 'upstream',
     base_url: card.base_url || '',
     api_key: card.api_key || '',
+    model: card.model || 'gpt-5.5',
     upstream_id: card.upstream_id || '',
     key_id: card.key_id || '',
     display_group: card.display_group || '',
@@ -55,6 +57,7 @@ function cardPayload(form: CardForm) {
     name: form.name,
     base_url: form.source === 'custom' ? form.base_url : '',
     api_key: form.source === 'custom' ? form.api_key : '',
+    model: form.source === 'custom' ? form.model.trim() : '',
     upstream_id: form.source === 'upstream' ? form.upstream_id : '',
     key_id: form.source === 'upstream' ? form.key_id : '',
     display_group: form.display_group,
@@ -72,7 +75,7 @@ function existingDisplayGroups(cards: ModelCard[]) {
 function cardFormReady(form: CardForm, card?: ModelCard) {
   if (!form.name.trim()) return false
   if (form.source === 'custom') {
-    return Boolean(form.base_url.trim() && (form.api_key.trim() || card?.api_key_set))
+    return Boolean(form.base_url.trim() && form.model.trim() && (form.api_key.trim() || card?.api_key_set))
   }
   return Boolean(form.upstream_id && form.key_id)
 }
@@ -310,6 +313,9 @@ function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCa
                   onChange={(e) => update({ api_key: e.target.value })}
                 />
               </Field>
+              <Field label="探测模型">
+                <Input value={form.model} onChange={(e) => update({ model: e.target.value })} />
+              </Field>
               {form.pool_enabled && (
                 <Field label="手动成本">
                   <Input type="number" min="0" step="0.01" value={form.manual_cost_ratio} onChange={(e) => update({ manual_cost_ratio: e.target.value })} />
@@ -373,9 +379,6 @@ function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCa
               </SelectContent>
             </Select>
           </Field>
-          <Field label="固定模型">
-            <Input value="gpt-5.5" disabled />
-          </Field>
         </div>
         <FeedbackBanner message={fb.message} error={save.isError} />
         <ActionRow>
@@ -386,5 +389,4 @@ function CardDialog({ rows, cards, card }: { rows: UpstreamRow[]; cards: ModelCa
     </Dialog>
   )
 }
-
 

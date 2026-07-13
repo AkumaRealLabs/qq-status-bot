@@ -1284,7 +1284,7 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	if len(statuses) != 1 {
 		t.Fatalf("retry disable statuses=%v", statuses)
 	}
-	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+	if _, err := st.SaveProbe(t.Context(), "", card.ID, domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.applySchedulerAutomation(t.Context(), card, true, 0); err != nil {
@@ -1293,7 +1293,7 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	if len(statuses) != 1 {
 		t.Fatalf("first success restored scheduler: %+v", statuses)
 	}
-	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+	if _, err := st.SaveProbe(t.Context(), "", card.ID, domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.applySchedulerAutomation(t.Context(), card, true, 0); err != nil {
@@ -1311,7 +1311,7 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	}
 	old := time.Now().Add(-16 * time.Minute)
 	card.SchedulerAutoDisabledAt = &old
-	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+	if _, err := st.SaveProbe(t.Context(), "", card.ID, domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.applySchedulerAutomation(t.Context(), card, true, 0); err != nil {
@@ -1966,11 +1966,11 @@ func TestMonitorStatusCountsProbeStatuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, status := range []string{monitor.StatusOperational, monitor.StatusDegraded, monitor.StatusFailed} {
-		if _, err := st.SaveProbe(t.Context(), u.ID, card.ID, monitor.ProbeResult{Status: status, Latency: time.Millisecond}); err != nil {
+		if _, err := st.SaveProbe(t.Context(), u.ID, card.ID, domain.ProbeModel, monitor.ProbeResult{Status: status, Latency: time.Millisecond}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := st.SaveProbe(t.Context(), u.ID, muted.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Latency: 10 * time.Millisecond}); err != nil {
+	if _, err := st.SaveProbe(t.Context(), u.ID, muted.ID, domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusFailed, Latency: 10 * time.Millisecond}); err != nil {
 		t.Fatal(err)
 	}
 	out, err := New(st).MonitorStatus(t.Context(), "1h")
@@ -1998,7 +1998,7 @@ func TestSaveCardSupportsCustomAndUpstreamKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if custom.BaseURL != "https://api.example.test" || custom.APIKey != "" || !custom.APIKeySet || custom.DisplayGroup != "生产" || !custom.PoolEnabled || !custom.PublicEnabled {
+	if custom.BaseURL != "https://api.example.test" || custom.APIKey != "" || !custom.APIKeySet || custom.Model != domain.ProbeModel || custom.DisplayGroup != "生产" || !custom.PoolEnabled || !custom.PublicEnabled {
 		t.Fatalf("custom = %+v", custom)
 	}
 	stored, err := st.Card(t.Context(), custom.ID)
@@ -2098,7 +2098,7 @@ func TestSaveCardRejectsDuplicateSchedulerChannel(t *testing.T) {
 	}
 }
 
-func TestCheckCustomCardUsesOwnURLKeyAndFixedModel(t *testing.T) {
+func TestCheckCustomCardUsesOwnURLKeyAndConfiguredModel(t *testing.T) {
 	var auth, model string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth = r.Header.Get("Authorization")
@@ -2121,15 +2121,57 @@ func TestCheckCustomCardUsesOwnURLKeyAndFixedModel(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	card, err := svc.SaveCard(t.Context(), "", domain.ModelCard{Name: "自定义", BaseURL: ts.URL, APIKey: "sk-custom", Enabled: true})
+	card, err := svc.SaveCard(t.Context(), "", domain.ModelCard{Name: "自定义", BaseURL: ts.URL, APIKey: "sk-custom", Model: " grok-4 ", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
 		t.Fatal(err)
 	}
-	if auth != "Bearer sk-custom" || model != domain.ProbeModel {
+	if auth != "Bearer sk-custom" || model != "grok-4" {
 		t.Fatalf("auth=%q model=%q", auth, model)
+	}
+	runs, err := st.RecentProbesForCard(t.Context(), card.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Model != "grok-4" {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestCheckCardFallsBackToDefaultModel(t *testing.T) {
+	var model string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		model, _ = body["model"].(string)
+		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "pong"})
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "旧卡", BaseURL: ts.URL, APIKey: "sk-custom", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.ExecContext(t.Context(), `UPDATE model_cards SET model='' WHERE id=?`, card.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := New(st).CheckCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	if model != domain.ProbeModel {
+		t.Fatalf("model = %q", model)
 	}
 }
 
@@ -2307,15 +2349,15 @@ func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SaveProbe(t.Context(), "", public.ID, monitor.ProbeResult{
+	if _, err := st.SaveProbe(t.Context(), "", public.ID, domain.ProbeModel, monitor.ProbeResult{
 		Status: monitor.StatusFailed, Input: "ping", Output: "", Error: "secret upstream detail",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SaveProbe(t.Context(), "", private.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+	if _, err := st.SaveProbe(t.Context(), "", private.ID, domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SaveProbe(t.Context(), "", paused.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+	if _, err := st.SaveProbe(t.Context(), "", paused.ID, domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
 		t.Fatal(err)
 	}
 	out, err := New(st).PublicMonitorStatus(t.Context(), "1h")

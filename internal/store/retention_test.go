@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/monitor"
 )
 
@@ -32,7 +33,7 @@ func TestCleanupExpiredData(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 新探测记录应保留
-	if _, err := s.SaveProbe(t.Context(), "u1", "c1", monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+	if _, err := s.SaveProbe(t.Context(), "u1", "c1", domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
 		t.Fatal(err)
 	}
 

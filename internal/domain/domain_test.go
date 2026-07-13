@@ -24,6 +24,15 @@ func TestCardName(t *testing.T) {
 	}
 }
 
+func TestNormalizeProbeModel(t *testing.T) {
+	if got := NormalizeProbeModel(" grok-4 "); got != "grok-4" {
+		t.Fatalf("custom model = %q", got)
+	}
+	if got := NormalizeProbeModel("  "); got != ProbeModel {
+		t.Fatalf("default model = %q", got)
+	}
+}
+
 func TestNormalizeSchedulerTiersKeepsCustomRows(t *testing.T) {
 	custom := []SchedulerTier{{Tag: "cheap", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1}}
 	if got := NormalizeSchedulerTiers(custom); len(got) != 1 || got[0].Tag != "cheap" {

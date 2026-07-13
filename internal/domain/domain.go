@@ -8,6 +8,14 @@ import (
 
 const ProbeModel = "gpt-5.5"
 
+// NormalizeProbeModel：空模型回退到默认探测模型。
+func NormalizeProbeModel(model string) string {
+	if model = strings.TrimSpace(model); model != "" {
+		return model
+	}
+	return ProbeModel
+}
+
 type Upstream struct {
 	ID                     string    `json:"id"`
 	Name                   string    `json:"name"`

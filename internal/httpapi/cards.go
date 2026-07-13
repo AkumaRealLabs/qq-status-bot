@@ -18,6 +18,7 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 		APIKey               string `json:"api_key"`
 		UpstreamID           string `json:"upstream_id"`
 		KeyID                string `json:"key_id"`
+		Model                string `json:"model"`
 		DisplayGroup         string `json:"display_group"`
 		PoolEnabled          *bool  `json:"pool_enabled"`
 		ManualCostRatio      string `json:"manual_cost_ratio"`
@@ -43,7 +44,7 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 		poolEnabled = *body.PoolEnabled
 	}
 	card, err := s.App.SaveCard(r.Context(), "", domain.ModelCard{
-		Name: body.Name, BaseURL: body.BaseURL, APIKey: body.APIKey, UpstreamID: body.UpstreamID, KeyID: body.KeyID,
+		Name: body.Name, BaseURL: body.BaseURL, APIKey: body.APIKey, UpstreamID: body.UpstreamID, KeyID: body.KeyID, Model: body.Model,
 		DisplayGroup: body.DisplayGroup, PoolEnabled: poolEnabled, PoolEnabledSet: true, ManualCostRatio: body.ManualCostRatio,
 		SchedulerGroup: body.SchedulerGroup, SchedulerChannelID: body.SchedulerChannelID, SchedulerChannelName: body.SchedulerChannelName, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
@@ -57,6 +58,7 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 		APIKey               string  `json:"api_key"`
 		UpstreamID           string  `json:"upstream_id"`
 		KeyID                string  `json:"key_id"`
+		Model                *string `json:"model"`
 		DisplayGroup         *string `json:"display_group"`
 		PoolEnabled          *bool   `json:"pool_enabled"`
 		ManualCostRatio      *string `json:"manual_cost_ratio"`
@@ -82,13 +84,16 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	if body.PublicEnabled != nil {
 		publicEnabled = *body.PublicEnabled
 	}
-	name, baseURL, apiKey, upstreamID, keyID := body.Name, body.BaseURL, body.APIKey, body.UpstreamID, body.KeyID
+	name, baseURL, apiKey, upstreamID, keyID, model := body.Name, body.BaseURL, body.APIKey, body.UpstreamID, body.KeyID, old.Model
 	displayGroup := old.DisplayGroup
 	if name == "" {
 		name = old.Name
 	}
 	if body.DisplayGroup != nil {
 		displayGroup = *body.DisplayGroup
+	}
+	if body.Model != nil {
+		model = *body.Model
 	}
 	poolEnabled, manualCostRatio := old.PoolEnabled, old.ManualCostRatio
 	if body.PoolEnabled != nil {
@@ -111,7 +116,7 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	}
 	// 空来源/密钥字段：SaveCard → ModelCard.MergeUpdate 保留库中值。
 	card, err := s.App.SaveCard(r.Context(), r.PathValue("id"), domain.ModelCard{
-		Name: name, BaseURL: baseURL, APIKey: apiKey, UpstreamID: upstreamID, KeyID: keyID,
+		Name: name, BaseURL: baseURL, APIKey: apiKey, UpstreamID: upstreamID, KeyID: keyID, Model: model,
 		DisplayGroup: displayGroup, PoolEnabled: poolEnabled, PoolEnabledSet: true, ManualCostRatio: manualCostRatio,
 		SchedulerGroup: schedulerGroup, SchedulerChannelID: schedulerChannelID, SchedulerChannelName: schedulerChannelName, SchedulerAutoDisabled: schedulerAutoDisabled, Enabled: enabled, PublicEnabled: publicEnabled,
 	})

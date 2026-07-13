@@ -84,7 +84,7 @@ func (s *ProbeService) normalizeCard(ctx context.Context, in domain.ModelCard) (
 		APIKey:                strings.TrimSpace(in.APIKey),
 		UpstreamID:            strings.TrimSpace(in.UpstreamID),
 		KeyID:                 strings.TrimSpace(in.KeyID),
-		Model:                 domain.ProbeModel,
+		Model:                 domain.NormalizeProbeModel(in.Model),
 		DisplayGroup:          strings.TrimSpace(in.DisplayGroup),
 		PoolEnabled:           in.PoolEnabled,
 		PoolEnabledSet:        true,
@@ -175,6 +175,7 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 	if err != nil {
 		return err
 	}
+	model := domain.NormalizeProbeModel(card.Model)
 	if card.BaseURL != "" {
 		return s.checkCustomCard(ctx, card)
 	}
@@ -184,7 +185,7 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 	}
 	if card.KeyID == "" {
 		msg := "未选择 Key"
-		if _, err := s.app.Store.SaveProbe(ctx, u.ID, card.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
+		if _, err := s.app.Store.SaveProbe(ctx, u.ID, card.ID, model, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
 			return err
 		}
 		failures := card.FailureCount + 1
@@ -198,11 +199,11 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 		return err
 	}
 	muteAt := s.app.probeMuteFailureThreshold(ctx)
-	probe := s.probeCard(ctx, u.BaseURL, key.Key, domain.ProbeModel)
+	probe := s.probeCard(ctx, u.BaseURL, key.Key, model)
 	if probeParentDeadlineExceeded(ctx) {
 		return s.persistCanceledCardProbe(ctx, card, u.ID, probe)
 	}
-	if _, err := s.app.Store.SaveProbe(ctx, u.ID, card.ID, probe); err != nil {
+	if _, err := s.app.Store.SaveProbe(ctx, u.ID, card.ID, model, probe); err != nil {
 		if probeParentDeadlineExceeded(ctx) {
 			return s.persistCanceledCardProbe(ctx, card, u.ID, probe)
 		}
@@ -242,9 +243,10 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 
 func (s *ProbeService) checkCustomCard(ctx context.Context, card domain.ModelCard) error {
 	muteAt := s.app.probeMuteFailureThreshold(ctx)
+	model := domain.NormalizeProbeModel(card.Model)
 	if card.APIKey == "" {
 		msg := "未填写 Key"
-		if _, err := s.app.Store.SaveProbe(ctx, "", card.ID, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
+		if _, err := s.app.Store.SaveProbe(ctx, "", card.ID, model, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
 			return err
 		}
 		failures := card.FailureCount + 1
@@ -253,11 +255,11 @@ func (s *ProbeService) checkCustomCard(ctx context.Context, card domain.ModelCar
 		}
 		return s.app.applySchedulerAutomation(ctx, card, false, failures)
 	}
-	probe := s.probeCard(ctx, card.BaseURL, card.APIKey, domain.ProbeModel)
+	probe := s.probeCard(ctx, card.BaseURL, card.APIKey, model)
 	if probeParentDeadlineExceeded(ctx) {
 		return s.persistCanceledCardProbe(ctx, card, "", probe)
 	}
-	if _, err := s.app.Store.SaveProbe(ctx, "", card.ID, probe); err != nil {
+	if _, err := s.app.Store.SaveProbe(ctx, "", card.ID, model, probe); err != nil {
 		if probeParentDeadlineExceeded(ctx) {
 			return s.persistCanceledCardProbe(ctx, card, "", probe)
 		}
@@ -330,7 +332,7 @@ func probeCardState(card domain.ModelCard, probe monitor.ProbeResult) (failures 
 func (s *ProbeService) persistCanceledCardProbe(parent context.Context, card domain.ModelCard, upstreamID string, probe monitor.ProbeResult) error {
 	persistCtx, cancel := canceledProbePersistenceContext(parent)
 	defer cancel()
-	if _, err := s.app.Store.SaveProbe(persistCtx, upstreamID, card.ID, probe); err != nil {
+	if _, err := s.app.Store.SaveProbe(persistCtx, upstreamID, card.ID, domain.NormalizeProbeModel(card.Model), probe); err != nil {
 		return err
 	}
 	if err := s.persistCardProbeState(persistCtx, card, probe); err != nil {

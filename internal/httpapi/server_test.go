@@ -321,7 +321,7 @@ func TestPublicMonitorStatusDoesNotRequireAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational, Input: "ping", Output: "pong"}); err != nil {
+	if _, err := st.SaveProbe(t.Context(), "", card.ID, domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational, Input: "ping", Output: "pong"}); err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
@@ -432,6 +432,62 @@ func TestUpdateCardMonitorOnlyClearsSchedulerBinding(t *testing.T) {
 	}
 	if got.PoolEnabled || got.ManualCostRatio != "" || got.SchedulerGroup != "" || got.SchedulerChannelID != "" || got.SchedulerChannelName != "" || got.SchedulerAutoDisabled {
 		t.Fatalf("card = %+v", got)
+	}
+}
+
+func TestCardModelCreateAndPatch(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{App: app.New(st)}
+
+	create := httptest.NewRequest(http.MethodPost, "/api/cards", strings.NewReader(`{"name":"卡片","base_url":"https://api.example.test","api_key":"sk-test","model":"grok-4"}`))
+	createRR := httptest.NewRecorder()
+	srv.createCard(createRR, create)
+	if createRR.Code != http.StatusOK {
+		t.Fatalf("create status = %d body=%s", createRR.Code, createRR.Body.String())
+	}
+	var created domain.ModelCard
+	if err := json.NewDecoder(createRR.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Model != "grok-4" {
+		t.Fatalf("created model = %q", created.Model)
+	}
+
+	patch := httptest.NewRequest(http.MethodPatch, "/api/cards/"+created.ID, strings.NewReader(`{"model":"grok-3"}`))
+	patch.SetPathValue("id", created.ID)
+	patchRR := httptest.NewRecorder()
+	srv.updateCard(patchRR, patch)
+	if patchRR.Code != http.StatusOK {
+		t.Fatalf("patch status = %d body=%s", patchRR.Code, patchRR.Body.String())
+	}
+	got, err := st.Card(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != "grok-3" {
+		t.Fatalf("patched model = %q", got.Model)
+	}
+
+	reset := httptest.NewRequest(http.MethodPatch, "/api/cards/"+created.ID, strings.NewReader(`{"model":""}`))
+	reset.SetPathValue("id", created.ID)
+	resetRR := httptest.NewRecorder()
+	srv.updateCard(resetRR, reset)
+	if resetRR.Code != http.StatusOK {
+		t.Fatalf("reset status = %d body=%s", resetRR.Code, resetRR.Body.String())
+	}
+	got, err = st.Card(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != domain.ProbeModel {
+		t.Fatalf("reset model = %q", got.Model)
 	}
 }
 

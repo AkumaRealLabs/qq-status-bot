@@ -10,7 +10,7 @@ import (
 	"ai-upstream-monitor/internal/monitor"
 )
 
-func (s *Store) SaveProbe(ctx context.Context, upstreamID, cardID string, p monitor.ProbeResult) (domain.ProbeRun, error) {
+func (s *Store) SaveProbe(ctx context.Context, upstreamID, cardID, model string, p monitor.ProbeResult) (domain.ProbeRun, error) {
 	status := p.Status
 	if status == "" {
 		status = legacyProbeStatus(p.Success)
@@ -21,7 +21,7 @@ func (s *Store) SaveProbe(ctx context.Context, upstreamID, cardID string, p moni
 		UpstreamID: upstreamID,
 		CardID:     cardID,
 		CheckedAt:  time.Now().UTC(),
-		Model:      domain.ProbeModel,
+		Model:      domain.NormalizeProbeModel(model),
 		Input:      p.Input,
 		Status:     status,
 		Output:     p.Output,

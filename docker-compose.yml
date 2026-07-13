@@ -22,6 +22,10 @@ services:
       start_period: 15s
     depends_on:
       - browser
+    networks:
+      - default
+      - ggapi_internal
+      - cpa_mixed
     restart: unless-stopped
 
   browser:
@@ -35,3 +39,11 @@ services:
 
 volumes:
   browser_profile:
+
+networks:
+  ggapi_internal:
+    external: true
+    name: ggapi_internal
+  cpa_mixed:
+    external: true
+    name: pool-cpa-mixed_default

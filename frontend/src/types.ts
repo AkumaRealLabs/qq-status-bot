@@ -48,6 +48,7 @@ export type ModelCard = {
   base_url?: string
   api_key?: string
   api_key_set?: boolean
+  model: string
   upstream_id?: string
   upstream_name: string
   key_id?: string
@@ -267,6 +268,7 @@ export type CardForm = {
   source: 'custom' | 'upstream'
   base_url: string
   api_key: string
+  model: string
   upstream_id: string
   key_id: string
   display_group: string

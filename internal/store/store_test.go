@@ -51,7 +51,7 @@ func TestMigrateCreatesSchedulerSnapshotTables(t *testing.T) {
 
 func TestProbesForCardSinceNormalizesTimeZone(t *testing.T) {
 	s := testStore(t)
-	if _, err := s.SaveProbe(t.Context(), "u1", "c1", monitor.ProbeResult{Success: true}); err != nil {
+	if _, err := s.SaveProbe(t.Context(), "u1", "c1", domain.ProbeModel, monitor.ProbeResult{Success: true}); err != nil {
 		t.Fatal(err)
 	}
 	since := time.Now().In(time.FixedZone("CST", 8*60*60)).Add(-time.Minute)
@@ -67,7 +67,7 @@ func TestProbesForCardSinceNormalizesTimeZone(t *testing.T) {
 func TestProbesForCardSinceCanDisableLimit(t *testing.T) {
 	s := testStore(t)
 	for range 3 {
-		if _, err := s.SaveProbe(t.Context(), "u1", "c1", monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+		if _, err := s.SaveProbe(t.Context(), "u1", "c1", domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -105,7 +105,7 @@ func TestProbesForCardSinceReadsLegacyTimestampFormat(t *testing.T) {
 
 func TestSaveProbeStoresPingFields(t *testing.T) {
 	s := testStore(t)
-	run, err := s.SaveProbe(t.Context(), "u1", "c1", monitor.ProbeResult{
+	run, err := s.SaveProbe(t.Context(), "u1", "c1", domain.ProbeModel, monitor.ProbeResult{
 		Status:     monitor.StatusOperational,
 		Input:      "ping",
 		Output:     "pong",
@@ -581,7 +581,7 @@ func TestDeleteCardKeepsProbeRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SaveProbe(t.Context(), "", card.ID, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
+	if _, err := s.SaveProbe(t.Context(), "", card.ID, domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteCard(t.Context(), card.ID); err != nil {

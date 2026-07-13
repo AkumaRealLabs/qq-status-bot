@@ -17,7 +17,7 @@ func (s *Store) CreateCard(ctx context.Context, c domain.ModelCard) (domain.Mode
 		c.PoolEnabled = true
 	}
 	c.PoolEnabledSet = true
-	c.Model = domain.ProbeModel
+	c.Model = domain.NormalizeProbeModel(c.Model)
 	if c.SortOrder <= 0 {
 		next, err := s.nextCardSortOrder(ctx)
 		if err != nil {
@@ -46,7 +46,7 @@ func (s *Store) UpdateCard(ctx context.Context, c domain.ModelCard) (domain.Mode
 		c.PoolEnabled = true
 	}
 	c.PoolEnabledSet = true
-	c.Model = domain.ProbeModel
+	c.Model = domain.NormalizeProbeModel(c.Model)
 	c.UpdatedAt = time.Now().UTC()
 	_, err := s.exec(ctx, `UPDATE model_cards SET name=?, base_url=?, api_key=?, upstream_id=?, key_id=?, model=?, display_group=?, pool_enabled=?, manual_cost_ratio=?, scheduler_group=?, scheduler_channel_id=?, scheduler_channel_name=?, scheduler_auto_disabled=?, scheduler_auto_disabled_at=?, enabled=?,
 		public_enabled=?, sort_order=?, last_error=?, failure_count=?, updated_at=? WHERE id=?`,
