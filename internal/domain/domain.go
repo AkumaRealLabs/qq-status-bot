@@ -85,11 +85,12 @@ type ModelCard struct {
 }
 
 type PublicModelCard struct {
-	Name         string           `json:"name"`
-	DisplayGroup string           `json:"display_group"`
-	ProbeMuted   bool             `json:"probe_muted"`
-	LastError    string           `json:"last_error,omitempty"`
-	History      []PublicProbeRun `json:"history,omitempty"`
+	Name            string           `json:"name"`
+	DisplayGroup    string           `json:"display_group"`
+	ProbeMuted      bool             `json:"probe_muted"`
+	AutoProbePaused bool             `json:"auto_probe_paused"`
+	LastError       string           `json:"last_error,omitempty"`
+	History         []PublicProbeRun `json:"history,omitempty"`
 }
 
 type BalanceSnapshot struct {

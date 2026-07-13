@@ -2338,6 +2338,9 @@ func TestPublicMonitorStatusFiltersAndRedacts(t *testing.T) {
 	if !strings.Contains(text, `"probe_muted":true`) {
 		t.Fatalf("public body missing probe_muted: %s", body)
 	}
+	if !strings.Contains(text, `"auto_probe_paused":true`) {
+		t.Fatalf("public body missing auto_probe_paused: %s", body)
+	}
 	for _, hidden := range []string{`"id"`, "api_key", "model", "enabled", "public_enabled", "sort_order", "failure_count", "created_at", "updated_at", "secret upstream detail"} {
 		if strings.Contains(text, hidden) {
 			t.Fatalf("public body leaked %s: %s", hidden, body)

@@ -71,7 +71,9 @@ export type ModelCard = {
   history?: Probe[]
 }
 
-export type PublicModelCard = Pick<ModelCard, 'name' | 'display_group' | 'probe_muted' | 'last_error' | 'history'>
+export type PublicModelCard = Pick<ModelCard, 'name' | 'display_group' | 'probe_muted' | 'last_error' | 'history'> & {
+  auto_probe_paused: boolean
+}
 
 export type Probe = {
   checked_at: string

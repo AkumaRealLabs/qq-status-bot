@@ -459,7 +459,7 @@ func publicCards(cards []domain.ModelCard) []domain.PublicModelCard {
 		if !c.PublicEnabled {
 			continue
 		}
-		card := domain.PublicModelCard{Name: c.Name, DisplayGroup: c.DisplayGroup, ProbeMuted: c.ProbeMuted}
+		card := domain.PublicModelCard{Name: c.Name, DisplayGroup: c.DisplayGroup, ProbeMuted: c.ProbeMuted, AutoProbePaused: !c.Enabled}
 		for i := range c.History {
 			p := c.History[i]
 			p.Status = probeStatusLabel(p.Status)

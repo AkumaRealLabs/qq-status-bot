@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react'
-import { RefreshCcw } from 'lucide-react'
+import { Pause, RefreshCcw } from 'lucide-react'
 import { HoverText, Metric, MiniStat, StatusBadge } from '@/components/common'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -58,17 +58,21 @@ export function StatusMonitorCard({
   const history = card.history ?? []
   const latest = history.at(-1)
   const muted = card.probe_muted
+  const autoProbePaused = isModelCard(card) ? !card.enabled : card.auto_probe_paused
+  const samplesInsufficient = history.length <= 1
   const ok = muted || (latest ? probeOK(latest) : !card.last_error)
   const statusText = muted ? '静默测试中' : latest ? probeStatusLabel(probeStatus(latest)) : ok ? probeStatusLabel('operational') : probeStatusLabel('failed')
   const successCount = history.filter(probeOK).length
   const uptime = history.length ? `${((successCount / history.length) * 100).toFixed(2)}%` : '-'
+  const historySlots = samplesInsufficient ? emptyHistorySlots(windowValue) : history.length
+  const missingHistorySlots = historySlots - history.length
   const editableCard = isModelCard(card) ? card : undefined
   const groupName = editableCard?.key_group || (editableCard?.base_url ? '自定义' : '-')
   const displayGroup = cardDisplayGroup(card)
   const ratio = editableCard?.effective_ratio || editableCard?.key_group_ratio || '-'
   const message = footerMessage || card.last_error
   return (
-    <Card className={cn('min-w-0 bg-card', muted ? 'border-border' : !ok && 'border-destructive/40')}>
+    <Card className={cn('min-w-0 bg-card', muted || autoProbePaused ? 'border-border' : !ok && 'border-destructive/40')}>
       <CardHeader className="min-h-16 gap-2 border-b border-border">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
           <div className="min-w-0 pt-1">
@@ -82,7 +86,7 @@ export function StatusMonitorCard({
             )}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5">
-            {muted ? <Badge variant="outline" className="text-muted-foreground"><RefreshCcw className="size-3" />{statusText}</Badge> : <StatusBadge ok={ok} okText={statusText} failText={statusText} />}
+            {autoProbePaused ? <Badge variant="amber"><Pause className="size-3" />已暂停自动探测</Badge> : muted ? <Badge variant="outline" className="text-muted-foreground"><RefreshCcw className="size-3" />{statusText}</Badge> : <StatusBadge ok={ok} okText={statusText} failText={statusText} />}
             {!publicView && adminActions}
           </div>
         </div>
@@ -95,13 +99,14 @@ export function StatusMonitorCard({
         <div className="min-w-0 border-t border-border pt-2.5">
           <div className="mb-2 flex items-end justify-between gap-2">
             <div className="text-xs text-muted-foreground">可用性 · {windowValue}</div>
-            <div className={cn('font-display text-2xl font-normal', muted ? 'text-muted-foreground' : ok ? 'text-success' : 'text-destructive')}>{uptime}</div>
+            <div className={cn('font-display text-2xl font-normal', muted || autoProbePaused || samplesInsufficient ? 'text-muted-foreground' : ok ? 'text-success' : 'text-destructive')}>{samplesInsufficient ? '样本不足' : uptime}</div>
           </div>
           <div className="-mx-1 overflow-x-auto px-1 pb-1">
             <div
               className="grid min-w-full gap-1"
-              style={{ gridTemplateColumns: `repeat(${history.length || emptyHistorySlots(windowValue)}, minmax(6px, 1fr))` }}
+              style={{ gridTemplateColumns: `repeat(${historySlots}, minmax(6px, 1fr))` }}
             >
+              {Array.from({ length: missingHistorySlots }).map((_, index) => <span key={`missing-${index}`} className="h-4 rounded-xs bg-surface-cream-strong" />)}
               {history.map((probe, index) => {
                 const good = probeOK(probe)
                 return (
@@ -116,8 +121,6 @@ export function StatusMonitorCard({
                   </HoverText>
                 )
               })}
-              {history.length === 0 &&
-                Array.from({ length: emptyHistorySlots(windowValue) }).map((_, index) => <span key={index} className="h-4 rounded-xs bg-surface-cream-strong" />)}
             </div>
           </div>
           <div className="mt-2 flex justify-between text-xs text-muted-foreground">
@@ -242,4 +245,3 @@ export function groupCards<T extends ModelCard | PublicModelCard>(cards: T[]) {
 export function cardDisplayGroup(card: ModelCard | PublicModelCard) {
   return card.display_group?.trim() || '其他'
 }
-
