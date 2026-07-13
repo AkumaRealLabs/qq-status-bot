@@ -2167,7 +2167,9 @@ func TestCheckCardFallsBackToDefaultModel(t *testing.T) {
 	if _, err := st.DB.ExecContext(t.Context(), `UPDATE model_cards SET model='' WHERE id=?`, card.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := New(st).CheckCard(t.Context(), card.ID); err != nil {
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client(), ProbeMode: monitor.ProbeModeHTTP}
+	if err := svc.CheckCard(t.Context(), card.ID); err != nil {
 		t.Fatal(err)
 	}
 	if model != domain.ProbeModel {
