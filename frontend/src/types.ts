@@ -300,6 +300,8 @@ export type SchedulerChannel = {
   id: string
   name: string
   status: number
+  priority?: number
+  weight?: number
   tag?: string
   type?: string
   group?: string

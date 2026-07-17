@@ -286,13 +286,15 @@ func ValidateSchedulerUnassignedGroup(unassigned string, tiers []SchedulerTier) 
 }
 
 type SchedulerChannel struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name"`
-	Status int      `json:"status"`
-	Tag    string   `json:"tag,omitempty"`
-	Type   string   `json:"type,omitempty"`
-	Group  string   `json:"group,omitempty"`
-	Models []string `json:"models,omitempty"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Status   int      `json:"status"`
+	Priority int64    `json:"priority"`
+	Weight   uint     `json:"weight"`
+	Tag      string   `json:"tag,omitempty"`
+	Type     string   `json:"type,omitempty"`
+	Group    string   `json:"group,omitempty"`
+	Models   []string `json:"models,omitempty"`
 }
 
 type SchedulerGroup struct {

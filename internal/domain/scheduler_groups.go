@@ -1,6 +1,33 @@
 package domain
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
+
+const schedulerMaxPriority int64 = 100
+
+// CostPriorities 将不同成本依次映射为递减优先级；同成本共享优先级。
+func CostPriorities(costs map[string]float64) map[string]int64 {
+	values := make([]float64, 0, len(costs))
+	for _, cost := range costs {
+		values = append(values, cost)
+	}
+	sort.Float64s(values)
+	byCost := make(map[float64]int64, len(values))
+	var rank int64
+	for i, cost := range values {
+		if i > 0 && cost != values[i-1] {
+			rank++
+		}
+		byCost[cost] = schedulerMaxPriority - rank
+	}
+	out := make(map[string]int64, len(costs))
+	for id, cost := range costs {
+		out[id] = byCost[cost]
+	}
+	return out
+}
 
 // GroupsForPrice 返回价格区间包含 price 的托管调度分组。
 func GroupsForPrice(tiers []SchedulerTier, price float64) []string {

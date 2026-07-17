@@ -38,7 +38,7 @@
 
 | 门面 | 字段 | 职责 |
 |------|------|------|
-| `SchedulerService` | `Service.Scheduler` | 配置、渠道/分组应用、成本快照、自动关渠/恢复 |
+| `SchedulerService` | `Service.Scheduler` | 配置、渠道成本分组与优先级应用、成本快照、自动关渠/恢复 |
 | `ProfitService` | `Service.ProfitSvc` | 基于调度日志的号池利润汇总 |
 | `ProbeService` | `Service.Probe` | 模型卡片 CRUD、探测、上游检查、监控状态 |
 | `CLIProxyService` | `Service.CLIProxy` | CLIProxyAPI 配置、鉴权文件、配额重置/快照 |

@@ -387,9 +387,10 @@ func TestCLIProxyQuotaRefreshSkipsDisabledPool(t *testing.T) {
 		case "/v0/management/auth-files":
 			authCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{
-				{"name": "ready.json", "auth_index": "1"},
-				{"name": "disabled.json", "auth_index": "2", "disabled": true},
-				{"name": "unavailable.json", "auth_index": "3", "unavailable": true},
+				{"name": "ready.json", "provider": "codex", "auth_index": "1"},
+				{"name": "disabled.json", "provider": "codex", "auth_index": "2", "disabled": true},
+				{"name": "unavailable.json", "provider": "codex", "auth_index": "3", "unavailable": true},
+				{"name": "xai.json", "provider": "xai", "auth_index": "4"},
 			}})
 		case "/v0/management/api-call":
 			quotaCalls++

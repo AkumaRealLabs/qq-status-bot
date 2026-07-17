@@ -248,7 +248,7 @@ func TestSchedulerConfigAndChannelsProxy(t *testing.T) {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{
-			"id": 9, "name": "Claude", "status": 1, "tag": "fast", "type": "openai", "group": "vip", "models": []string{"gpt-5.5"},
+			"id": 9, "name": "Claude", "status": 1, "priority": 12, "weight": 34, "tag": "fast", "type": "openai", "group": "vip", "models": []string{"gpt-5.5"},
 		}}}})
 	}))
 	defer ts.Close()
@@ -276,14 +276,17 @@ func TestSchedulerConfigAndChannelsProxy(t *testing.T) {
 	if sawAuth != "token" || sawUser != "42" || sawQuery != "claude" || sawPageSize != "100" || sawPage != "1" {
 		t.Fatalf("headers/query = auth=%q user=%q keyword=%q page_size=%q p=%q", sawAuth, sawUser, sawQuery, sawPageSize, sawPage)
 	}
-	if len(channels) != 1 || channels[0].ID != "9" || channels[0].Name != "Claude" || channels[0].Status != 1 || channels[0].Models[0] != "gpt-5.5" {
+	if len(channels) != 1 || channels[0].ID != "9" || channels[0].Name != "Claude" || channels[0].Status != 1 || channels[0].Priority != 12 || channels[0].Weight != 34 || channels[0].Models[0] != "gpt-5.5" {
 		t.Fatalf("channels = %+v", channels)
 	}
 }
 
 func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 	currentGroups := map[int]string{9: "", 10: ""}
+	currentPriorities := map[int]int64{9: 1, 10: 1}
+	weights := map[int]uint{9: 7, 10: 3}
 	updated := map[int]string{}
+	updatedPriorities := map[int]int64{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/channel/" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -293,8 +296,8 @@ func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 				t.Fatalf("bad channel page query: %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
-				{"id": 9, "group": currentGroups[9]},
-				{"id": 10, "group": currentGroups[10]},
+				{"id": 9, "group": currentGroups[9], "priority": currentPriorities[9], "weight": weights[9]},
+				{"id": 10, "group": currentGroups[10], "priority": currentPriorities[10], "weight": weights[10]},
 			}}})
 			return
 		}
@@ -302,14 +305,21 @@ func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		var body struct {
-			ID    int    `json:"id"`
-			Group string `json:"group"`
+			ID       int    `json:"id"`
+			Group    string `json:"group"`
+			Priority *int64 `json:"priority"`
+			Weight   *uint  `json:"weight"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
+		if body.Priority == nil || body.Weight != nil {
+			t.Fatalf("priority/weight body = %+v", body)
+		}
 		currentGroups[body.ID] = body.Group
+		currentPriorities[body.ID] = *body.Priority
 		updated[body.ID] = body.Group
+		updatedPriorities[body.ID] = *body.Priority
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 	}))
 	defer ts.Close()
@@ -360,20 +370,21 @@ func TestApplySchedulerGroupsUsesPriceTiers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Updated != 2 || out.Unchanged != 0 || updated[9] != "gpt_low,gpt_stable" || updated[10] != "gpt_stable" {
-		t.Fatalf("out=%+v updated=%+v", out, updated)
+	if out.Updated != 2 || out.Unchanged != 0 || updated[9] != "gpt_low,gpt_stable" || updated[10] != "gpt_stable" || updatedPriorities[9] != 100 || updatedPriorities[10] != 99 || weights[9] != 7 || weights[10] != 3 {
+		t.Fatalf("out=%+v updated=%+v priorities=%+v weights=%+v", out, updated, updatedPriorities, weights)
 	}
 	logs, err := svc.SchedulerLogs(t.Context(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(logs) != 1 || logs[0].Action != "group_sync" || logs[0].Status != "success" || !strings.Contains(logs[0].Message, "更新 2 个") {
+	if len(logs) != 1 || logs[0].Action != "group_sync" || logs[0].Status != "success" || !strings.Contains(logs[0].Message, "更新 2 个") || !strings.Contains(logs[0].Message, "优先级 1 -> 100") {
 		t.Fatalf("logs = %+v", logs)
 	}
 }
 
 func TestApplySchedulerGroupsUsesCustomManualCostAndSkipsMonitorOnly(t *testing.T) {
 	currentGroups := map[int]string{9: "", 10: "", 11: ""}
+	currentPriorities := map[int]int64{9: 7, 10: 8, 11: 9}
 	updated := map[int]string{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/channel/" {
@@ -382,19 +393,21 @@ func TestApplySchedulerGroupsUsesCustomManualCostAndSkipsMonitorOnly(t *testing.
 		switch r.Method {
 		case http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
-				{"id": 9, "group": currentGroups[9]},
-				{"id": 10, "group": currentGroups[10]},
-				{"id": 11, "group": currentGroups[11]},
+				{"id": 9, "group": currentGroups[9], "priority": currentPriorities[9]},
+				{"id": 10, "group": currentGroups[10], "priority": currentPriorities[10]},
+				{"id": 11, "group": currentGroups[11], "priority": currentPriorities[11]},
 			}}})
 		case http.MethodPut:
 			var body struct {
-				ID    int    `json:"id"`
-				Group string `json:"group"`
+				ID       int    `json:"id"`
+				Group    string `json:"group"`
+				Priority int64  `json:"priority"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
 			currentGroups[body.ID] = body.Group
+			currentPriorities[body.ID] = body.Priority
 			updated[body.ID] = body.Group
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 		default:
@@ -434,7 +447,7 @@ func TestApplySchedulerGroupsUsesCustomManualCostAndSkipsMonitorOnly(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Updated != 1 || out.Skipped != 1 || updated[11] != "gpt_stable" {
+	if out.Updated != 1 || out.Skipped != 1 || updated[11] != "gpt_stable" || currentPriorities[11] != 100 {
 		t.Fatalf("out=%+v updated=%+v", out, updated)
 	}
 	if _, ok := updated[9]; ok {
@@ -444,6 +457,7 @@ func TestApplySchedulerGroupsUsesCustomManualCostAndSkipsMonitorOnly(t *testing.
 
 func TestApplySchedulerGroupsKeepsManualGroupsAndCountsUnchanged(t *testing.T) {
 	currentGroups := map[int]string{9: "gpt_low,gpt_stable", 10: "gpt_low,manual", 11: "manual,gpt_stable"}
+	currentPriorities := map[int]int64{9: 100, 10: 99, 11: 100}
 	updated := map[int]string{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/channel/" {
@@ -452,19 +466,21 @@ func TestApplySchedulerGroupsKeepsManualGroupsAndCountsUnchanged(t *testing.T) {
 		switch r.Method {
 		case http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
-				{"id": 9, "group": currentGroups[9]},
-				{"id": 10, "group": currentGroups[10]},
-				{"id": 11, "group": currentGroups[11]},
+				{"id": 9, "group": currentGroups[9], "priority": currentPriorities[9]},
+				{"id": 10, "group": currentGroups[10], "priority": currentPriorities[10]},
+				{"id": 11, "group": currentGroups[11], "priority": currentPriorities[11]},
 			}}})
 		case http.MethodPut:
 			var body struct {
-				ID    int    `json:"id"`
-				Group string `json:"group"`
+				ID       int    `json:"id"`
+				Group    string `json:"group"`
+				Priority int64  `json:"priority"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
 			currentGroups[body.ID] = body.Group
+			currentPriorities[body.ID] = body.Priority
 			updated[body.ID] = body.Group
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 		default:
@@ -536,6 +552,7 @@ func TestApplySchedulerGroupsKeepsManualGroupsAndCountsUnchanged(t *testing.T) {
 
 func TestApplySchedulerGroupsMovesOutOfRangeToUnassigned(t *testing.T) {
 	currentGroups := map[int]string{9: "gpt_stable"}
+	currentPriority := int64(1)
 	var puts int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/channel/" {
@@ -544,17 +561,19 @@ func TestApplySchedulerGroupsMovesOutOfRangeToUnassigned(t *testing.T) {
 		switch r.Method {
 		case http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
-				{"id": 9, "name": "expensive", "group": currentGroups[9]},
+				{"id": 9, "name": "expensive", "group": currentGroups[9], "priority": currentPriority},
 			}}})
 		case http.MethodPut:
 			var body struct {
-				ID    int    `json:"id"`
-				Group string `json:"group"`
+				ID       int    `json:"id"`
+				Group    string `json:"group"`
+				Priority int64  `json:"priority"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
 			currentGroups[body.ID] = body.Group
+			currentPriority = body.Priority
 			puts++
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 		default:
@@ -600,7 +619,7 @@ func TestApplySchedulerGroupsMovesOutOfRangeToUnassigned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Updated != 1 || out.Skipped != 0 || puts != 1 || currentGroups[9] != "unassigned" || len(logs) != 1 || !strings.Contains(logs[0].Message, "expensive: gpt_stable -> unassigned") {
+	if out.Updated != 1 || out.Skipped != 0 || puts != 1 || currentGroups[9] != "unassigned" || len(logs) != 1 || !strings.Contains(logs[0].Message, "分组 gpt_stable -> unassigned") {
 		t.Fatalf("out=%+v puts=%d groups=%+v logs=%+v", out, puts, currentGroups, logs)
 	}
 }
@@ -615,7 +634,7 @@ func TestApplySchedulerGroupsLogsWhenWriteIsIgnored(t *testing.T) {
 		case http.MethodGet:
 			// 模拟 new-api：PUT success 但 group 不变
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
-				{"id": 9, "name": "expensive", "group": "gpt_stable"},
+				{"id": 9, "name": "expensive", "group": "gpt_stable", "priority": 1, "weight": 1},
 			}}})
 		case http.MethodPut:
 			puts++
@@ -699,6 +718,7 @@ func TestApplySchedulerGroupsRequiresUnassignedGroup(t *testing.T) {
 func TestCheckAllSyncsSchedulerGroupsOnce(t *testing.T) {
 	var channelGets, channelPuts, tokenHits int
 	currentGroup := ""
+	currentPriority := int64(1)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/user/self":
@@ -712,16 +732,18 @@ func TestCheckAllSyncsSchedulerGroupsOnce(t *testing.T) {
 			if r.Method == http.MethodPut {
 				channelPuts++
 				var body struct {
-					ID    int    `json:"id"`
-					Group string `json:"group"`
+					ID       int    `json:"id"`
+					Group    string `json:"group"`
+					Priority int64  `json:"priority"`
 				}
 				_ = json.NewDecoder(r.Body).Decode(&body)
 				currentGroup = body.Group
+				currentPriority = body.Priority
 				_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 				return
 			}
 			channelGets++
-			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "group": currentGroup}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "group": currentGroup, "priority": currentPriority}}}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -827,6 +849,7 @@ func TestCheckAllGroupSyncFailureDoesNotStopCardProbe(t *testing.T) {
 
 func TestSaveUpstreamSyncsGroupsOnlyWhenBalanceRateChanges(t *testing.T) {
 	currentGroup := "gpt_low"
+	currentPriority := int64(100)
 	var gets, puts int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/channel/" {
@@ -835,17 +858,19 @@ func TestSaveUpstreamSyncsGroupsOnlyWhenBalanceRateChanges(t *testing.T) {
 		}
 		if r.Method == http.MethodGet {
 			gets++
-			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "group": currentGroup}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "group": currentGroup, "priority": currentPriority}}}})
 			return
 		}
 		puts++
 		var body struct {
-			Group string `json:"group"`
+			Group    string `json:"group"`
+			Priority int64  `json:"priority"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
 		currentGroup = body.Group
+		currentPriority = body.Priority
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 	}))
 	defer ts.Close()

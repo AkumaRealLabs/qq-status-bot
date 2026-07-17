@@ -59,6 +59,16 @@ type CLIProxyResetQuotaResult struct {
 	Models    []string `json:"models,omitempty"`
 }
 
+// IsCodexCLIProxyAccount 判断授权文件是否属于 Codex 账号；xAI 不进入本项目号池管理。
+func IsCodexCLIProxyAccount(account CLIProxyAuthFile) bool {
+	provider := strings.ToLower(strings.TrimSpace(account.Provider))
+	typ := strings.ToLower(strings.TrimSpace(account.Type))
+	if provider == "xai" || typ == "xai" {
+		return false
+	}
+	return provider == "codex" || typ == "codex" || strings.Contains(strings.ToLower(account.Name), "codex")
+}
+
 func ValidateCLIProxyAuthFileName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {

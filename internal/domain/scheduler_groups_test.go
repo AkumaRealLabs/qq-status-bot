@@ -2,6 +2,21 @@ package domain
 
 import "testing"
 
+func TestCostPriorities(t *testing.T) {
+	got := CostPriorities(map[string]float64{
+		"cheap-a": 0.03,
+		"cheap-b": 0.03,
+		"middle":  0.04,
+		"high":    0.1,
+	})
+	if got["cheap-a"] != 100 || got["cheap-b"] != 100 || got["middle"] != 99 || got["high"] != 98 {
+		t.Fatalf("priorities=%v", got)
+	}
+	if got := CostPriorities(nil); len(got) != 0 {
+		t.Fatalf("empty priorities=%v", got)
+	}
+}
+
 func TestGroupsForPrice(t *testing.T) {
 	tiers := []SchedulerTier{
 		{Group: "gpt_low", PriceMin: 0, PriceMax: 0.1},

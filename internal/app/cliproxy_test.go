@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -22,10 +24,13 @@ func TestCLIProxyAuthFilesFlow(t *testing.T) {
 		sawAuth, sawKey = r.Header.Get("Authorization"), r.Header.Get("X-Management-Key")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files":
-			_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{{
-				"name": "acc.json", "provider": "codex", "status": "ready", "email": "a@example.test",
-				"account_type": "team", "account_id": "acct_1", "auth_index": "7", "size": 12, "success": 2, "failed": 1,
-			}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{
+				{
+					"name": "acc.json", "provider": "codex", "status": "ready", "email": "a@example.test",
+					"account_type": "team", "account_id": "acct_1", "auth_index": "7", "size": 12, "success": 2, "failed": 1,
+				},
+				{"name": "xai.json", "provider": "xai", "status": "ready", "auth_index": "8"},
+			}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v0/management/auth-files":
 			uploadedName = r.URL.Query().Get("name")
 			file, _, err := r.FormFile("file")
@@ -257,6 +262,94 @@ func TestCLIProxyConfigDoesNotReturnSecret(t *testing.T) {
 	}
 	if stored.ManagementKey != "secret" {
 		t.Fatalf("stored key = %q", stored.ManagementKey)
+	}
+}
+
+func TestCLIProxyQuotaEventsFollowStateTransitions(t *testing.T) {
+	status := http.StatusOK
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v0/management/api-call" {
+			http.NotFound(w, r)
+			return
+		}
+		if status != http.StatusOK {
+			_ = json.NewEncoder(w).Encode(map[string]any{"status_code": status, "body": map[string]string{"message": "invalid token"}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status_code": http.StatusOK, "body": map[string]any{"rate_limit": map[string]any{}}})
+	}))
+	defer ts.Close()
+	svc := testCLIProxyService(t, ts.URL, "secret")
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+
+	quota := func(wantErr bool) {
+		t.Helper()
+		_, err := svc.CLIProxyAccountQuota(t.Context(), "codex-user.json", "1", "", "plus")
+		if (err != nil) != wantErr {
+			t.Fatalf("quota err=%v, wantErr=%v", err, wantErr)
+		}
+	}
+	quota(false)
+	status = http.StatusUnauthorized
+	quota(true)
+	quota(true)
+	status = http.StatusOK
+	quota(false)
+
+	events, err := svc.Store.OpsEvents(t.Context(), domain.OpsEventFilter{
+		Type: "cliproxy_error", TargetType: "cliproxy_account", TargetID: "codex-user.json", Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Severity != "success" || events[1].Severity != "warning" {
+		t.Fatalf("events = %+v", events)
+	}
+	var snapshots int
+	if err := svc.Store.DB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cliproxy_quota_snapshots WHERE account_name=?`, "codex-user.json").Scan(&snapshots); err != nil {
+		t.Fatal(err)
+	}
+	if snapshots != 4 {
+		t.Fatalf("snapshots = %d, want 4", snapshots)
+	}
+}
+
+func TestRefreshCLIProxyQuotasLogsOneSummary(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v0/management/auth-files":
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{
+				{"name": "codex-user.json", "provider": "codex", "auth_index": "1"},
+				{"name": "xai-user.json", "provider": "xai", "auth_index": "2"},
+			}})
+		case "/v0/management/api-call":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status_code": http.StatusUnauthorized, "body": map[string]string{"message": "invalid token"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testCLIProxyService(t, ts.URL, "secret")
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+
+	var logs bytes.Buffer
+	oldOutput, oldFlags := log.Writer(), log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(oldOutput)
+		log.SetFlags(oldFlags)
+	}()
+	attempted, err := svc.CLIProxy.refreshCLIProxyQuotas(t.Context())
+	if err != nil || !attempted {
+		t.Fatalf("refresh attempted=%v err=%v", attempted, err)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "CLIProxy quota refresh accounts=1 ok=0 failed=1 skipped=0") {
+		t.Fatalf("summary log = %q", got)
+	}
+	if strings.Contains(got, "account=") {
+		t.Fatalf("日志仍包含逐账号错误: %q", got)
 	}
 }
 

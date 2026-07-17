@@ -69,18 +69,37 @@ func (s *ProbeService) CheckAll(ctx context.Context) error {
 			enabledCards = append(enabledCards, c)
 		}
 	}
-	cardOK, cardFail := s.runLimited(ctx, len(enabledCards), checkConcurrency, func(i int) error {
+	cardProcessed, cardInternalErrors := s.runLimited(ctx, len(enabledCards), checkConcurrency, func(i int) error {
 		card := enabledCards[i]
 		if err := s.CheckCard(ctx, card.ID); err != nil {
 			return fmt.Errorf("batch=%s card_id=%s card=%q upstream_id=%s: %w", batch, card.ID, card.Name, card.UpstreamID, err)
 		}
 		return nil
 	})
-	log.Printf("scheduler: check finished batch=%s upstreams_ok=%d upstreams_fail=%d cards_ok=%d cards_fail=%d", batch, upOK, upFail, cardOK, cardFail)
+	latestCards, err := s.app.Cards.ListCards(ctx)
+	if err != nil {
+		return err
+	}
+	cardProbeOK, cardProbeFailed := cardProbeStateCounts(latestCards)
+	log.Printf("scheduler: check finished batch=%s upstreams_ok=%d upstreams_fail=%d cards_processed=%d cards_internal_errors=%d cards_probe_ok=%d cards_probe_failed=%d", batch, upOK, upFail, cardProcessed, cardInternalErrors, cardProbeOK, cardProbeFailed)
 	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return ctx.Err()
 	}
 	return nil
+}
+
+func cardProbeStateCounts(cards []domain.ModelCard) (ok, failed int) {
+	for _, card := range cards {
+		if !card.Enabled {
+			continue
+		}
+		if card.FailureCount > 0 || card.LastError != "" {
+			failed++
+		} else {
+			ok++
+		}
+	}
+	return ok, failed
 }
 
 // runLimited 以最多 limit 个并发 worker 执行 n 个任务。

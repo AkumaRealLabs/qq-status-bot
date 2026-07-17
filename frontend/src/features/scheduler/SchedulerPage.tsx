@@ -163,7 +163,7 @@ export function SchedulerPage() {
     >
       {configured && !(form.scheduler_unassigned_group ?? '').trim() && (
         <FeedbackBanner
-          message="请先在「连接配置」中设置未分配分组，否则自动分组不会写入调度器（new-api 无法用空分组移出渠道）。"
+          message="请先在「连接配置」中设置未分配分组，否则成本调度不会写入调度器（new-api 无法用空分组移出渠道）。"
           error
         />
       )}
@@ -191,9 +191,12 @@ export function SchedulerPage() {
                       {group.channels.map((channel) => (
                         <div key={channel.id} className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm">
                           <span className="min-w-0 truncate">{channel.name || channel.id}</span>
-                          <span className={cn('shrink-0 text-xs', channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
-                            {schedulerStatus(channel.status)}
-                          </span>
+                          <div className="flex shrink-0 items-center gap-2 text-xs">
+                            <span className="text-muted-foreground">优先 {channel.priority ?? '-'} · 权重 {channel.weight ?? '-'}</span>
+                            <span className={cn(channel.status === 1 ? 'text-success' : channel.status === 2 ? 'text-destructive' : 'text-muted-foreground')}>
+                              {schedulerStatus(channel.status)}
+                            </span>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -235,6 +238,8 @@ export function SchedulerPage() {
                             <InfoCell label="上游 Key 原始分组" value={originalKeyGroup(card)} />
                             <InfoCell label="上游成本" value={upstreamCost(card)} />
                             <InfoCell label="自动命中分组" value={matchedTierLabel(card, tiers)} />
+                            <InfoCell label="渠道优先级" value={channel?.priority?.toString() ?? '-'} />
+                            <InfoCell label="渠道权重" value={channel?.weight?.toString() ?? '-'} />
                             <InfoCell label="自动恢复" value={schedulerRestoreState(card, channel)} />
                           </div>
                           <Field label="绑定渠道">
@@ -282,7 +287,7 @@ export function SchedulerPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <CardTitle>调度日志</CardTitle>
-                <CardDescription>自动分组、自动关闭和恢复渠道的执行记录</CardDescription>
+                <CardDescription>成本调度、自动关闭和恢复渠道的执行记录</CardDescription>
               </div>
               <Button variant="outline" size="sm" onClick={() => void logs.refetch()} disabled={logs.isFetching}>
                 <RefreshCcw className={cn('size-4', logs.isFetching && 'animate-spin')} />
@@ -381,7 +386,7 @@ function SchedulerConfigDialog({
           </Field>
         </div>
         <p className="text-xs text-muted-foreground">
-          价格未命中任何托管档位时，渠道会写入此分组（new-api 不支持空分组）。选项来自调度器已有分组，并排除价格档位已占用的组；保存与自动分组前必填。
+          价格未命中任何托管档位时，渠道会写入此分组（new-api 不支持空分组）。选项来自调度器已有分组，并排除价格档位已占用的组；保存与成本调度前必填。
         </p>
         <FeedbackBanner message={message} error={saveError} />
         <ActionRow>
@@ -485,7 +490,7 @@ function SchedulerGroupDialog({
           <ActionRow>
             <Button onClick={onApply} disabled={applying || saving}>
               {applying ? <Loader2 className="size-4 animate-spin" /> : <Tags className="size-4" />}
-              {applying ? '应用中' : '应用分组'}
+              {applying ? '应用中' : '应用成本调度'}
             </Button>
           </ActionRow>
         </div>
@@ -623,12 +628,12 @@ function schedulerStatus(status: number) {
 }
 
 function logAction(action: SchedulerLog['action']) {
-  if (action === 'group_sync') return '自动分组'
+  if (action === 'group_sync') return '成本调度'
   return action === 'restore' ? '恢复' : '关闭'
 }
 
 function schedulerLogTitle(log: SchedulerLog) {
-  if (log.action === 'group_sync') return '自动分组变更'
+  if (log.action === 'group_sync') return '成本调度变更'
   const card = log.card_name || log.card_id
   const channel = log.channel_name || log.channel_id
   if (card && channel && card !== channel) {

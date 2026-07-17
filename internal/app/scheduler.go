@@ -270,46 +270,55 @@ func (s *SchedulerService) ApplySchedulerGroups(ctx context.Context) (domain.Sch
 	if err != nil {
 		return domain.SchedulerApplyResult{}, err
 	}
-	channelGroups := make(map[string]string, len(channels))
-	channelNames := make(map[string]string, len(channels))
+	channelsByID := make(map[string]domain.SchedulerChannel, len(channels))
 	for _, channel := range channels {
-		channelGroups[channel.ID] = channel.Group
-		channelNames[channel.ID] = channel.Name
+		channelsByID[channel.ID] = channel
 	}
+	costs := make(map[string]float64, len(poolCards))
+	for _, card := range poolCards {
+		channelID := strings.TrimSpace(card.SchedulerChannelID)
+		price, ok := s.cardPrice(ctx, card)
+		if _, found := channelsByID[channelID]; channelID != "" && found && ok {
+			costs[channelID] = price
+		}
+	}
+	priorities := domain.CostPriorities(costs)
 	managed := domain.ManagedGroups(tiers)
 	var changes []string
 	for _, card := range poolCards {
-		price, ok := s.cardPrice(ctx, card)
-		current, found := channelGroups[strings.TrimSpace(card.SchedulerChannelID)]
-		if !ok || card.SchedulerChannelID == "" || !found {
+		channelID := strings.TrimSpace(card.SchedulerChannelID)
+		price, ok := costs[channelID]
+		current, found := channelsByID[channelID]
+		priority, hasPriority := priorities[channelID]
+		if !ok || channelID == "" || !found || !hasPriority {
 			out.Skipped++
 			continue
 		}
-		groups := domain.AssignedTargetGroups(tiers, managed, price, current, unassigned)
-		if domain.SameGroups(domain.SplitGroups(current), groups) {
+		groups := domain.AssignedTargetGroups(tiers, managed, price, current.Group, unassigned)
+		if domain.SameGroups(domain.SplitGroups(current.Group), groups) && current.Priority == priority {
 			out.Unchanged++
 			continue
 		}
 		group := domain.JoinGroups(groups)
-		if err := s.setSchedulerChannelGroup(ctx, cfg, card.SchedulerChannelID, group); err != nil {
+		if err := s.setSchedulerChannelGroup(ctx, cfg, channelID, group, priority); err != nil {
 			return out, err
 		}
-		// new-api 对空串/部分写入可能 success 但不改 group；始终写后校验。
-		actual, found, err := s.schedulerChannelGroup(ctx, cfg, card.SchedulerChannelID)
+		// new-api 对部分写入可能 success 但不生效；始终校验分组、优先级与原权重。
+		actual, found, err := s.schedulerChannel(ctx, cfg, channelID)
 		if err != nil {
 			return out, err
 		}
-		if !found || !domain.SameGroups(domain.SplitGroups(actual), groups) {
+		if !found || !domain.SameGroups(domain.SplitGroups(actual.Group), groups) || actual.Priority != priority || actual.Weight != current.Weight {
 			out.Skipped++
 			_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
 				Action:  "group_sync",
 				Status:  "error",
-				Message: fmt.Sprintf("%s: 写入分组 %q 后校验失败（实际 %q）", domain.FirstNonEmpty(channelNames[card.SchedulerChannelID], card.SchedulerChannelName, card.SchedulerChannelID), group, domain.FirstNonEmpty(actual, "-")),
+				Message: fmt.Sprintf("%s: 写入分组 %q、优先级 %d 后校验失败（实际分组 %q、优先级 %d、权重 %d -> %d）", domain.FirstNonEmpty(current.Name, card.SchedulerChannelName, channelID), group, priority, domain.FirstNonEmpty(actual.Group, "-"), actual.Priority, current.Weight, actual.Weight),
 			})
 			continue
 		}
-		channelGroups[card.SchedulerChannelID] = actual
-		changes = append(changes, fmt.Sprintf("%s: %s -> %s", domain.FirstNonEmpty(channelNames[card.SchedulerChannelID], card.SchedulerChannelName, card.SchedulerChannelID), domain.FirstNonEmpty(current, "-"), group))
+		channelsByID[channelID] = actual
+		changes = append(changes, fmt.Sprintf("%s: 成本 %g，分组 %s -> %s，优先级 %d -> %d", domain.FirstNonEmpty(current.Name, card.SchedulerChannelName, channelID), price, domain.FirstNonEmpty(current.Group, "-"), group, current.Priority, priority))
 		out.Updated++
 	}
 	if out.Updated > 0 {
@@ -322,21 +331,21 @@ func (s *SchedulerService) ApplySchedulerGroups(ctx context.Context) (domain.Sch
 	return out, nil
 }
 
-func (s *SchedulerService) schedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID string) (string, bool, error) {
+func (s *SchedulerService) schedulerChannel(ctx context.Context, cfg domain.SchedulerConfig, channelID string) (domain.SchedulerChannel, bool, error) {
 	channels, err := s.fetchSchedulerChannels(ctx, cfg, "")
 	if err != nil {
-		return "", false, err
+		return domain.SchedulerChannel{}, false, err
 	}
 	for _, channel := range channels {
 		if channel.ID == channelID {
-			return channel.Group, true, nil
+			return channel, true, nil
 		}
 	}
-	return "", false, nil
+	return domain.SchedulerChannel{}, false, nil
 }
 
 func schedulerGroupSyncMessage(out domain.SchedulerApplyResult, changes []string) string {
-	msg := fmt.Sprintf("自动分组：更新 %d 个，保持 %d 个，跳过 %d 个", out.Updated, out.Unchanged, out.Skipped)
+	msg := fmt.Sprintf("成本调度：更新 %d 个，保持 %d 个，跳过 %d 个", out.Updated, out.Unchanged, out.Skipped)
 	if len(changes) == 0 {
 		return msg
 	}
@@ -348,7 +357,7 @@ func schedulerGroupSyncMessage(out domain.SchedulerApplyResult, changes []string
 
 func (s *SchedulerService) syncSchedulerGroupsBestEffort(ctx context.Context) {
 	if _, err := s.ApplySchedulerGroups(ctx); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
-		// 未配置 unassigned：功能未就绪，不刷调度日志；手动「应用分组」仍会返回错误提示。
+		// 未配置 unassigned：功能未就绪，不刷调度日志；手动「应用成本调度」仍会返回错误提示。
 		if IsBadRequest(err) && strings.Contains(err.Error(), "未分配分组") {
 			return
 		}
@@ -524,13 +533,13 @@ func (s *SchedulerService) setSchedulerChannelStatus(ctx context.Context, channe
 	return nil
 }
 
-func (s *SchedulerService) setSchedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID, group string) error {
+func (s *SchedulerService) setSchedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID, group string, priority int64) error {
 	id, err := strconv.Atoi(strings.TrimSpace(channelID))
 	if err != nil || id <= 0 {
 		return ErrBadRequest(fmt.Sprintf("invalid scheduler channel id: %s", channelID))
 	}
 	var raw map[string]any
-	if err := s.schedulerJSON(ctx, cfg, http.MethodPut, "/api/channel/", map[string]any{"id": id, "group": group}, &raw); err != nil {
+	if err := s.schedulerJSON(ctx, cfg, http.MethodPut, "/api/channel/", map[string]any{"id": id, "group": group, "priority": priority}, &raw); err != nil {
 		return err
 	}
 	if ok, exists := raw["success"].(bool); exists && !ok {
@@ -604,13 +613,15 @@ func schedulerChannels(raw map[string]any) []domain.SchedulerChannel {
 			continue
 		}
 		ch := domain.SchedulerChannel{
-			ID:     schedulerString(firstScheduler(m, "id")),
-			Name:   schedulerString(firstScheduler(m, "name", "channel_name")),
-			Status: schedulerInt(firstScheduler(m, "status")),
-			Tag:    schedulerString(firstScheduler(m, "tag")),
-			Type:   schedulerString(firstScheduler(m, "type")),
-			Group:  schedulerString(firstScheduler(m, "group")),
-			Models: schedulerStrings(firstScheduler(m, "models")),
+			ID:       schedulerString(firstScheduler(m, "id")),
+			Name:     schedulerString(firstScheduler(m, "name", "channel_name")),
+			Status:   schedulerInt(firstScheduler(m, "status")),
+			Priority: int64(schedulerInt(firstScheduler(m, "priority"))),
+			Weight:   schedulerUint(firstScheduler(m, "weight")),
+			Tag:      schedulerString(firstScheduler(m, "tag")),
+			Type:     schedulerString(firstScheduler(m, "type")),
+			Group:    schedulerString(firstScheduler(m, "group")),
+			Models:   schedulerStrings(firstScheduler(m, "models")),
 		}
 		if ch.ID != "" {
 			out = append(out, ch)
@@ -729,6 +740,14 @@ func schedulerInt(v any) int {
 	default:
 		return 0
 	}
+}
+
+func schedulerUint(v any) uint {
+	n := schedulerInt(v)
+	if n < 0 {
+		return 0
+	}
+	return uint(n)
 }
 
 func schedulerStrings(v any) []string {

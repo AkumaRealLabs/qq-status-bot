@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -60,7 +61,13 @@ func (s *CLIProxyService) CLIProxyAccounts(ctx context.Context) ([]domain.CLIPro
 	if err := s.cliProxyJSON(ctx, cfg, http.MethodGet, "/auth-files", nil, &raw); err != nil {
 		return nil, err
 	}
-	out := cliproxyAuthFiles(raw)
+	accounts := cliproxyAuthFiles(raw)
+	out := make([]domain.CLIProxyAuthFile, 0, len(accounts))
+	for _, account := range accounts {
+		if domain.IsCodexCLIProxyAccount(account) {
+			out = append(out, account)
+		}
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		ri, rj := cliproxyStatusRank(out[i]), cliproxyStatusRank(out[j])
 		if ri != rj {
@@ -492,7 +499,7 @@ func (s *CLIProxyService) CLIProxyAccountQuota(ctx context.Context, name, authIn
 	return cliproxyCodexQuota(account, payload), nil
 }
 
-// refreshCLIProxyQuotas 为可用账号采样配额；停用的号池不产生外部请求。
+// refreshCLIProxyQuotas 只为可用 Codex 账号采样配额；单账号失败作为业务状态落快照，不升级为任务错误。
 func (s *CLIProxyService) refreshCLIProxyQuotas(ctx context.Context) (attempted bool, err error) {
 	cfg, err := s.app.Store.CLIProxyConfig(ctx)
 	if err != nil {
@@ -505,28 +512,31 @@ func (s *CLIProxyService) refreshCLIProxyQuotas(ctx context.Context) (attempted 
 	if err != nil {
 		return true, err
 	}
-	var firstErr error
+	attemptedAccounts, okCount, failedCount, skippedCount := 0, 0, 0, 0
 	for _, account := range accounts {
 		if err := ctx.Err(); err != nil {
 			return true, err
 		}
 		if account.Disabled || account.Unavailable || strings.TrimSpace(account.AuthIndex) == "" {
+			skippedCount++
 			continue
 		}
+		attemptedAccounts++
 		if _, err := s.CLIProxyAccountQuota(ctx, account.Name, account.AuthIndex, account.Account, account.AccountType); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			log.Printf("scheduler: CLIProxy quota refresh account=%q: %v", account.Name, err)
+			failedCount++
+		} else {
+			okCount++
 		}
 	}
-	return true, firstErr
+	log.Printf("scheduler: CLIProxy quota refresh accounts=%d ok=%d failed=%d skipped=%d", attemptedAccounts, okCount, failedCount, skippedCount)
+	return true, nil
 }
 
 func (s *CLIProxyService) saveCLIProxyQuotaSnapshot(ctx context.Context, account domain.CLIProxyAuthFile, quota domain.CLIProxyQuota, err error) {
 	if strings.TrimSpace(account.Name) == "" {
 		return
 	}
+	previous, previousErr := s.app.Store.LatestCLIProxyQuotaSnapshot(ctx, account.Name)
 	snap := domain.CLIProxyQuotaSnapshot{
 		AccountName: account.Name,
 		AuthIndex:   account.AuthIndex,
@@ -536,12 +546,34 @@ func (s *CLIProxyService) saveCLIProxyQuotaSnapshot(ctx context.Context, account
 	}
 	if err != nil {
 		snap.Error = err.Error()
-		_, _ = s.app.Store.CreateOpsEvent(ctx, domain.OpsEvent{
-			Type: "cliproxy_error", Severity: "warning", Title: "CLIProxyAPI 额度异常", Message: account.Name + ": " + err.Error(),
-			TargetType: "cliproxy_account", TargetID: account.Name, Actions: []string{"refresh_cliproxy_accounts"},
-		})
 	}
-	_ = s.app.Store.SaveCLIProxyQuotaSnapshot(ctx, snap)
+	if saveErr := s.app.Store.SaveCLIProxyQuotaSnapshot(ctx, snap); saveErr != nil {
+		log.Printf("CLIProxyAPI 额度快照保存失败 account=%q: %v", account.Name, saveErr)
+		return
+	}
+	if previousErr != nil {
+		if !errors.Is(previousErr, sql.ErrNoRows) {
+			log.Printf("CLIProxyAPI 上一条额度快照读取失败 account=%q: %v", account.Name, previousErr)
+		}
+		return
+	}
+	if previous.OK == snap.OK {
+		return
+	}
+	event := domain.OpsEvent{
+		Type: "cliproxy_error", TargetType: "cliproxy_account", TargetID: account.Name,
+		Actions: []string{"refresh_cliproxy_accounts"},
+	}
+	if snap.OK {
+		event.Severity = "success"
+		event.Title = "CLIProxyAPI 额度已恢复"
+		event.Message = account.Name + " 额度查询已恢复"
+	} else {
+		event.Severity = "warning"
+		event.Title = "CLIProxyAPI 额度异常"
+		event.Message = account.Name + ": " + snap.Error
+	}
+	_, _ = s.app.Store.CreateOpsEvent(ctx, event)
 }
 
 func cliproxyQuotaSummary(quota domain.CLIProxyQuota) string {
