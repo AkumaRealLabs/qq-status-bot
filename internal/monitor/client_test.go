@@ -165,6 +165,16 @@ func TestShouldRetryInBrowserRecognizesCloudflareBlockPage(t *testing.T) {
 	}
 }
 
+func TestShouldRetryInBrowserRecognizesSessionBindingMismatch(t *testing.T) {
+	body := []byte(`{"code":"SESSION_BINDING_MISMATCH","message":"Session network fingerprint changed, please login again"}`)
+	if !shouldRetryInBrowser("https://example.test/api/v1/user/profile", http.StatusUnauthorized, body) {
+		t.Fatal("expected browser-bound session retry")
+	}
+	if shouldRetryInBrowser("https://example.test/v1/responses", http.StatusUnauthorized, body) {
+		t.Fatal("non-sub2api path must not use browser retry")
+	}
+}
+
 func TestProbeExtractsNestedResponseText(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

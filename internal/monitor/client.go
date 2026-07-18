@@ -565,7 +565,7 @@ func (c Client) doJSON(ctx context.Context, method, rawURL string, body any, hea
 		}
 		status, b, err = c.Browser.Do(ctx, method, rawURL, bodyBytes, browserHeaders)
 		if err != nil {
-			return fmt.Errorf("Cloudflare 拦截，浏览器回退失败: %w", err)
+			return fmt.Errorf("上游要求浏览器会话，浏览器回退失败: %w", err)
 		}
 		contentType = "application/json"
 	}
@@ -598,7 +598,10 @@ func shouldRetryInBrowser(rawURL string, status int, body []byte) bool {
 	lower := strings.ToLower(string(body))
 	cloudflareBlocked := strings.Contains(lower, "error code: 1010") ||
 		(strings.Contains(lower, "cloudflare ray id") && strings.Contains(lower, "cf-error-details"))
-	if status != http.StatusForbidden || !cloudflareBlocked {
+	browserBoundSession := strings.Contains(lower, "session_binding_mismatch") ||
+		strings.Contains(lower, "session network fingerprint changed")
+	if !((status == http.StatusForbidden && cloudflareBlocked) ||
+		((status == http.StatusUnauthorized || status == http.StatusForbidden) && browserBoundSession)) {
 		return false
 	}
 	u, err := url.Parse(rawURL)
