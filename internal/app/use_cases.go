@@ -30,6 +30,13 @@ func (s *Service) CaptureUpstreamBrowserTokens(ctx context.Context, id, access, 
 		u.Sub2APIRefreshToken = refresh
 	}
 	out, err := s.Store.UpdateUpstream(ctx, u)
+	if err != nil {
+		return domain.Upstream{}, err
+	}
+	if err := s.CheckUpstream(ctx, id); err != nil {
+		return out.Public(), err
+	}
+	out, err = s.Store.Upstream(ctx, id)
 	return out.Public(), err
 }
 

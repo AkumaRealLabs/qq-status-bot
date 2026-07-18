@@ -11,7 +11,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ai-upstream-monitor/internal/browsercdp"
 )
+
+type browserHTTPFunc func(context.Context, string, string, []byte, map[string]string) (int, []byte, error)
+
+func (f browserHTTPFunc) Do(ctx context.Context, method, rawURL string, body []byte, headers map[string]string) (int, []byte, error) {
+	return f(ctx, method, rawURL, body, headers)
+}
 
 func TestProbeSendsFixedModelPayload(t *testing.T) {
 	var saw bool
@@ -82,6 +90,78 @@ func TestSub2APIAuthExplainsMissingCredentialsWithoutLoginRequest(t *testing.T) 
 	}
 	if requestCount != 0 {
 		t.Fatalf("requestCount = %d, want 0", requestCount)
+	}
+}
+
+func TestSub2APIAuthExplainsInvalidTokenWithoutPasswordFallback(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "invalid refresh token", http.StatusUnauthorized)
+	}))
+	defer s.Close()
+
+	err := (Client{HTTP: s.Client()}).sub2apiForceAuth(t.Context(), &Upstream{BaseURL: s.URL, Sub2APIRefreshToken: "expired"})
+	if err == nil || !strings.Contains(err.Error(), "Token 已失效") || !strings.Contains(err.Error(), "重新") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDoJSONRetriesSub2APICloudflare1010InBrowser(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "error code: 1010", http.StatusForbidden)
+	}))
+	defer s.Close()
+
+	called := false
+	c := Client{
+		HTTP: s.Client(),
+		Browser: browserHTTPFunc(func(_ context.Context, method, rawURL string, body []byte, headers map[string]string) (int, []byte, error) {
+			called = true
+			if method != http.MethodGet || rawURL != s.URL+"/api/v1/user/profile" || len(body) != 0 || headers["Authorization"] != "Bearer token" {
+				t.Fatalf("browser request method=%s url=%s body=%q headers=%v", method, rawURL, body, headers)
+			}
+			return http.StatusOK, []byte(`{"data":{"balance":12.5}}`), nil
+		}),
+	}
+	var raw map[string]any
+	if err := c.doJSON(t.Context(), http.MethodGet, s.URL+"/api/v1/user/profile", nil, bearer("token"), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if !called || num(obj(raw["data"])["balance"]) != 12.5 {
+		t.Fatalf("called=%v raw=%v", called, raw)
+	}
+}
+
+func TestDoJSONDoesNotRetryUnrelatedCloudflare1010(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "error code: 1010", http.StatusForbidden)
+	}))
+	defer s.Close()
+
+	c := Client{
+		HTTP: s.Client(),
+		Browser: browserHTTPFunc(func(context.Context, string, string, []byte, map[string]string) (int, []byte, error) {
+			t.Fatal("unexpected browser retry")
+			return 0, nil, nil
+		}),
+	}
+	var raw map[string]any
+	err := c.doJSON(t.Context(), http.MethodPost, s.URL+"/v1/responses", map[string]string{"input": "ping"}, nil, &raw)
+	var httpErr httpStatusError
+	if !errors.As(err, &httpErr) || httpErr.Status != http.StatusForbidden {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestShouldRetryInBrowserRecognizesCloudflareBlockPage(t *testing.T) {
+	body := []byte(`<div id="cf-error-details"><span>Cloudflare Ray ID: abc</span></div>`)
+	if !shouldRetryInBrowser("https://example.test/api/v1/user/profile", http.StatusForbidden, body) {
+		t.Fatal("expected Cloudflare block page retry")
+	}
+	if shouldRetryInBrowser("https://example.test/v1/responses", http.StatusForbidden, body) {
+		t.Fatal("non-sub2api path must not use browser retry")
+	}
+	if shouldRetryInBrowser("https://example.test/api/v1/user/profile", http.StatusUnauthorized, body) {
+		t.Fatal("non-403 response must not use browser retry")
 	}
 }
 
@@ -290,6 +370,38 @@ func TestProbeCodexCLIRealOptIn(t *testing.T) {
 	got := (Client{ProbeMode: ProbeModeCLI}).Probe(ctx, baseURL, key, "gpt-5.5")
 	if !got.Success {
 		t.Fatalf("got=%+v", got)
+	}
+}
+
+func TestSub2APICheckBrowserFallbackRealOptIn(t *testing.T) {
+	if os.Getenv("AUM_REAL_BROWSER_CDP_TEST") != "1" {
+		t.Skip("set AUM_REAL_BROWSER_CDP_TEST=1 with browser and upstream environment variables")
+	}
+	debugURL := os.Getenv("AUM_REAL_BROWSER_DEBUG_URL")
+	baseURL := strings.TrimRight(os.Getenv("AUM_REAL_BROWSER_BASE_URL"), "/")
+	token := os.Getenv("AUM_REAL_BROWSER_TOKEN")
+	if debugURL == "" || baseURL == "" || token == "" {
+		t.Fatal("AUM_REAL_BROWSER_DEBUG_URL, AUM_REAL_BROWSER_BASE_URL and AUM_REAL_BROWSER_TOKEN are required")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	c := Client{
+		HTTP: &http.Client{Timeout: 15 * time.Second},
+		Browser: browsercdp.Client{
+			DebugURL:   debugURL,
+			HostHeader: os.Getenv("AUM_REAL_BROWSER_HOST_HEADER"),
+		},
+	}
+	u := &Upstream{Type: "sub2api", BaseURL: baseURL, Sub2APIAccessToken: token}
+	if _, err := c.sub2apiBalance(ctx, u); err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	keys, err := c.sub2apiKeys(ctx, u)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	if len(keys) == 0 {
+		t.Fatal("browser fallback check returned no API keys")
 	}
 }
 

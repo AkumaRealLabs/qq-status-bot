@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"ai-upstream-monitor/internal/app"
+	"ai-upstream-monitor/internal/browsercdp"
 	"ai-upstream-monitor/internal/httpapi"
 	"ai-upstream-monitor/internal/store"
 )
@@ -39,6 +40,10 @@ func main() {
 	}
 
 	svc := app.New(st)
+	svc.Client.Browser = browsercdp.Client{
+		DebugURL:   os.Getenv("BROWSER_DEBUG_URL"),
+		HostHeader: os.Getenv("BROWSER_DEBUG_HOST_HEADER"),
+	}
 	svc.StartScheduler(ctx)
 	server := &http.Server{
 		Addr:              env("HTTP_ADDR", "0.0.0.0:8090"),

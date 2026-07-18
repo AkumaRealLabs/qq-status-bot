@@ -19,8 +19,13 @@ import (
 
 type Client struct {
 	HTTP      *http.Client
+	Browser   BrowserHTTPClient
 	ProbeMode string
 	CodexPath string
+}
+
+type BrowserHTTPClient interface {
+	Do(ctx context.Context, method, rawURL string, body []byte, headers map[string]string) (status int, responseBody []byte, err error)
 }
 
 const (
@@ -185,6 +190,7 @@ func (c Client) sub2apiAuth(ctx context.Context, u *Upstream) error {
 }
 
 func (c Client) sub2apiForceAuth(ctx context.Context, u *Upstream) error {
+	hadToken := u.Sub2APIAccessToken != "" || u.Sub2APIRefreshToken != ""
 	if u.Sub2APIRefreshToken != "" {
 		var raw map[string]any
 		err := c.doJSON(ctx, http.MethodPost, joinURL(u.BaseURL, "/api/v1/auth/refresh"), map[string]string{
@@ -195,6 +201,9 @@ func (c Client) sub2apiForceAuth(ctx context.Context, u *Upstream) error {
 		}
 	}
 	if strings.TrimSpace(u.Email) == "" || u.Password == "" {
+		if hadToken {
+			return AuthError{Err: errors.New("sub2api Token 已失效且无法自动刷新，请重新通过“浏览器登录”完成登录并采集 Token")}
+		}
 		return AuthError{Err: errors.New("sub2api 未配置可用登录凭据，请先通过“浏览器登录”完成登录并采集 Token")}
 	}
 
@@ -516,15 +525,15 @@ func responseText(raw map[string]any) string {
 }
 
 func (c Client) doJSON(ctx context.Context, method, rawURL string, body any, headers map[string]string, out any) error {
-	var r io.Reader
+	var bodyBytes []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		r = bytes.NewReader(b)
+		bodyBytes = b
 	}
-	req, err := http.NewRequestWithContext(ctx, method, rawURL, r)
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return err
 	}
@@ -544,13 +553,29 @@ func (c Client) doJSON(ctx context.Context, method, rawURL string, body any, hea
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return httpStatusError{Status: resp.StatusCode, Message: strings.TrimSpace(string(b))}
+	status := resp.StatusCode
+	contentType := resp.Header.Get("Content-Type")
+	if c.Browser != nil && shouldRetryInBrowser(rawURL, status, b) {
+		browserHeaders := make(map[string]string, len(headers)+1)
+		for key, value := range headers {
+			browserHeaders[key] = value
+		}
+		if len(bodyBytes) > 0 {
+			browserHeaders["Content-Type"] = "application/json"
+		}
+		status, b, err = c.Browser.Do(ctx, method, rawURL, bodyBytes, browserHeaders)
+		if err != nil {
+			return fmt.Errorf("Cloudflare 拦截，浏览器回退失败: %w", err)
+		}
+		contentType = "application/json"
+	}
+	if status < 200 || status >= 300 {
+		return httpStatusError{Status: status, Message: strings.TrimSpace(string(b))}
 	}
 	if out == nil || len(b) == 0 {
 		return nil
 	}
-	if strings.HasSuffix(strings.TrimRight(rawURL, "/"), "/v1/responses") && strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+	if strings.HasSuffix(strings.TrimRight(rawURL, "/"), "/v1/responses") && strings.Contains(contentType, "text/event-stream") {
 		if m, ok := out.(*map[string]any); ok {
 			text := responseTextFromSSE(b)
 			if text == "" {
@@ -567,6 +592,17 @@ func (c Client) doJSON(ctx context.Context, method, rawURL string, body any, hea
 		return err
 	}
 	return nil
+}
+
+func shouldRetryInBrowser(rawURL string, status int, body []byte) bool {
+	lower := strings.ToLower(string(body))
+	cloudflareBlocked := strings.Contains(lower, "error code: 1010") ||
+		(strings.Contains(lower, "cloudflare ray id") && strings.Contains(lower, "cf-error-details"))
+	if status != http.StatusForbidden || !cloudflareBlocked {
+		return false
+	}
+	u, err := url.Parse(rawURL)
+	return err == nil && strings.HasPrefix(u.Path, "/api/v1/")
 }
 
 func responseTextFromSSE(body []byte) string {
