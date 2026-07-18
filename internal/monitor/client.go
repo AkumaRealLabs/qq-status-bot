@@ -194,6 +194,9 @@ func (c Client) sub2apiForceAuth(ctx context.Context, u *Upstream) error {
 			return nil
 		}
 	}
+	if strings.TrimSpace(u.Email) == "" || u.Password == "" {
+		return AuthError{Err: errors.New("sub2api 未配置可用登录凭据，请先通过“浏览器登录”完成登录并采集 Token")}
+	}
 
 	var raw map[string]any
 	err := c.doJSON(ctx, http.MethodPost, joinURL(u.BaseURL, "/api/v1/auth/login"), map[string]string{

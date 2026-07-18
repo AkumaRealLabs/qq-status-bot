@@ -68,6 +68,23 @@ func TestApplySub2TokensPreservesRefreshWhenMissing(t *testing.T) {
 	}
 }
 
+func TestSub2APIAuthExplainsMissingCredentialsWithoutLoginRequest(t *testing.T) {
+	requestCount := 0
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer s.Close()
+
+	err := (Client{HTTP: s.Client()}).sub2apiForceAuth(t.Context(), &Upstream{BaseURL: s.URL})
+	if err == nil || !strings.Contains(err.Error(), "浏览器登录") || !strings.Contains(err.Error(), "采集 Token") {
+		t.Fatalf("err = %v", err)
+	}
+	if requestCount != 0 {
+		t.Fatalf("requestCount = %d, want 0", requestCount)
+	}
+}
+
 func TestProbeExtractsNestedResponseText(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

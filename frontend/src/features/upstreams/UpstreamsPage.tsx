@@ -596,7 +596,8 @@ function openBrowserLogin(
   onSuccess?: () => void,
   onError?: (error: unknown) => void,
 ) {
-  const win = window.open('', 'ai-upstream-monitor-vnc', 'popup=yes,width=1280,height=900')
+  closeBrowserLoginWindow()
+  const win = window.open('', '_blank')
   browserLoginWindow = win
   mutation.mutate(undefined, {
     onSuccess: (out) => {
@@ -604,7 +605,7 @@ function openBrowserLogin(
       if (win && !win.closed) {
         win.location.href = url
       } else {
-        browserLoginWindow = window.open(url, 'ai-upstream-monitor-vnc', 'popup=yes,width=1280,height=900')
+        browserLoginWindow = window.open(url, '_blank')
       }
       onSuccess?.()
     },
@@ -622,8 +623,6 @@ function openBrowserLogin(
 function closeBrowserLoginWindow() {
   browserLoginWindow?.close()
   browserLoginWindow = null
-  const win = window.open('', 'ai-upstream-monitor-vnc')
-  win?.close()
 }
 
 function paymentLabel(value: string) {
