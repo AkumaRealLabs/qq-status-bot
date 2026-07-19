@@ -97,6 +97,46 @@ func normalizeStatusCommand(value string) string {
 	return strings.Join(strings.Fields(value), "")
 }
 
+// HasStatusCommandText 仅判断文本是否看似状态命令，供服务端安全诊断使用。
+func (e Event) HasStatusCommandText() bool {
+	var text strings.Builder
+	for _, segment := range e.Message {
+		if segment.Type == "text" {
+			text.WriteString(segment.Data.Text)
+		}
+	}
+	value := strings.ToLower(normalizeStatusCommand(text.String()))
+	return strings.Contains(value, "状态") || strings.Contains(value, "status")
+}
+
+// StatusCommandDiagnostic 返回不含消息文本、QQ 号或 Token 的消息段摘要。
+func (e Event) StatusCommandDiagnostic() string {
+	segments := make([]string, 0, len(e.Message))
+	for _, segment := range e.Message {
+		switch segment.Type {
+		case "at":
+			target := rawIDString(segment.Data.QQ)
+			switch {
+			case target == "":
+				segments = append(segments, "at:invalid")
+			case target == e.SelfIDString():
+				segments = append(segments, "at:self")
+			default:
+				segments = append(segments, "at:other")
+			}
+		case "text":
+			if normalizeStatusCommand(segment.Data.Text) == "" {
+				segments = append(segments, "text:blank")
+			} else {
+				segments = append(segments, "text:content")
+			}
+		default:
+			segments = append(segments, "segment:"+segment.Type)
+		}
+	}
+	return strings.Join(segments, ",")
+}
+
 func rawID(raw json.RawMessage) string {
 	value := strings.TrimSpace(string(raw))
 	if value == "" {

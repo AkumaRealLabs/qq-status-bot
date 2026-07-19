@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -91,5 +92,24 @@ func TestEventRequiresExactMentionCommand(t *testing.T) {
 	event.Message[2].Type = "image"
 	if event.IsStatusCommand() {
 		t.Fatal("unexpected non-text command segment")
+	}
+}
+
+func TestStatusCommandDiagnosticDoesNotExposeMessageText(t *testing.T) {
+	var event Event
+	if err := json.Unmarshal([]byte(`{"self_id":42,"post_type":"message","message_type":"group","sub_type":"normal","message_id":1,"group_id":100,"user_id":8,"message":[{"type":"at","data":{"qq":"99"}},{"type":"text","data":{"text":"状态 private-input"}}]}`), &event); err != nil {
+		t.Fatal(err)
+	}
+	if !event.HasStatusCommandText() {
+		t.Fatal("expected status candidate")
+	}
+	diagnostic := event.StatusCommandDiagnostic()
+	if diagnostic != "at:other,text:content" {
+		t.Fatalf("diagnostic = %q", diagnostic)
+	}
+	for _, secret := range []string{"private-input", "99", "42"} {
+		if strings.Contains(diagnostic, secret) {
+			t.Fatalf("diagnostic leaked %q: %s", secret, diagnostic)
+		}
 	}
 }
