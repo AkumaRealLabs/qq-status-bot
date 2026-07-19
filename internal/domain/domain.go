@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const ProbeModel = "gpt-5.5"
+const ProbeModel = "gpt-5.6-sol"
 
 // NormalizeProbeModel：空模型回退到默认探测模型。
 func NormalizeProbeModel(model string) string {

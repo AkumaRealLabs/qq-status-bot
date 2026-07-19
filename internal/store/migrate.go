@@ -17,7 +17,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS settings (
 			id TEXT PRIMARY KEY, check_interval_minutes INTEGER NOT NULL, telegram_bot_token TEXT NOT NULL DEFAULT '',
-			telegram_chat_id TEXT NOT NULL DEFAULT '', probe_model TEXT NOT NULL DEFAULT 'gpt-5.5',
+			telegram_chat_id TEXT NOT NULL DEFAULT '', probe_model TEXT NOT NULL DEFAULT 'gpt-5.6-sol',
 			site_name TEXT NOT NULL DEFAULT 'AI 上游监控', site_icon TEXT NOT NULL DEFAULT '',
 			epay_base_url TEXT NOT NULL DEFAULT '', epay_pid TEXT NOT NULL DEFAULT '', epay_key TEXT NOT NULL DEFAULT '',
 			scheduler_base_url TEXT NOT NULL DEFAULT '', scheduler_user_id TEXT NOT NULL DEFAULT '', scheduler_access_token TEXT NOT NULL DEFAULT '',
@@ -255,6 +255,13 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.exec(ctx, `INSERT INTO settings (id, check_interval_minutes, probe_model) VALUES ('default', 5, ?) ON CONFLICT(id) DO NOTHING`, domain.ProbeModel); err != nil {
+		return err
+	}
+	// 默认探测模型从 gpt-5.5 切到 gpt-5.6-sol：同步已有 settings / 卡片上的旧默认值。
+	if _, err := s.exec(ctx, `UPDATE settings SET probe_model=? WHERE probe_model IN ('', 'gpt-5.5')`, domain.ProbeModel); err != nil {
+		return err
+	}
+	if _, err := s.exec(ctx, `UPDATE model_cards SET model=? WHERE model IN ('', 'gpt-5.5')`, domain.ProbeModel); err != nil {
 		return err
 	}
 	return s.ensureDefaultRevenueCard(ctx)

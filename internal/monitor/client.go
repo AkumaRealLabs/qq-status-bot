@@ -326,6 +326,7 @@ func (c Client) probeHTTP(ctx context.Context, baseURL, key, model string) Probe
 		}},
 		"max_output_tokens": 2,
 		"stream":            false,
+		"reasoning":         map[string]any{"effort": "none"},
 	}, bearer(key), &raw)
 	latency := time.Since(start)
 	if err != nil {
@@ -365,7 +366,7 @@ model_instructions_file = %q
 disable_response_storage = true
 project_doc_max_bytes = 0
 web_search = "disabled"
-model_reasoning_effort = "low"
+model_reasoning_effort = "none"
 model_verbosity = "low"
 model_reasoning_summary = "none"
 

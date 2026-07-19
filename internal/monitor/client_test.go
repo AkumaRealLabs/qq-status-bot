@@ -38,23 +38,27 @@ func TestProbeSendsFixedModelPayload(t *testing.T) {
 			} `json:"input"`
 			MaxOutputTokens int  `json:"max_output_tokens"`
 			Stream          bool `json:"stream"`
+			Reasoning       struct {
+				Effort string `json:"effort"`
+			} `json:"reasoning"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		saw = body.Model == "gpt-5.5" &&
+		saw = body.Model == "gpt-5.6-sol" &&
 			len(body.Input) == 1 &&
 			body.Input[0].Role == "user" &&
 			len(body.Input[0].Content) == 1 &&
 			body.Input[0].Content[0].Type == "input_text" &&
 			body.Input[0].Content[0].Text == "ping" &&
 			body.MaxOutputTokens == 2 &&
-			!body.Stream
+			!body.Stream &&
+			body.Reasoning.Effort == "none"
 		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "pong"})
 	}))
 	defer s.Close()
 
-	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
+	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
 	if !saw || !got.Success || got.Status != StatusOperational || got.Input != "ping" {
 		t.Fatalf("saw=%v got=%+v", saw, got)
 	}
@@ -185,7 +189,7 @@ func TestProbeExtractsNestedResponseText(t *testing.T) {
 	}))
 	defer s.Close()
 
-	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
+	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
 	if got.Status != StatusOperational || got.Output != "Lake!" || !got.Success {
 		t.Fatalf("got=%+v", got)
 	}
@@ -201,7 +205,7 @@ func TestProbeExtractsSSEText(t *testing.T) {
 	}))
 	defer s.Close()
 
-	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
+	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
 	if got.Status != StatusOperational || got.Output != "pong" || !got.Success {
 		t.Fatalf("got=%+v", got)
 	}
@@ -218,7 +222,7 @@ func TestProbeClassifiesFailures(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "blue"})
 		}))
 		defer s.Close()
-		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
+		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
 		if got.Status != StatusOperational || !got.Success || got.Output != "blue" {
 			t.Fatalf("got=%+v", got)
 		}
@@ -229,7 +233,7 @@ func TestProbeClassifiesFailures(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"output_text": ""})
 		}))
 		defer s.Close()
-		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
+		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
 		if got.Status != StatusFailed || got.Success {
 			t.Fatalf("got=%+v", got)
 		}
@@ -240,7 +244,7 @@ func TestProbeClassifiesFailures(t *testing.T) {
 			http.Error(w, "bad key", http.StatusUnauthorized)
 		}))
 		defer s.Close()
-		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
+		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
 		if got.Status != StatusFailed || got.HTTPStatus != http.StatusUnauthorized || got.Error == "" {
 			t.Fatalf("got=%+v", got)
 		}
@@ -252,7 +256,7 @@ func TestProbeClassifiesFailures(t *testing.T) {
 			_, _ = w.Write([]byte("error code: 1010"))
 		}))
 		defer s.Close()
-		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
+		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
 		if got.Status != StatusFailed || got.HTTPStatus != http.StatusOK || !strings.Contains(got.Error, "error code: 1010") {
 			t.Fatalf("got=%+v", got)
 		}
@@ -264,7 +268,7 @@ func TestProbeClassifiesFailures(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "pong"})
 		}))
 		defer s.Close()
-		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.5")
+		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
 		if got.Status != StatusDegraded || !got.Success {
 			t.Fatalf("got=%+v", got)
 		}
@@ -302,7 +306,7 @@ done
 printf 'pong\n' > "$out"
 `)
 
-	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.5")
+	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.6-sol")
 	if !got.Success || got.Status != StatusOperational || got.HTTPStatus != 0 || got.Output != "pong" || got.Input != "ping" {
 		t.Fatalf("got=%+v", got)
 	}
@@ -311,7 +315,7 @@ printf 'pong\n' > "$out"
 		t.Fatal(err)
 	}
 	logText := string(logBytes)
-	for _, want := range []string{"args:exec", " ping", "approval_policy=\"never\"", "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "model_provider = \"aum_card\"", "model_instructions_file = ", "project_doc_max_bytes = 0", "web_search = \"disabled\"", "model_reasoning_effort = \"low\"", "model_verbosity = \"low\"", "model_reasoning_summary = \"none\"", "inherit = \"none\"", "disable_response_storage = true", "wire_api = \"responses\""} {
+	for _, want := range []string{"args:exec", " ping", "approval_policy=\"never\"", "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "model_provider = \"aum_card\"", "model_instructions_file = ", "project_doc_max_bytes = 0", "web_search = \"disabled\"", "model_reasoning_effort = \"none\"", "model_verbosity = \"low\"", "model_reasoning_summary = \"none\"", "inherit = \"none\"", "disable_response_storage = true", "wire_api = \"responses\""} {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("fake codex log missing %q:\n%s", want, logText)
 		}
@@ -327,7 +331,7 @@ echo "ERROR: exceeded retry limit, last status: 429 Too Many Requests, request i
 echo "ERROR: exceeded retry limit, last status: 429 Too Many Requests, request id: req-1 sk-card-secret" >&2
 exit 42
 `)
-	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.5")
+	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.6-sol")
 	if got.Success || got.Status != StatusError || !strings.Contains(got.Error, "429 Too Many Requests") || !strings.Contains(got.Error, "[redacted]") || strings.Contains(got.Error, "sk-card-secret") || strings.Contains(got.Error, "ping") || strings.Contains(got.Error, "bubblewrap") {
 		t.Fatalf("got=%+v", got)
 	}
@@ -377,7 +381,7 @@ func TestProbeCodexCLIRealOptIn(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	got := (Client{ProbeMode: ProbeModeCLI}).Probe(ctx, baseURL, key, "gpt-5.5")
+	got := (Client{ProbeMode: ProbeModeCLI}).Probe(ctx, baseURL, key, "gpt-5.6-sol")
 	if !got.Success {
 		t.Fatalf("got=%+v", got)
 	}

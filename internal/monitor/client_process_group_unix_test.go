@@ -26,7 +26,7 @@ done
 
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
-	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(ctx, "https://codex.example.test", "sk-card-secret", "gpt-5.5")
+	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(ctx, "https://codex.example.test", "sk-card-secret", "gpt-5.6-sol")
 	if got.Success || got.Status != StatusFailed || !strings.Contains(got.Error, "探测超时") {
 		t.Fatalf("got=%+v", got)
 	}

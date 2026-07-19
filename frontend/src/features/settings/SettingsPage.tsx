@@ -71,7 +71,7 @@ export function SettingsPage() {
       <Card className="w-full max-w-2xl bg-card">
         <CardHeader>
           <CardTitle>基础设置</CardTitle>
-          <CardDescription>探测模型由后端固定为 gpt-5.5</CardDescription>
+          <CardDescription>探测模型由后端固定为 gpt-5.6-sol</CardDescription>
         </CardHeader>
         <CardContent className="grid min-w-0 gap-4">
           <Field label="站点名称">

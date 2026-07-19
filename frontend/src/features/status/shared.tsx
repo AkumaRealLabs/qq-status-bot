@@ -81,7 +81,7 @@ export function StatusMonitorCard({
               <CardDescription className="mt-1.5 grid gap-0.5 text-xs leading-relaxed">
                 <span>展示分组：{displayGroup}</span>
                 <span>Key 分组：{groupName}</span>
-                <span>模型：gpt-5.5</span>
+                <span>模型：{editableCard?.model || 'gpt-5.6-sol'}</span>
               </CardDescription>
             )}
           </div>
@@ -214,7 +214,7 @@ export function probeHoverTitle(probe: Probe) {
 }
 
 function probePurpose(_probe: Probe) {
-  return '检查 gpt-5.5 响应与连通性'
+  return '检查 gpt-5.6-sol 响应与连通性'
 }
 
 export function isModelCard(card: ModelCard | PublicModelCard): card is ModelCard {

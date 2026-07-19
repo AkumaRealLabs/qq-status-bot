@@ -1,6 +1,6 @@
 # AI Upstream Monitor
 
-自用运维台：监控 `new-api` / `sub2api` 上游余额与 `gpt-5.5` 探测状态，联动调度器分组、利润核算、Telegram 消息、CLIProxy 号池与易支付收入。
+自用运维台：监控 `new-api` / `sub2api` 上游余额与 `gpt-5.6-sol` 探测状态，联动调度器分组、利润核算、Telegram 消息、CLIProxy 号池与易支付收入。
 
 ## 快速启动
 
