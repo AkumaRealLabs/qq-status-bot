@@ -271,7 +271,7 @@ func (s *ProbeService) availabilityManagedCard(ctx context.Context, card domain.
 		return false
 	}
 	upstream, err := s.app.Store.Upstream(ctx, card.UpstreamID)
-	return err == nil && upstream.Type == "newapi"
+	return err == nil && (upstream.Type == "newapi" || upstream.Type == "sub2api")
 }
 
 func (s *ProbeService) availabilityProbePurpose(ctx context.Context, card domain.ModelCard) string {

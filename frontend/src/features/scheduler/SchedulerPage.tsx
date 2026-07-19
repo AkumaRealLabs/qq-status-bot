@@ -432,6 +432,8 @@ function AvailabilityControl() {
             <tbody>
               {rows.map((row) => {
                 const card = cardsByID.get(row.card_id)
+                const forceActive = row.override === 'force_enable' || row.state === 'forced_on'
+                const canForceEnable = row.managed && !action.isPending && !forceActive && (row.actual_status !== 1 || row.state === 'blocked' || row.state === 'action_failed')
                 return (
                   <tr key={row.channel_id} className="border-b border-border last:border-0">
                     <td className="max-w-52 px-3 py-2"><div className="truncate font-medium" title={row.channel_name || row.channel_id}>{row.channel_name || row.channel_id}</div><div className="truncate text-xs text-muted-foreground">{row.card_name}</div></td>
@@ -448,7 +450,11 @@ function AvailabilityControl() {
                       ) : (
                         <Button variant="outline" size="icon" title="手动关闭渠道" disabled={action.isPending || !row.managed} onClick={() => action.mutate({ cardID: row.card_id, action: 'hold_off' })}><CirclePause className="size-4" /><span className="sr-only">手动关闭渠道</span></Button>
                       )}
-                      <Button variant="outline" size="icon" title="限时启用 30 分钟" disabled={action.isPending || !row.managed} onClick={() => action.mutate({ cardID: row.card_id, action: 'force_enable' })}><ShieldCheck className="size-4" /><span className="sr-only">限时启用 30 分钟</span></Button>
+                      {forceActive ? (
+                        <Button variant="outline" size="icon" title="结束限时接管" disabled={action.isPending || !row.managed} onClick={() => action.mutate({ cardID: row.card_id, action: 'release_hold' })}><ShieldAlert className="size-4" /><span className="sr-only">结束限时接管</span></Button>
+                      ) : canForceEnable ? (
+                        <Button variant="outline" size="icon" title="限时启用 30 分钟" onClick={() => action.mutate({ cardID: row.card_id, action: 'force_enable' })}><ShieldCheck className="size-4" /><span className="sr-only">限时启用 30 分钟</span></Button>
+                      ) : null}
                       <Button variant="outline" size="icon" title="立即检查" disabled={action.isPending || !row.managed} onClick={() => action.mutate({ cardID: row.card_id, action: 'check_now' })}><RefreshCcw className="size-4" /><span className="sr-only">立即检查</span></Button>
                     </div></td>
                   </tr>

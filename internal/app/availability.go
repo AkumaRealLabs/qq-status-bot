@@ -150,7 +150,9 @@ func (s *SchedulerService) reconcileAvailabilityWithChannels(ctx context.Context
 }
 
 func managedAvailabilityCard(card domain.ModelCard, upstream domain.Upstream) bool {
-	return card.Enabled && card.PoolEnabled && strings.TrimSpace(card.SchedulerChannelID) != "" && strings.TrimSpace(card.UpstreamID) != "" && upstream.Type == "newapi"
+	// 调度器远端始终由 SchedulerConfig 指向 new-api，但渠道可以绑定来自
+	// new-api 或 sub2api 的号池卡片；余额与探测 blocker 仍按各自上游隔离。
+	return card.Enabled && card.PoolEnabled && strings.TrimSpace(card.SchedulerChannelID) != "" && strings.TrimSpace(card.UpstreamID) != "" && (upstream.Type == "newapi" || upstream.Type == "sub2api")
 }
 
 func (s *SchedulerService) ensureAvailabilityBinding(ctx context.Context, card domain.ModelCard, upstream domain.Upstream, channel domain.SchedulerChannel) (domain.ChannelAvailability, error) {
@@ -435,7 +437,7 @@ func (s *SchedulerService) RecordAvailabilityProbe(ctx context.Context, card dom
 		return nil
 	}
 	upstream, err := s.app.Store.Upstream(ctx, card.UpstreamID)
-	if err != nil || upstream.Type != "newapi" {
+	if err != nil || (upstream.Type != "newapi" && upstream.Type != "sub2api") {
 		return err
 	}
 	seed := domain.ChannelAvailability{ChannelID: card.SchedulerChannelID, ChannelName: card.SchedulerChannelName, CardID: card.ID, CardName: card.Name, UpstreamID: upstream.ID, UpstreamName: upstream.Name, Managed: true, DesiredStatus: 1}
@@ -549,8 +551,8 @@ func (s *SchedulerService) AvailabilityAction(ctx context.Context, cardID, actio
 	if err != nil {
 		return domain.AvailabilityView{}, err
 	}
-	if upstream.Type != "newapi" {
-		return domain.AvailabilityView{}, ErrBadRequest("仅支持 new-api 调度器渠道")
+	if upstream.Type != "newapi" && upstream.Type != "sub2api" {
+		return domain.AvailabilityView{}, ErrBadRequest("仅支持 new-api 或 sub2api 上游的调度器渠道")
 	}
 	if action == "check_now" {
 		if err := s.app.Probe.CheckCard(ctx, card.ID); err != nil {

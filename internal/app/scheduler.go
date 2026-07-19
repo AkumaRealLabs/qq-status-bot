@@ -412,7 +412,7 @@ func (s *SchedulerService) availabilityManagedSchedulerCard(ctx context.Context,
 		return false
 	}
 	upstream, err := s.app.Store.Upstream(ctx, card.UpstreamID)
-	return err == nil && upstream.Type == "newapi"
+	return err == nil && (upstream.Type == "newapi" || upstream.Type == "sub2api")
 }
 
 func (s *SchedulerService) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {

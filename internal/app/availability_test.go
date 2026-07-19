@@ -13,7 +13,7 @@ import (
 	"ai-upstream-monitor/internal/store"
 )
 
-func TestAvailabilityBalanceObserveThenActiveCascadesBoundChannels(t *testing.T) {
+func TestAvailabilityBalanceObserveThenActiveCascadesSub2APIBoundChannels(t *testing.T) {
 	status := map[string]int{"9": 1, "10": 1}
 	var actions []int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +49,7 @@ func TestAvailabilityBalanceObserveThenActiveCascadesBoundChannels(t *testing.T)
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	upstream, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "上游", Type: "newapi", BaseURL: server.URL, Enabled: true})
+	upstream, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "上游", Type: "sub2api", BaseURL: server.URL, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestAvailabilityBalanceObserveThenActiveCascadesBoundChannels(t *testing.T)
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: server.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SaveBalance(t.Context(), upstream.ID, monitor.Balance{Remain: 5 * 500000}, "", 1); err != nil {
+	if _, err := st.SaveBalance(t.Context(), upstream.ID, monitor.Balance{Remain: 5}, "", 1); err != nil {
 		t.Fatal(err)
 	}
 	observe := domain.AvailabilityPolicy{BalanceGuardMode: domain.BalanceGuardObserve, LowBalanceThreshold: 30, BalanceCloseThreshold: 10, BalanceRecoverThreshold: 20, RunwayWarningHours: 24}
