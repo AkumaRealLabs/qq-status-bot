@@ -38,16 +38,13 @@ services:
     restart: unless-stopped
 
   llbot:
-    build:
-      context: ./llbot
-      args:
-        LLBOT_COMMIT: d6e2f485b8164597d04a2907d307739ecfcf4a55
+    image: linyuchen/llbot:8.0.14@sha256:e28926fc74b64a6f40c61ac8c8dfa8f4e9e2dd4f385017837c567268d0a60311
     ports:
       - "127.0.0.1:3080:3080"
     expose:
       - "3000"
     volumes:
-      - llbot_data:/app/data
+      - llbot_data:/app/llbot/data
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3080').then(() => process.exit(0), () => process.exit(1))\""]
       interval: 30s
