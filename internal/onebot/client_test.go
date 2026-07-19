@@ -72,6 +72,12 @@ func TestEventRequiresExactMentionCommand(t *testing.T) {
 	if !event.IsStatusCommand() {
 		t.Fatal("expected status command")
 	}
+	event.Message = append([]MessageSegment{{Type: "text"}}, event.Message...)
+	event.Message[0].Data.Text = "\u200b"
+	if !event.IsStatusCommand() {
+		t.Fatal("expected leading zero-width separator match")
+	}
+	event.Message = event.Message[1:]
 	event.Message[1].Data.Text = "status now"
 	if event.IsStatusCommand() {
 		t.Fatal("unexpected prefix command match")

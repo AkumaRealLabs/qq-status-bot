@@ -65,19 +65,36 @@ func (e Event) IsStatusCommand() bool {
 	if !e.IsNormalGroupMessage() || len(e.Message) < 2 {
 		return false
 	}
-	mention := e.Message[0]
+	mentionIndex := 0
+	for mentionIndex < len(e.Message) && isBlankTextSegment(e.Message[mentionIndex]) {
+		mentionIndex++
+	}
+	if mentionIndex >= len(e.Message)-1 {
+		return false
+	}
+	mention := e.Message[mentionIndex]
 	if mention.Type != "at" || rawIDString(mention.Data.QQ) != e.SelfIDString() {
 		return false
 	}
 	var command strings.Builder
-	for _, segment := range e.Message[1:] {
+	for _, segment := range e.Message[mentionIndex+1:] {
 		if segment.Type != "text" {
 			return false
 		}
 		command.WriteString(segment.Data.Text)
 	}
-	text := strings.TrimSpace(command.String())
+	text := normalizeStatusCommand(command.String())
 	return text == "状态" || text == "status"
+}
+
+func isBlankTextSegment(segment MessageSegment) bool {
+	return segment.Type == "text" && normalizeStatusCommand(segment.Data.Text) == ""
+}
+
+// normalizeStatusCommand 仅清理 QQ/OneBot 可能插入的空白与零宽分隔符，命令内容仍须完全匹配。
+func normalizeStatusCommand(value string) string {
+	value = strings.NewReplacer("\u200b", "", "\ufeff", "", "\u2060", "").Replace(value)
+	return strings.Join(strings.Fields(value), "")
 }
 
 func rawID(raw json.RawMessage) string {
