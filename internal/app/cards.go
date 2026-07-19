@@ -457,8 +457,18 @@ func (s *ProbeService) MonitorStatus(ctx context.Context, window string) (map[st
 	return s.monitorStatus(ctx, window, false)
 }
 
-func (s *ProbeService) PublicMonitorStatus(ctx context.Context, window string) (map[string]any, error) {
-	return s.monitorStatus(ctx, window, true)
+func (s *ProbeService) PublicMonitorStatus(ctx context.Context, window string) (domain.PublicMonitorStatus, error) {
+	since, label, _ := windowSince(window)
+	cards, err := s.enrichedCards(ctx, since, 0)
+	if err != nil {
+		return domain.PublicMonitorStatus{}, err
+	}
+	public := publicCards(cards)
+	total, ok, failed, latency, samples := statusSummary(public)
+	return domain.PublicMonitorStatus{
+		Window: label, Rows: public, Requests: total, Success: ok, Failed: failed,
+		SuccessRate: percent(ok, total), AvgLatency: avg(latency, samples),
+	}, nil
 }
 
 func (s *ProbeService) monitorStatus(ctx context.Context, window string, publicOnly bool) (map[string]any, error) {
@@ -468,12 +478,7 @@ func (s *ProbeService) monitorStatus(ctx context.Context, window string, publicO
 		return nil, err
 	}
 	if publicOnly {
-		public := publicCards(cards)
-		total, ok, failed, latency, samples := statusSummary(public)
-		return map[string]any{
-			"window": label, "rows": public, "requests": total, "success": ok, "failed": failed,
-			"success_rate": percent(ok, total), "avg_latency": avg(latency, samples),
-		}, nil
+		return nil, errors.New("public status must use PublicMonitorStatus")
 	}
 	total, ok, failed, latency, samples := 0, 0, 0, 0, 0
 	for _, c := range cards {

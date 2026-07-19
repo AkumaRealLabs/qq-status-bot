@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,6 +85,7 @@ func TestRevenueCardMergeUpdate(t *testing.T) {
 func TestSettingsMergeUpdate(t *testing.T) {
 	old := Settings{
 		CheckIntervalMinutes: 5, TelegramBotToken: "bot", EpayKey: "ek",
+		OneBotHTTPToken: "http-old", OneBotWebhookToken: "webhook-old", OneBotGroupIDs: []string{"100"},
 		NotificationRules: DefaultNotificationRules(), SiteName: "Old",
 	}
 	in := Settings{CheckIntervalMinutes: 0, TelegramBotToken: "", EpayKey: "new", SiteName: ""}
@@ -100,10 +102,33 @@ func TestSettingsMergeUpdate(t *testing.T) {
 	if !got.NotificationRules.Enabled || got.NotificationRules.FailureThreshold != 2 {
 		t.Fatalf("rules kept = %+v", got.NotificationRules)
 	}
+	if got.OneBotHTTPToken != "http-old" || got.OneBotWebhookToken != "webhook-old" {
+		t.Fatalf("onebot secrets should be kept: %+v", got)
+	}
 	in2 := Settings{CheckIntervalMinutes: 10, NotificationRules: NotificationRules{Enabled: false, FailureThreshold: 3, EventTypes: map[string]bool{"probe_failed": false}}}
 	got2 := in2.MergeUpdate(old)
 	if got2.NotificationRules.Enabled || got2.NotificationRules.FailureThreshold != 3 {
 		t.Fatalf("rules updated = %+v", got2.NotificationRules)
+	}
+}
+
+func TestNormalizeAndValidateOneBotSettings(t *testing.T) {
+	groups := NormalizeOneBotGroupIDs([]string{" 100 ", "", "200", "100", " 300"})
+	if got := strings.Join(groups, ","); got != "100,200,300" {
+		t.Fatalf("groups = %q", got)
+	}
+	cfg := Settings{OneBotEnabled: true, OneBotBaseURL: "http://llbot:3000", OneBotHTTPToken: "http", OneBotWebhookToken: "webhook", OneBotGroupIDs: groups}
+	if err := ValidateOneBotSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.OneBotGroupIDs = []string{"0"}
+	if err := ValidateOneBotSettings(cfg); err == nil {
+		t.Fatal("expected invalid group error")
+	}
+	cfg.OneBotGroupIDs = []string{"100"}
+	cfg.OneBotBaseURL = "ftp://llbot"
+	if err := ValidateOneBotSettings(cfg); err == nil {
+		t.Fatal("expected invalid URL error")
 	}
 }
 

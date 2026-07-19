@@ -260,6 +260,42 @@ func TestMigrateAddsEpaySettingsColumns(t *testing.T) {
 	}
 }
 
+func TestMigrateAddsOneBotSettingsColumns(t *testing.T) {
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "old-onebot.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.exec(t.Context(), `CREATE TABLE settings (
+		id TEXT PRIMARY KEY, check_interval_minutes INTEGER NOT NULL, telegram_bot_token TEXT NOT NULL DEFAULT '',
+		telegram_chat_id TEXT NOT NULL DEFAULT '', probe_model TEXT NOT NULL DEFAULT 'gpt-5.5'
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.exec(t.Context(), `INSERT INTO settings (id, check_interval_minutes, probe_model) VALUES ('default', 5, ?)`, domain.ProbeModel); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cols, err := s.columns(t.Context(), "settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"onebot_enabled", "onebot_base_url", "onebot_http_token", "onebot_webhook_token", "onebot_group_ids"} {
+		if !cols[column] {
+			t.Fatalf("columns = %#v", cols)
+		}
+	}
+	cfg, err := s.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OneBotEnabled || len(cfg.OneBotGroupIDs) != 0 {
+		t.Fatalf("defaults = %+v", cfg)
+	}
+}
+
 func TestMigrateCreatesDefaultRevenueCard(t *testing.T) {
 	s := testStore(t)
 	cards, err := s.ListRevenueCards(t.Context())
@@ -727,5 +763,24 @@ func TestImportOldDataCreatesDefaultRevenueCard(t *testing.T) {
 	}
 	if len(cards) != 1 || cards[0].SourceType != "epay_total" {
 		t.Fatalf("cards = %+v", cards)
+	}
+}
+
+func TestImportOldDataKeepsOneBotDefaults(t *testing.T) {
+	dst := testStore(t)
+	if err := dst.ImportData(t.Context(), ExportData{
+		Version: "1",
+		Tables: map[string][]RowMap{
+			"settings": {{"id": "default", "check_interval_minutes": 5, "probe_model": domain.ProbeModel, "site_name": "AI 上游监控"}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := dst.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OneBotEnabled || cfg.OneBotBaseURL != "" || len(cfg.OneBotGroupIDs) != 0 {
+		t.Fatalf("onebot settings = %+v", cfg)
 	}
 }

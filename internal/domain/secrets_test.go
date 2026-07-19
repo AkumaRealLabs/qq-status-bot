@@ -23,8 +23,8 @@ func TestPublicRedactsSecrets(t *testing.T) {
 		t.Fatalf("set flags missing: %+v", u)
 	}
 
-	s := Settings{TelegramBotToken: "bot", EpayKey: "key"}.Public()
-	if s.TelegramBotToken != "" || s.EpayKey != "" || !s.TelegramBotTokenSet || !s.EpayKeySet {
+	s := Settings{TelegramBotToken: "bot", EpayKey: "key", OneBotHTTPToken: "http", OneBotWebhookToken: "webhook"}.Public()
+	if s.TelegramBotToken != "" || s.EpayKey != "" || s.OneBotHTTPToken != "" || s.OneBotWebhookToken != "" || !s.TelegramBotTokenSet || !s.EpayKeySet || !s.OneBotHTTPTokenSet || !s.OneBotWebhookTokenSet {
 		t.Fatalf("settings secrets: %+v", s)
 	}
 

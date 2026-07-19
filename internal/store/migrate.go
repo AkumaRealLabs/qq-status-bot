@@ -18,6 +18,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS settings (
 			id TEXT PRIMARY KEY, check_interval_minutes INTEGER NOT NULL, telegram_bot_token TEXT NOT NULL DEFAULT '',
 			telegram_chat_id TEXT NOT NULL DEFAULT '', probe_model TEXT NOT NULL DEFAULT 'gpt-5.6-sol',
+			onebot_enabled INTEGER NOT NULL DEFAULT 0, onebot_base_url TEXT NOT NULL DEFAULT '',
+			onebot_http_token TEXT NOT NULL DEFAULT '', onebot_webhook_token TEXT NOT NULL DEFAULT '', onebot_group_ids TEXT NOT NULL DEFAULT '[]',
 			site_name TEXT NOT NULL DEFAULT 'AI 上游监控', site_icon TEXT NOT NULL DEFAULT '',
 			epay_base_url TEXT NOT NULL DEFAULT '', epay_pid TEXT NOT NULL DEFAULT '', epay_key TEXT NOT NULL DEFAULT '',
 			scheduler_base_url TEXT NOT NULL DEFAULT '', scheduler_user_id TEXT NOT NULL DEFAULT '', scheduler_access_token TEXT NOT NULL DEFAULT '',
@@ -171,6 +173,17 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if err := s.addColumnIfMissing(ctx, "settings", "site_icon", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
+	}
+	for _, col := range []struct{ name, def string }{
+		{"onebot_enabled", "INTEGER NOT NULL DEFAULT 0"},
+		{"onebot_base_url", "TEXT NOT NULL DEFAULT ''"},
+		{"onebot_http_token", "TEXT NOT NULL DEFAULT ''"},
+		{"onebot_webhook_token", "TEXT NOT NULL DEFAULT ''"},
+		{"onebot_group_ids", "TEXT NOT NULL DEFAULT '[]'"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "settings", col.name, col.def); err != nil {
+			return err
+		}
 	}
 	if err := s.addColumnIfMissing(ctx, "settings", "epay_base_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err

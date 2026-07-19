@@ -37,8 +37,30 @@ services:
       - browser_profile:/profile
     restart: unless-stopped
 
+  llbot:
+    build:
+      context: ./llbot
+      args:
+        LLBOT_COMMIT: d6e2f485b8164597d04a2907d307739ecfcf4a55
+    ports:
+      - "127.0.0.1:3080:3080"
+    expose:
+      - "3000"
+    volumes:
+      - llbot_data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3080').then(() => process.exit(0), () => process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - app
+    restart: unless-stopped
+
 volumes:
   browser_profile:
+  llbot_data:
 
 networks:
   ggapi_internal:

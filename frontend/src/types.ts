@@ -161,6 +161,13 @@ export type SettingsData = {
   telegram_bot_token?: string
   telegram_bot_token_set?: boolean
   telegram_chat_id?: string
+  onebot_enabled: boolean
+  onebot_base_url?: string
+  onebot_http_token?: string
+  onebot_http_token_set?: boolean
+  onebot_webhook_token?: string
+  onebot_webhook_token_set?: boolean
+  onebot_group_ids: string[]
   probe_model: string
   site_name: string
   site_icon: string
@@ -169,6 +176,11 @@ export type SettingsData = {
   epay_key: string
   epay_key_set?: boolean
   notification_rules: NotificationRules
+}
+
+export type OneBotStatus = {
+  status: 'disabled' | 'unconfigured' | 'online' | 'error'
+  error?: string
 }
 
 export type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>

@@ -17,6 +17,9 @@ func (s *Service) UpdateSettings(ctx context.Context, cfg domain.Settings) (doma
 		return domain.Settings{}, err
 	}
 	cfg = cfg.MergeUpdate(old)
+	if err := domain.ValidateOneBotSettings(cfg); err != nil {
+		return domain.Settings{}, ErrBadRequest(err.Error())
+	}
 	out, err := s.Store.UpdateSettings(ctx, cfg)
 	return out.Public(), err
 }

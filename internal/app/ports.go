@@ -5,6 +5,7 @@ import (
 
 	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/monitor"
+	"ai-upstream-monitor/internal/onebot"
 	"ai-upstream-monitor/internal/store"
 )
 
@@ -29,6 +30,12 @@ type Notifier interface {
 // ProbeRunner：出站模型探测端口。
 type ProbeRunner interface {
 	Probe(ctx context.Context, baseURL, key, model string) monitor.ProbeResult
+}
+
+// OneBotClient：QQ 群查询的 OneBot HTTP 出站端口。
+type OneBotClient interface {
+	GetLoginInfo(ctx context.Context, baseURL, token string) (onebot.LoginInfo, error)
+	SendGroupMessage(ctx context.Context, baseURL, token, groupID, text string) error
 }
 
 // 编译期检查：*store.Store 实现 CardRepository。

@@ -29,7 +29,7 @@ docker compose up -d --build
 
 ## 功能概览
 
-- **状态监控**：模型卡片探测历史、公开页、失败静音
+- **状态监控**：模型卡片探测历史、公开页、失败静音、OneBot QQ 群查询
 - **余额监控**：上游额度、低余额告警、在线充值/兑换
 - **今日收入**：易支付 / new-api / sub2api 订单
 - **调度器**：渠道绑定、成本分组与优先级调度、成本/售价快照与利润
@@ -42,7 +42,7 @@ docker compose up -d --build
 ### 数据与备份
 
 - 业务库：`./data/monitor.sqlite`（SQLite 默认开启 WAL）
-- 后台「设置 → 导出敏感备份」会包含密钥与 TG 会话，按机密文件保管
+- 后台「设置 → 导出敏感备份」会包含密钥、OneBot Token 与 TG 会话，按机密文件保管
 - 定时任务每小时清理过期时序数据（探测 14 天、余额快照 30 天、审计 90 天等）
 
 ### 安全
@@ -51,6 +51,14 @@ docker compose up -d --build
 - API 响应中的 token/password/key 已脱敏，仅返回 `*_set` 标志；编辑时留空表示不修改
 - 登录失败限流；非 GET 请求校验 Origin
 - 绑定 `127.0.0.1` 时仍建议放在受信任网络或反代后
+
+### OneBot QQ 群公开状态
+
+- Compose 会构建并运行固定在 LuckyLilliaBot `v8.0.14` 提交 `d6e2f485b8164597d04a2907d307739ecfcf4a55` 的 `llbot` 服务。`3000` 只在 Compose 内网开放，WebUI 仅绑定 `127.0.0.1:3080`。
+- 首次部署后通过 SSH 隧道访问本机 WebUI，完成 QQ 登录。首次登录会把无密钥模板写为该 QQ 号的持久化配置，后续由 LLBot 的 `/app/data` 卷维护。
+- 在 LLBot WebUI 的 OneBot 11 配置中，为 HTTP 与 HTTP POST 分别设置 Token；HTTP 监听 `0.0.0.0:3000`，HTTP POST 回调保持 `http://app:8090/api/onebot/events`，消息格式为数组。
+- 在后台「设置 → OneBot QQ 群查询」填入 `http://llbot:3000`、同一组 HTTP Token、Webhook Token 和每行一个 QQ 群号白名单，启用后白名单群可发送 `@机器人 状态` 或 `@机器人 status` 查询固定 `1h` 的公开状态。
+- LuckyLilliaBot `v8.0.14` 对 HTTP POST 使用 `X-Signature: sha1=<HMAC>` 校验回调 Token；本服务按该上游协议验证原始请求体，不保存或记录 Token、请求体。
 
 ### 探测
 

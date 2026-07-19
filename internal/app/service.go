@@ -12,6 +12,7 @@ import (
 	_ "time/tzdata"
 
 	"ai-upstream-monitor/internal/monitor"
+	"ai-upstream-monitor/internal/onebot"
 	"ai-upstream-monitor/internal/store"
 )
 
@@ -46,9 +47,11 @@ type Service struct {
 	tgLastRun  time.Time
 
 	// 最小 ports（Phase 3）。默认接到 Store / Telegram / monitor.Client。
-	Cards  CardRepository
-	Notify Notifier
-	Prober ProbeRunner
+	Cards         CardRepository
+	Notify        Notifier
+	Prober        ProbeRunner
+	OneBotClient  OneBotClient
+	oneBotRuntime oneBotRuntime
 
 	// 限界上下文门面（同包）。对外 API 仍经 Service 方法转发。
 	Scheduler *SchedulerService
@@ -56,6 +59,7 @@ type Service struct {
 	Probe     *ProbeService
 	CLIProxy  *CLIProxyService
 	TG        *TGService
+	OneBot    *OneBotService
 }
 
 // SchedulerService 负责调度配置、渠道/分组应用、成本快照与自动化。
@@ -92,7 +96,10 @@ func New(st *store.Store) *Service {
 	if strings.EqualFold(os.Getenv("AUM_PROBE_MODE"), monitor.ProbeModeHTTP) {
 		probeMode = monitor.ProbeModeHTTP
 	}
-	s := &Service{Store: st, Client: monitor.Client{HTTP: &http.Client{Timeout: 45 * time.Second}, ProbeMode: probeMode}, TGMediaDir: mediaDir}
+	s := &Service{
+		Store: st, Client: monitor.Client{HTTP: &http.Client{Timeout: 45 * time.Second}, ProbeMode: probeMode}, TGMediaDir: mediaDir,
+		OneBotClient: &onebot.Client{HTTP: &http.Client{Timeout: 10 * time.Second}}, oneBotRuntime: newOneBotRuntime(),
+	}
 	s.Cards = st
 	s.Notify = &telegramNotifier{send: s.sendTelegram}
 	s.Prober = &liveProbeRunner{svc: s}
@@ -101,6 +108,7 @@ func New(st *store.Store) *Service {
 	s.Probe = &ProbeService{app: s}
 	s.CLIProxy = &CLIProxyService{app: s}
 	s.TG = &TGService{app: s}
+	s.OneBot = &OneBotService{app: s}
 	return s
 }
 

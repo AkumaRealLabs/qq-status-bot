@@ -105,6 +105,24 @@ type PublicModelCard struct {
 	History         []PublicProbeRun `json:"history,omitempty"`
 }
 
+// PublicMonitorStatus 是公开状态页及外部只读查询共用的状态投影。
+// 字段名保持与既有 /api/public/monitor/status 响应一致。
+type PublicMonitorStatus struct {
+	Window      string            `json:"window"`
+	Rows        []PublicModelCard `json:"rows"`
+	Requests    int               `json:"requests"`
+	Success     int               `json:"success"`
+	Failed      int               `json:"failed"`
+	SuccessRate float64           `json:"success_rate"`
+	AvgLatency  int               `json:"avg_latency"`
+}
+
+// OneBotStatus 是后台连通性检查的最小公开结果。
+type OneBotStatus struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
 type BalanceSnapshot struct {
 	ID         string    `json:"id"`
 	UpstreamID string    `json:"upstream_id"`
@@ -168,18 +186,25 @@ type BalanceRechargeLog struct {
 }
 
 type Settings struct {
-	CheckIntervalMinutes int               `json:"check_interval_minutes"`
-	TelegramBotToken     string            `json:"telegram_bot_token,omitempty"`
-	TelegramBotTokenSet  bool              `json:"telegram_bot_token_set,omitempty"`
-	TelegramChatID       string            `json:"telegram_chat_id,omitempty"`
-	ProbeModel           string            `json:"probe_model"`
-	SiteName             string            `json:"site_name"`
-	SiteIcon             string            `json:"site_icon"`
-	EpayBaseURL          string            `json:"epay_base_url"`
-	EpayPID              string            `json:"epay_pid"`
-	EpayKey              string            `json:"epay_key"`
-	EpayKeySet           bool              `json:"epay_key_set,omitempty"`
-	NotificationRules    NotificationRules `json:"notification_rules"`
+	CheckIntervalMinutes  int               `json:"check_interval_minutes"`
+	TelegramBotToken      string            `json:"telegram_bot_token,omitempty"`
+	TelegramBotTokenSet   bool              `json:"telegram_bot_token_set,omitempty"`
+	TelegramChatID        string            `json:"telegram_chat_id,omitempty"`
+	OneBotEnabled         bool              `json:"onebot_enabled"`
+	OneBotBaseURL         string            `json:"onebot_base_url,omitempty"`
+	OneBotHTTPToken       string            `json:"onebot_http_token,omitempty"`
+	OneBotHTTPTokenSet    bool              `json:"onebot_http_token_set,omitempty"`
+	OneBotWebhookToken    string            `json:"onebot_webhook_token,omitempty"`
+	OneBotWebhookTokenSet bool              `json:"onebot_webhook_token_set,omitempty"`
+	OneBotGroupIDs        []string          `json:"onebot_group_ids"`
+	ProbeModel            string            `json:"probe_model"`
+	SiteName              string            `json:"site_name"`
+	SiteIcon              string            `json:"site_icon"`
+	EpayBaseURL           string            `json:"epay_base_url"`
+	EpayPID               string            `json:"epay_pid"`
+	EpayKey               string            `json:"epay_key"`
+	EpayKeySet            bool              `json:"epay_key_set,omitempty"`
+	NotificationRules     NotificationRules `json:"notification_rules"`
 }
 
 type SchedulerConfig struct {
@@ -348,24 +373,24 @@ type SchedulerGroupSaleSnapshot struct {
 }
 
 type RevenueCard struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	SourceType      string    `json:"source_type"`
-	BaseURL         string    `json:"base_url,omitempty"`
-	UserID          string    `json:"user_id,omitempty"`
-	AccessToken     string    `json:"access_token,omitempty"`
-	AccessTokenSet  bool      `json:"access_token_set,omitempty"`
-	AdminAPIKey     string    `json:"admin_api_key,omitempty"`
-	AdminAPIKeySet  bool      `json:"admin_api_key_set,omitempty"`
-	EpayPID         string    `json:"epay_pid,omitempty"`
-	EpayKey         string    `json:"epay_key,omitempty"`
-	EpayKeySet      bool      `json:"epay_key_set,omitempty"`
-	UpstreamID      string    `json:"upstream_id,omitempty"`
-	UpstreamName    string    `json:"upstream_name,omitempty"`
-	Enabled         bool      `json:"enabled"`
-	SortOrder       int       `json:"sort_order"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	SourceType     string    `json:"source_type"`
+	BaseURL        string    `json:"base_url,omitempty"`
+	UserID         string    `json:"user_id,omitempty"`
+	AccessToken    string    `json:"access_token,omitempty"`
+	AccessTokenSet bool      `json:"access_token_set,omitempty"`
+	AdminAPIKey    string    `json:"admin_api_key,omitempty"`
+	AdminAPIKeySet bool      `json:"admin_api_key_set,omitempty"`
+	EpayPID        string    `json:"epay_pid,omitempty"`
+	EpayKey        string    `json:"epay_key,omitempty"`
+	EpayKeySet     bool      `json:"epay_key_set,omitempty"`
+	UpstreamID     string    `json:"upstream_id,omitempty"`
+	UpstreamName   string    `json:"upstream_name,omitempty"`
+	Enabled        bool      `json:"enabled"`
+	SortOrder      int       `json:"sort_order"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type RevenueRow struct {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"net/http"
 )
 
 type badRequestError struct {
@@ -32,6 +33,8 @@ func IsBadRequest(err error) bool {
 func ErrStatus(status int, msg string) error {
 	return statusError{status: status, err: errors.New(msg)}
 }
+
+var ErrOneBotUnauthorized = ErrStatus(http.StatusUnauthorized, "unauthorized")
 
 func ErrorStatus(err error) (int, bool) {
 	var target statusError

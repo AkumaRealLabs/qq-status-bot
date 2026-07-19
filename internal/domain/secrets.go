@@ -62,8 +62,12 @@ func PublicModelCards(cards []ModelCard) []ModelCard {
 func (s Settings) Public() Settings {
 	out := s
 	out.TelegramBotTokenSet = secretSet(s.TelegramBotToken)
+	out.OneBotHTTPTokenSet = secretSet(s.OneBotHTTPToken)
+	out.OneBotWebhookTokenSet = secretSet(s.OneBotWebhookToken)
 	out.EpayKeySet = secretSet(s.EpayKey)
 	out.TelegramBotToken = ""
+	out.OneBotHTTPToken = ""
+	out.OneBotWebhookToken = ""
 	out.EpayKey = ""
 	return out
 }

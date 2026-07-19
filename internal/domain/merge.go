@@ -1,6 +1,61 @@
 package domain
 
-import "strings"
+import (
+	"errors"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var oneBotGroupIDPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
+
+// NormalizeOneBotGroupIDs 去除空白和重复项，并保持管理员输入顺序。
+func NormalizeOneBotGroupIDs(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, value := range in {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+// ValidateOneBotSettings 仅在启用时要求完整配置，避免阻断尚未使用的安装。
+func ValidateOneBotSettings(cfg Settings) error {
+	if !cfg.OneBotEnabled {
+		return nil
+	}
+	parsed, err := url.Parse(cfg.OneBotBaseURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return errors.New("请配置有效的 OneBot HTTP 地址")
+	}
+	if strings.TrimSpace(cfg.OneBotHTTPToken) == "" {
+		return errors.New("请配置 OneBot HTTP API Token")
+	}
+	if strings.TrimSpace(cfg.OneBotWebhookToken) == "" {
+		return errors.New("请配置 OneBot Webhook Token")
+	}
+	if len(cfg.OneBotGroupIDs) == 0 {
+		return errors.New("请至少配置一个 QQ 群号")
+	}
+	for _, groupID := range cfg.OneBotGroupIDs {
+		if !oneBotGroupIDPattern.MatchString(groupID) {
+			return errors.New("QQ 群号必须是正整数")
+		}
+		if _, err := strconv.ParseUint(groupID, 10, 64); err != nil {
+			return errors.New("QQ 群号必须是正整数")
+		}
+	}
+	return nil
+}
 
 // KeepText：请求字段为空时保留库中非密钥字段。
 func KeepText(in, old string) string {
@@ -124,6 +179,10 @@ func (in Settings) MergeUpdate(old Settings) Settings {
 	out.SiteIcon = strings.TrimSpace(in.SiteIcon)
 	out.TelegramBotToken = KeepSecret(in.TelegramBotToken, old.TelegramBotToken)
 	out.TelegramChatID = strings.TrimSpace(in.TelegramChatID)
+	out.OneBotBaseURL = strings.TrimRight(strings.TrimSpace(in.OneBotBaseURL), "/")
+	out.OneBotHTTPToken = KeepSecret(in.OneBotHTTPToken, old.OneBotHTTPToken)
+	out.OneBotWebhookToken = KeepSecret(in.OneBotWebhookToken, old.OneBotWebhookToken)
+	out.OneBotGroupIDs = NormalizeOneBotGroupIDs(in.OneBotGroupIDs)
 	out.EpayBaseURL = strings.TrimRight(strings.TrimSpace(in.EpayBaseURL), "/")
 	out.EpayPID = strings.TrimSpace(in.EpayPID)
 	out.EpayKey = KeepSecret(in.EpayKey, old.EpayKey)

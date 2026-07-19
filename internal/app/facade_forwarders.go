@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"ai-upstream-monitor/internal/domain"
+	"ai-upstream-monitor/internal/onebot"
 )
 
 // 公开 API 转发器：保持 httpapi 与既有调用方仍挂在 *Service 上。
@@ -112,8 +113,22 @@ func (s *Service) MonitorStatus(ctx context.Context, window string) (map[string]
 	return s.Probe.MonitorStatus(ctx, window)
 }
 
-func (s *Service) PublicMonitorStatus(ctx context.Context, window string) (map[string]any, error) {
+func (s *Service) PublicMonitorStatus(ctx context.Context, window string) (domain.PublicMonitorStatus, error) {
 	return s.Probe.PublicMonitorStatus(ctx, window)
+}
+
+// OneBot 公开 API
+
+func (s *Service) OneBotStatus(ctx context.Context) (domain.OneBotStatus, error) {
+	return s.OneBot.Status(ctx)
+}
+
+func (s *Service) AuthorizeOneBotEvent(ctx context.Context, signature string, payload []byte) error {
+	return s.OneBot.AuthorizeEvent(ctx, signature, payload)
+}
+
+func (s *Service) HandleOneBotEvent(ctx context.Context, event onebot.Event) error {
+	return s.OneBot.HandleEvent(ctx, event)
 }
 
 func (s *Service) CheckDue(ctx context.Context) error {

@@ -1,21 +1,22 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, Loader2, Upload } from 'lucide-react'
+import { Download, Loader2, RefreshCcw, Upload } from 'lucide-react'
 import { Field, FeedbackBanner, SaveButton } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { Input, Textarea } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import { secretPlaceholder, useFeedback } from '@/lib/feedback'
 import { invalidateMonitor } from '@/lib/query'
-import type { SettingsData } from '@/types'
+import type { OneBotStatus, SettingsData } from '@/types'
 
 const buildVersion = import.meta.env.VITE_BUILD_VERSION || 'dev'
 
 export function SettingsPage() {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ['settings'], queryFn: () => api<SettingsData>('/api/settings') })
+  const oneBotStatus = useQuery({ queryKey: ['onebot-status'], queryFn: () => api<OneBotStatus>('/api/onebot/status'), refetchOnWindowFocus: false })
   const [form, setForm] = useState<SettingsData | null>(null)
   const saveFb = useFeedback('已保存')
   const backupFb = useFeedback('已导出|导入完成')
@@ -67,7 +68,7 @@ export function SettingsPage() {
   }
   if (!data) return <ShellLoading />
   return (
-    <Page title="设置" description="监控周期、Telegram 告警和数据备份">
+    <Page title="设置" description="监控周期、Telegram 告警、OneBot 群查询和数据备份">
       <Card className="w-full max-w-2xl bg-card">
         <CardHeader>
           <CardTitle>基础设置</CardTitle>
@@ -102,6 +103,54 @@ export function SettingsPage() {
           </Field>
         </CardContent>
       </Card>
+      <Card className="w-full max-w-2xl bg-card">
+        <CardHeader>
+          <CardTitle>OneBot QQ 群查询</CardTitle>
+        </CardHeader>
+        <CardContent className="grid min-w-0 gap-4">
+          <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <input
+              type="checkbox"
+              checked={data.onebot_enabled}
+              onChange={(e) => setForm({ ...data, onebot_enabled: e.target.checked })}
+            />
+            启用 OneBot QQ 群查询
+          </label>
+          <Field label="OneBot HTTP 地址">
+            <Input value={data.onebot_base_url ?? ''} placeholder="http://llbot:3000" onChange={(e) => setForm({ ...data, onebot_base_url: e.target.value })} />
+          </Field>
+          <Field label="OneBot HTTP API Token">
+            <Input
+              type="password"
+              value={data.onebot_http_token ?? ''}
+              placeholder={secretPlaceholder(data.onebot_http_token_set)}
+              onChange={(e) => setForm({ ...data, onebot_http_token: e.target.value })}
+            />
+          </Field>
+          <Field label="OneBot Webhook Token">
+            <Input
+              type="password"
+              value={data.onebot_webhook_token ?? ''}
+              placeholder={secretPlaceholder(data.onebot_webhook_token_set)}
+              onChange={(e) => setForm({ ...data, onebot_webhook_token: e.target.value })}
+            />
+          </Field>
+          <Field label="QQ 群号白名单">
+            <Textarea
+              rows={5}
+              value={(data.onebot_group_ids ?? []).join('\n')}
+              onChange={(e) => setForm({ ...data, onebot_group_ids: e.target.value.split('\n') })}
+            />
+          </Field>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="outline" onClick={() => void oneBotStatus.refetch()} disabled={oneBotStatus.isFetching}>
+              <RefreshCcw className={oneBotStatus.isFetching ? 'size-4 animate-spin' : 'size-4'} />
+              检查连接
+            </Button>
+            <span className="text-sm text-muted-foreground">{oneBotStatusText(oneBotStatus.data)}</span>
+          </div>
+        </CardContent>
+      </Card>
       <div className="grid w-full max-w-2xl gap-3">
         <FeedbackBanner message={saveFb.message} error={save.isError} />
         <div>
@@ -111,7 +160,7 @@ export function SettingsPage() {
       <Card className="w-full max-w-2xl bg-card">
         <CardHeader>
           <CardTitle>数据备份</CardTitle>
-          <CardDescription>导出文件包含密钥、Token 和 Telegram 会话，请按敏感备份保存</CardDescription>
+          <CardDescription>导出文件包含密钥、OneBot Token 和 Telegram 会话，请按敏感备份保存</CardDescription>
         </CardHeader>
         <CardContent className="grid min-w-0 gap-4">
           <FeedbackBanner
@@ -134,6 +183,14 @@ export function SettingsPage() {
       </Card>
     </Page>
   )
+}
+
+function oneBotStatusText(status?: OneBotStatus) {
+  if (!status) return '未检查'
+  if (status.status === 'online') return '在线'
+  if (status.status === 'disabled') return '未启用'
+  if (status.status === 'unconfigured') return '配置不完整'
+  return status.error || '连接异常'
 }
 
 function isBackupError(message: string) {
