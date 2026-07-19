@@ -5,7 +5,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/hex"
-	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -73,13 +72,7 @@ func (s *OneBotService) HandleEvent(ctx context.Context, event onebot.Event) err
 	if err != nil {
 		return err
 	}
-	if domain.ValidateOneBotSettings(cfg) != nil {
-		return nil
-	}
-	if !event.IsStatusCommand() {
-		if allowedOneBotGroup(cfg.OneBotGroupIDs, event.GroupIDString()) && event.IsNormalGroupMessage() && event.HasStatusCommandText() {
-			log.Printf("onebot: ignored status candidate segments=%s", event.StatusCommandDiagnostic())
-		}
+	if domain.ValidateOneBotSettings(cfg) != nil || !event.IsStatusCommand() {
 		return nil
 	}
 	groupID, userID, messageID := event.GroupIDString(), event.UserIDString(), event.MessageIDString()

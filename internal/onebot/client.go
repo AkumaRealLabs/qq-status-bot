@@ -47,6 +47,7 @@ type Event struct {
 	MessageID   json.RawMessage  `json:"message_id"`
 	GroupID     json.RawMessage  `json:"group_id"`
 	UserID      json.RawMessage  `json:"user_id"`
+	RawMessage  string           `json:"raw_message"`
 	Message     []MessageSegment `json:"message"`
 }
 
@@ -62,7 +63,14 @@ func (e Event) SelfIDString() string    { return rawID(e.SelfID) }
 // IsStatusCommand 仅接受数组消息段中的 @机器人 + 精确命令。
 // 部分 OneBot 实现会把命令拆成多个连续 text 段，合并后仍须恰好为状态命令。
 func (e Event) IsStatusCommand() bool {
-	if !e.IsNormalGroupMessage() || len(e.Message) < 2 {
+	if !e.IsNormalGroupMessage() {
+		return false
+	}
+	return e.isArrayStatusCommand() || e.isRawStatusCommand()
+}
+
+func (e Event) isArrayStatusCommand() bool {
+	if len(e.Message) < 2 {
 		return false
 	}
 	mentionIndex := 0
@@ -97,44 +105,34 @@ func normalizeStatusCommand(value string) string {
 	return strings.Join(strings.Fields(value), "")
 }
 
-// HasStatusCommandText 仅判断文本是否看似状态命令，供服务端安全诊断使用。
-func (e Event) HasStatusCommandText() bool {
-	var text strings.Builder
-	for _, segment := range e.Message {
-		if segment.Type == "text" {
-			text.WriteString(segment.Data.Text)
-		}
+// isRawStatusCommand 兼容 LLBot 在数组段异常时仍会提供的 CQ 原始消息。
+// 只接受首段为指向机器人的 CQ at，且余下内容规范化后为精确状态命令。
+func (e Event) isRawStatusCommand() bool {
+	raw := strings.TrimSpace(e.RawMessage)
+	const prefix = "[CQ:at,"
+	if !strings.HasPrefix(raw, prefix) {
+		return false
 	}
-	value := strings.ToLower(normalizeStatusCommand(text.String()))
-	return strings.Contains(value, "状态") || strings.Contains(value, "status")
+	end := strings.IndexByte(raw, ']')
+	if end < len(prefix) {
+		return false
+	}
+	target := cqAttribute(raw[len(prefix):end], "qq")
+	if rawIDString(target) == "" || rawIDString(target) != e.SelfIDString() {
+		return false
+	}
+	text := normalizeStatusCommand(raw[end+1:])
+	return text == "状态" || text == "status"
 }
 
-// StatusCommandDiagnostic 返回不含消息文本、QQ 号或 Token 的消息段摘要。
-func (e Event) StatusCommandDiagnostic() string {
-	segments := make([]string, 0, len(e.Message))
-	for _, segment := range e.Message {
-		switch segment.Type {
-		case "at":
-			target := rawIDString(segment.Data.QQ)
-			switch {
-			case target == "":
-				segments = append(segments, "at:invalid")
-			case target == e.SelfIDString():
-				segments = append(segments, "at:self")
-			default:
-				segments = append(segments, "at:other")
-			}
-		case "text":
-			if normalizeStatusCommand(segment.Data.Text) == "" {
-				segments = append(segments, "text:blank")
-			} else {
-				segments = append(segments, "text:content")
-			}
-		default:
-			segments = append(segments, "segment:"+segment.Type)
+func cqAttribute(attributes, key string) string {
+	for _, attribute := range strings.Split(attributes, ",") {
+		name, value, found := strings.Cut(attribute, "=")
+		if found && name == key {
+			return value
 		}
 	}
-	return strings.Join(segments, ",")
+	return ""
 }
 
 func rawID(raw json.RawMessage) string {

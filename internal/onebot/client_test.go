@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -95,21 +94,20 @@ func TestEventRequiresExactMentionCommand(t *testing.T) {
 	}
 }
 
-func TestStatusCommandDiagnosticDoesNotExposeMessageText(t *testing.T) {
+func TestEventAcceptsStrictRawCQFallback(t *testing.T) {
 	var event Event
-	if err := json.Unmarshal([]byte(`{"self_id":42,"post_type":"message","message_type":"group","sub_type":"normal","message_id":1,"group_id":100,"user_id":8,"message":[{"type":"at","data":{"qq":"99"}},{"type":"text","data":{"text":"状态 private-input"}}]}`), &event); err != nil {
+	if err := json.Unmarshal([]byte(`{"self_id":42,"post_type":"message","message_type":"group","sub_type":"normal","message_id":1,"group_id":100,"user_id":8,"raw_message":"[CQ:at,qq=42,name=bot] \u200b状态","message":null}`), &event); err != nil {
 		t.Fatal(err)
 	}
-	if !event.HasStatusCommandText() {
-		t.Fatal("expected status candidate")
+	if !event.IsStatusCommand() {
+		t.Fatal("expected strict raw CQ fallback match")
 	}
-	diagnostic := event.StatusCommandDiagnostic()
-	if diagnostic != "at:other,text:content" {
-		t.Fatalf("diagnostic = %q", diagnostic)
+	event.RawMessage = "[CQ:at,qq=99,name=other] 状态"
+	if event.IsStatusCommand() {
+		t.Fatal("unexpected raw CQ mention match")
 	}
-	for _, secret := range []string{"private-input", "99", "42"} {
-		if strings.Contains(diagnostic, secret) {
-			t.Fatalf("diagnostic leaked %q: %s", secret, diagnostic)
-		}
+	event.RawMessage = "[CQ:at,qq=42,name=bot] status now"
+	if event.IsStatusCommand() {
+		t.Fatal("unexpected raw CQ prefix command match")
 	}
 }
