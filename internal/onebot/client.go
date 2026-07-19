@@ -4,6 +4,7 @@ package onebot
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,16 +59,24 @@ func (e Event) UserIDString() string    { return rawID(e.UserID) }
 func (e Event) MessageIDString() string { return rawID(e.MessageID) }
 func (e Event) SelfIDString() string    { return rawID(e.SelfID) }
 
-// IsStatusCommand 仅接受数组消息段中的 @机器人 + 单个精确命令。
+// IsStatusCommand 仅接受数组消息段中的 @机器人 + 精确命令。
+// 部分 OneBot 实现会把命令拆成多个连续 text 段，合并后仍须恰好为状态命令。
 func (e Event) IsStatusCommand() bool {
-	if !e.IsNormalGroupMessage() || len(e.Message) != 2 {
+	if !e.IsNormalGroupMessage() || len(e.Message) < 2 {
 		return false
 	}
-	mention, command := e.Message[0], e.Message[1]
-	if mention.Type != "at" || command.Type != "text" || rawIDString(mention.Data.QQ) != e.SelfIDString() {
+	mention := e.Message[0]
+	if mention.Type != "at" || rawIDString(mention.Data.QQ) != e.SelfIDString() {
 		return false
 	}
-	text := strings.TrimSpace(command.Data.Text)
+	var command strings.Builder
+	for _, segment := range e.Message[1:] {
+		if segment.Type != "text" {
+			return false
+		}
+		command.WriteString(segment.Data.Text)
+	}
+	text := strings.TrimSpace(command.String())
 	return text == "状态" || text == "status"
 }
 
@@ -127,6 +136,32 @@ func (c *Client) SendGroupMessage(ctx context.Context, baseURL, token, groupID, 
 		} `json:"data"`
 	}{Type: "text"}
 	segment.Data.Text = text
+	payload.Message = append(payload.Message, segment)
+	_, err := c.call(ctx, http.MethodPost, baseURL, token, "/send_group_msg", payload)
+	return err
+}
+
+// SendGroupImage 使用 OneBot 11 的 base64 图片段发送 PNG，不落地到 LLBot 文件系统。
+func (c *Client) SendGroupImage(ctx context.Context, baseURL, token, groupID string, png []byte) error {
+	if len(png) == 0 {
+		return errors.New("onebot image is empty")
+	}
+	payload := struct {
+		GroupID string `json:"group_id"`
+		Message []struct {
+			Type string `json:"type"`
+			Data struct {
+				File string `json:"file"`
+			} `json:"data"`
+		} `json:"message"`
+	}{GroupID: groupID}
+	segment := struct {
+		Type string `json:"type"`
+		Data struct {
+			File string `json:"file"`
+		} `json:"data"`
+	}{Type: "image"}
+	segment.Data.File = "base64://" + base64.StdEncoding.EncodeToString(png)
 	payload.Message = append(payload.Message, segment)
 	_, err := c.call(ctx, http.MethodPost, baseURL, token, "/send_group_msg", payload)
 	return err

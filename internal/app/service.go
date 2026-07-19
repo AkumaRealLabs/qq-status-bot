@@ -47,11 +47,12 @@ type Service struct {
 	tgLastRun  time.Time
 
 	// 最小 ports（Phase 3）。默认接到 Store / Telegram / monitor.Client。
-	Cards         CardRepository
-	Notify        Notifier
-	Prober        ProbeRunner
-	OneBotClient  OneBotClient
-	oneBotRuntime oneBotRuntime
+	Cards                     CardRepository
+	Notify                    Notifier
+	Prober                    ProbeRunner
+	OneBotClient              OneBotClient
+	OneBotStatusImageRenderer OneBotStatusImageRenderer
+	oneBotRuntime             oneBotRuntime
 
 	// 限界上下文门面（同包）。对外 API 仍经 Service 方法转发。
 	Scheduler *SchedulerService

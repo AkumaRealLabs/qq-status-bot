@@ -31,6 +31,11 @@ func (f *oneBotHTTPFake) SendGroupMessage(_ context.Context, _, _, _, _ string) 
 	return nil
 }
 
+func (f *oneBotHTTPFake) SendGroupImage(_ context.Context, _, _, _ string, _ []byte) error {
+	f.sent++
+	return nil
+}
+
 func TestOneBotRoutesAuthenticateWebhookAndAdmin(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "onebot-http.sqlite"))
 	if err != nil {

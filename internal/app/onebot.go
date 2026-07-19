@@ -86,6 +86,17 @@ func (s *OneBotService) HandleEvent(ctx context.Context, event onebot.Event) err
 	if err != nil {
 		return err
 	}
+	if renderer := s.app.OneBotStatusImageRenderer; renderer != nil {
+		images, renderErr := renderer.Render(public)
+		if renderErr == nil && len(images) > 0 {
+			for _, image := range images {
+				if err := s.app.OneBotClient.SendGroupImage(ctx, cfg.OneBotBaseURL, cfg.OneBotHTTPToken, groupID, image); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
 	for _, part := range splitOneBotMessage(formatOneBotStatus(public), oneBotMessageLimit) {
 		if err := s.app.OneBotClient.SendGroupMessage(ctx, cfg.OneBotBaseURL, cfg.OneBotHTTPToken, groupID, part); err != nil {
 			return err

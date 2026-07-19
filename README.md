@@ -57,7 +57,7 @@ docker compose up -d --build
 - Compose 直接运行 LuckyLilliaBot 官方镜像 `linyuchen/llbot:latest`。`3000` 只在 Compose 内网开放，WebUI 仅绑定 `127.0.0.1:3080`。
 - 首次部署后通过 SSH 隧道访问本机 WebUI，完成 QQ 登录。首次登录会生成该 QQ 号的持久化配置，后续由 LLBot 的 `/app/llbot/data` 卷维护。
 - 在 LLBot WebUI 的 OneBot 11 配置中，为 HTTP 与 HTTP POST 分别设置 Token；HTTP 监听 `0.0.0.0:3000`，HTTP POST 回调保持 `http://app:8090/api/onebot/events`，消息格式为数组。
-- 在后台「设置 → OneBot QQ 群查询」填入 `http://llbot:3000`、同一组 HTTP Token、Webhook Token 和每行一个 QQ 群号白名单，启用后白名单群可发送 `@机器人 状态` 或 `@机器人 status` 查询固定 `1h` 的公开状态。
+- 在后台「设置 → OneBot QQ 群查询」填入 `http://llbot:3000`、同一组 HTTP Token、Webhook Token 和每行一个 QQ 群号白名单，启用后白名单群可发送 `@机器人 状态` 或 `@机器人 status` 查询固定 `1h` 的公开状态图片。图片由服务端原生生成，中文使用 LXGW WenKai，英文与数字使用 Maple Mono；只展示公开卡片的名称、分组、状态与延迟。
 - LuckyLilliaBot `v8.0.14` 对 HTTP POST 使用 `X-Signature: sha1=<HMAC>` 校验回调 Token；本服务按该上游协议验证原始请求体，不保存或记录 Token、请求体。
 
 ### 探测

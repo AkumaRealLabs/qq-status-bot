@@ -36,6 +36,12 @@ type ProbeRunner interface {
 type OneBotClient interface {
 	GetLoginInfo(ctx context.Context, baseURL, token string) (onebot.LoginInfo, error)
 	SendGroupMessage(ctx context.Context, baseURL, token, groupID, text string) error
+	SendGroupImage(ctx context.Context, baseURL, token, groupID string, png []byte) error
+}
+
+// OneBotStatusImageRenderer：QQ 群公开状态图片渲染端口。
+type OneBotStatusImageRenderer interface {
+	Render(status domain.PublicMonitorStatus) ([][]byte, error)
 }
 
 // 编译期检查：*store.Store 实现 CardRepository。

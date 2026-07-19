@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha1"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/monitor"
@@ -20,6 +22,7 @@ import (
 type fakeOneBotClient struct {
 	loginErr error
 	sent     []fakeOneBotMessage
+	images   []fakeOneBotImage
 }
 
 type fakeOneBotMessage struct {
@@ -29,6 +32,13 @@ type fakeOneBotMessage struct {
 	text    string
 }
 
+type fakeOneBotImage struct {
+	baseURL string
+	token   string
+	groupID string
+	png     []byte
+}
+
 func (f *fakeOneBotClient) GetLoginInfo(_ context.Context, _, _ string) (onebot.LoginInfo, error) {
 	return onebot.LoginInfo{Nickname: "bot"}, f.loginErr
 }
@@ -36,6 +46,20 @@ func (f *fakeOneBotClient) GetLoginInfo(_ context.Context, _, _ string) (onebot.
 func (f *fakeOneBotClient) SendGroupMessage(_ context.Context, baseURL, token, groupID, text string) error {
 	f.sent = append(f.sent, fakeOneBotMessage{baseURL: baseURL, token: token, groupID: groupID, text: text})
 	return nil
+}
+
+func (f *fakeOneBotClient) SendGroupImage(_ context.Context, baseURL, token, groupID string, png []byte) error {
+	f.images = append(f.images, fakeOneBotImage{baseURL: baseURL, token: token, groupID: groupID, png: append([]byte(nil), png...)})
+	return nil
+}
+
+type fakeOneBotStatusImageRenderer struct {
+	images [][]byte
+	err    error
+}
+
+func (f fakeOneBotStatusImageRenderer) Render(domain.PublicMonitorStatus) ([][]byte, error) {
+	return f.images, f.err
 }
 
 func oneBotTestService(t *testing.T) (*Service, *fakeOneBotClient, *store.Store) {
@@ -185,5 +209,27 @@ func TestOneBotStatusAndMessageSplitting(t *testing.T) {
 	parts := splitOneBotMessage(strings.Repeat("状", 1901), 1900)
 	if len(parts) != 2 || len([]rune(parts[0])) != 1900 || len([]rune(parts[1])) != 1 {
 		t.Fatalf("parts=%d len=%d/%d", len(parts), len([]rune(parts[0])), len([]rune(parts[1])))
+	}
+}
+
+func TestOneBotEventSendsRenderedPublicStatusImage(t *testing.T) {
+	svc, fake, st := oneBotTestService(t)
+	public, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "公开卡片", PublicEnabled: true, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveProbe(t.Context(), "", public.ID, domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational, Latency: 123 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
+	svc.OneBotStatusImageRenderer = fakeOneBotStatusImageRenderer{images: [][]byte{{0x89, 0x50, 0x4e, 0x47}}}
+	if err := svc.HandleOneBotEvent(t.Context(), oneBotEvent(t, "1", "100", "8")); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.sent) != 0 || len(fake.images) != 1 {
+		t.Fatalf("text=%d images=%d", len(fake.sent), len(fake.images))
+	}
+	image := fake.images[0]
+	if image.baseURL != "http://llbot:3000" || image.token != "http-token" || image.groupID != "100" || !bytes.Equal(image.png, []byte{0x89, 0x50, 0x4e, 0x47}) {
+		t.Fatalf("image = %+v", image)
 	}
 }
