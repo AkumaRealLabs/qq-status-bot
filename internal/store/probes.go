@@ -11,6 +11,10 @@ import (
 )
 
 func (s *Store) SaveProbe(ctx context.Context, upstreamID, cardID, model string, p monitor.ProbeResult) (domain.ProbeRun, error) {
+	return s.SaveProbeWithPurpose(ctx, upstreamID, cardID, model, "regular", p)
+}
+
+func (s *Store) SaveProbeWithPurpose(ctx context.Context, upstreamID, cardID, model, purpose string, p monitor.ProbeResult) (domain.ProbeRun, error) {
 	status := p.Status
 	if status == "" {
 		status = legacyProbeStatus(p.Success)
@@ -29,9 +33,10 @@ func (s *Store) SaveProbe(ctx context.Context, upstreamID, cardID, model string,
 		LatencyMS:  int(p.Latency.Milliseconds()),
 		Success:    success,
 		Error:      p.Error,
+		Purpose:    normalizeProbePurpose(purpose),
 	}
-	_, err := s.exec(ctx, `INSERT INTO probe_runs (id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.UpstreamID, run.CardID, run.CheckedAt.Format(time.RFC3339Nano), run.Model, run.Input, run.Status, run.Output, run.HTTPStatus, run.LatencyMS, boolInt(run.Success), run.Error)
+	_, err := s.exec(ctx, `INSERT INTO probe_runs (id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.UpstreamID, run.CardID, run.CheckedAt.Format(time.RFC3339Nano), run.Model, run.Input, run.Status, run.Output, run.HTTPStatus, run.LatencyMS, boolInt(run.Success), run.Error, run.Purpose)
 	return run, err
 }
 
@@ -50,7 +55,7 @@ func (s *Store) UpdateCardSchedulerAutoDisabled(ctx context.Context, id string, 
 }
 
 func (s *Store) RecentProbesForCard(ctx context.Context, cardID string, limit int) ([]domain.ProbeRun, error) {
-	rows, err := s.query(ctx, `SELECT id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error
+	rows, err := s.query(ctx, `SELECT id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error, purpose
 		FROM probe_runs WHERE card_id=? ORDER BY checked_at DESC LIMIT ?`, cardID, limit)
 	if err != nil {
 		return nil, err
@@ -72,7 +77,7 @@ func (s *Store) ProbesForCardSince(ctx context.Context, cardID string, since tim
 	if s.Driver == "sqlite" {
 		timeFilter = "unixepoch(checked_at)>=unixepoch(?)"
 	}
-	query := `SELECT id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error
+	query := `SELECT id, upstream_id, card_id, checked_at, model, input, status, output, http_status, latency_ms, success, error, purpose
 		FROM probe_runs WHERE card_id=? AND ` + timeFilter + ` ORDER BY checked_at DESC`
 	args := []any{cardID, since.UTC().Format(time.RFC3339Nano)}
 	if limit > 0 {
@@ -99,13 +104,22 @@ func scanProbeRows(rows *sql.Rows) (domain.ProbeRun, error) {
 	var p domain.ProbeRun
 	var checked string
 	var success int
-	err := rows.Scan(&p.ID, &p.UpstreamID, &p.CardID, &checked, &p.Model, &p.Input, &p.Status, &p.Output, &p.HTTPStatus, &p.LatencyMS, &success, &p.Error)
+	err := rows.Scan(&p.ID, &p.UpstreamID, &p.CardID, &checked, &p.Model, &p.Input, &p.Status, &p.Output, &p.HTTPStatus, &p.LatencyMS, &success, &p.Error, &p.Purpose)
 	p.CheckedAt = parseTime(checked)
 	if p.Status == "" {
 		p.Status = legacyProbeStatus(boolFromInt(success))
 	}
 	p.Success = p.Status == monitor.StatusOperational || p.Status == monitor.StatusDegraded
 	return p, err
+}
+
+func normalizeProbePurpose(purpose string) string {
+	switch purpose {
+	case "confirm", "recovery":
+		return purpose
+	default:
+		return "regular"
+	}
 }
 
 func legacyProbeStatus(success bool) string {

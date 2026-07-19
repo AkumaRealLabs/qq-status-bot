@@ -17,27 +17,31 @@ func NormalizeProbeModel(model string) string {
 }
 
 type Upstream struct {
-	ID                     string    `json:"id"`
-	Name                   string    `json:"name"`
-	Type                   string    `json:"type"`
-	BaseURL                string    `json:"base_url"`
-	Enabled                bool      `json:"enabled"`
-	UserID                 string    `json:"user_id,omitempty"`
-	AccessToken            string    `json:"access_token,omitempty"`
-	AccessTokenSet         bool      `json:"access_token_set,omitempty"`
-	Email                  string    `json:"email,omitempty"`
-	Password               string    `json:"password,omitempty"`
-	PasswordSet            bool      `json:"password_set,omitempty"`
-	Sub2APIAccessToken     string    `json:"sub2api_access_token,omitempty"`
-	Sub2APIAccessTokenSet  bool      `json:"sub2api_access_token_set,omitempty"`
-	Sub2APIRefreshToken    string    `json:"sub2api_refresh_token,omitempty"`
-	Sub2APIRefreshTokenSet bool      `json:"sub2api_refresh_token_set,omitempty"`
-	BalanceRate            float64   `json:"balance_rate"`
-	LowBalanceThreshold    float64   `json:"low_balance_threshold"`
-	LastError              string    `json:"last_error"`
-	FailureCount           int       `json:"failure_count"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	ID                      string    `json:"id"`
+	Name                    string    `json:"name"`
+	Type                    string    `json:"type"`
+	BaseURL                 string    `json:"base_url"`
+	Enabled                 bool      `json:"enabled"`
+	UserID                  string    `json:"user_id,omitempty"`
+	AccessToken             string    `json:"access_token,omitempty"`
+	AccessTokenSet          bool      `json:"access_token_set,omitempty"`
+	Email                   string    `json:"email,omitempty"`
+	Password                string    `json:"password,omitempty"`
+	PasswordSet             bool      `json:"password_set,omitempty"`
+	Sub2APIAccessToken      string    `json:"sub2api_access_token,omitempty"`
+	Sub2APIAccessTokenSet   bool      `json:"sub2api_access_token_set,omitempty"`
+	Sub2APIRefreshToken     string    `json:"sub2api_refresh_token,omitempty"`
+	Sub2APIRefreshTokenSet  bool      `json:"sub2api_refresh_token_set,omitempty"`
+	BalanceRate             float64   `json:"balance_rate"`
+	LowBalanceThreshold     float64   `json:"low_balance_threshold"`
+	BalanceGuardMode        string    `json:"balance_guard_mode"`
+	BalanceCloseThreshold   float64   `json:"balance_close_threshold"`
+	BalanceRecoverThreshold float64   `json:"balance_recover_threshold"`
+	RunwayWarningHours      float64   `json:"runway_warning_hours"`
+	LastError               string    `json:"last_error"`
+	FailureCount            int       `json:"failure_count"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
 }
 
 type APIKey struct {
@@ -126,6 +130,7 @@ type ProbeRun struct {
 	LatencyMS  int       `json:"latency_ms"`
 	Success    bool      `json:"success"`
 	Error      string    `json:"error"`
+	Purpose    string    `json:"purpose,omitempty"`
 }
 
 type PublicProbeRun struct {
@@ -312,6 +317,7 @@ type SchedulerLog struct {
 	Action      string    `json:"action"`
 	Status      string    `json:"status"`
 	Message     string    `json:"message"`
+	Reason      string    `json:"reason,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 

@@ -57,6 +57,9 @@ func (s *ProbeService) CheckAll(ctx context.Context) error {
 		return ctx.Err()
 	}
 	if len(enabledUpstreams) > 0 {
+		if err := s.app.ReconcileAvailability(ctx); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
+			log.Printf("scheduler: availability reconcile after balance refresh: %v", err)
+		}
 		s.app.syncSchedulerGroupsBestEffort(ctx)
 	}
 	cards, err := s.app.Cards.ListCards(ctx)
@@ -194,5 +197,8 @@ func (s *ProbeService) checkUpstream(ctx context.Context, upstreamID string, syn
 	_ = s.app.Store.SaveUpstreamError(ctx, u.ID, "", 0)
 	_ = s.app.alert(ctx, u, "credential", false, u.Name+" 凭据已恢复")
 	_ = s.app.alert(ctx, u, "balance_query", false, u.Name+" 额度查询已恢复")
+	if err := s.app.ReconcileAvailability(ctx); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
+		log.Printf("scheduler: availability reconcile upstream_id=%s: %v", u.ID, err)
+	}
 	return s.app.alert(ctx, u, "balance", domain.LowBalance(u, snap), fmt.Sprintf("%s 余额低于阈值", u.Name))
 }

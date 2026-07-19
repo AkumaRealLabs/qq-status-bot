@@ -28,6 +28,9 @@ func AlertEventType(kind string, recover bool) (eventType, targetType, targetID 
 	if strings.HasPrefix(kind, "internal:") {
 		return "probe_internal_error", "card", strings.TrimPrefix(kind, "internal:")
 	}
+	if strings.HasPrefix(kind, "runway:") {
+		return "balance_runway_low", "upstream", ""
+	}
 	switch kind {
 	case "balance":
 		return "balance_low", "upstream", ""
@@ -61,6 +64,8 @@ func AlertOpsTitle(eventType string, recover bool) string {
 		return "凭据失效"
 	case "balance_query_failed":
 		return "额度查询失败"
+	case "balance_runway_low":
+		return "余额预计耗尽"
 	default:
 		return "系统事件"
 	}
@@ -75,6 +80,8 @@ func AlertOpsActions(eventType string) []string {
 		return []string{"check_upstream", "sync_keys"}
 	case "balance_low":
 		return []string{"check_upstream"}
+	case "balance_runway_low":
+		return []string{"scheduler_availability"}
 	case "cliproxy_error":
 		return []string{"refresh_cliproxy_accounts"}
 	default:

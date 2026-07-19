@@ -61,6 +61,11 @@ func (s *ProbeService) SaveCard(ctx context.Context, id string, in domain.ModelC
 	card.CreatedAt = old.CreatedAt
 	out, err := s.app.Cards.UpdateCard(ctx, card)
 	changedBinding := old.UpstreamID != out.UpstreamID || old.KeyID != out.KeyID || old.SchedulerChannelID != out.SchedulerChannelID || old.PoolEnabled != out.PoolEnabled || old.ManualCostRatio != out.ManualCostRatio
+	if err == nil && old.SchedulerChannelID != "" && (old.SchedulerChannelID != out.SchedulerChannelID || !out.PoolEnabled || old.UpstreamID != out.UpstreamID) {
+		if releaseErr := s.app.Scheduler.ReleaseAvailabilityBinding(ctx, old, "卡片绑定已变更，AUM 不会自动恢复旧渠道"); releaseErr != nil {
+			return out.Public(), releaseErr
+		}
+	}
 	if err == nil && old.SchedulerChannelID != "" && (old.SchedulerChannelID != out.SchedulerChannelID || !out.PoolEnabled) {
 		if err := s.app.recordInactiveCostSnapshot(ctx, old, "渠道绑定已变更"); err != nil {
 			return out.Public(), err
@@ -163,6 +168,9 @@ func (s *ProbeService) DeleteCard(ctx context.Context, id string) error {
 		return err
 	}
 	if err == nil {
+		if releaseErr := s.app.Scheduler.ReleaseAvailabilityBinding(ctx, card, "卡片已删除，AUM 不会自动恢复旧渠道"); releaseErr != nil {
+			return releaseErr
+		}
 		if err := s.app.recordInactiveCostSnapshot(ctx, card, "卡片已删除"); err != nil {
 			return err
 		}
@@ -192,6 +200,9 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 		if err := s.app.Cards.UpdateCardProbeState(ctx, card.ID, msg, failures); err != nil {
 			return err
 		}
+		if s.availabilityManagedCard(ctx, card) {
+			return s.app.Scheduler.RecordAvailabilityProbe(ctx, card, false, false, "regular")
+		}
 		return s.app.applySchedulerAutomation(ctx, card, false, failures)
 	}
 	key, err := s.app.Store.Key(ctx, card.KeyID)
@@ -215,6 +226,12 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 	if monitor.IsInternalProbeError(probe.Error) {
 		return s.app.alert(ctx, u, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
 	}
+	if s.availabilityManagedCard(ctx, card) {
+		probe = s.confirmAvailabilityProbeFailure(ctx, card, u.ID, u.BaseURL, key.Key, model, probe)
+	}
+	if monitor.IsInternalProbeError(probe.Error) {
+		return s.app.alert(ctx, u, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
+	}
 	failures, lastErr := probeCardState(card, probe)
 	if err := s.app.Cards.UpdateCardProbeState(ctx, card.ID, lastErr, failures); err != nil {
 		if probeParentDeadlineExceeded(ctx) {
@@ -224,6 +241,14 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if s.availabilityManagedCard(ctx, card) {
+		purpose := s.availabilityProbePurpose(ctx, card)
+		if err := s.app.Scheduler.RecordAvailabilityProbe(ctx, card, probe.Success, domain.IsQuotaProbeError(probe.Error), purpose); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
+			return err
+		}
+		// 控制面统一记录状态变化；普通探测失败不再额外刷屏。
+		return nil
 	}
 	_ = s.app.applySchedulerAutomation(ctx, card, probe.Success, failures)
 	if ctx.Err() != nil {
@@ -239,6 +264,44 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 	}
 	kind, msg := probeAlertKind(card, probe)
 	return s.app.alert(ctx, u, kind, failures >= muteAt, msg)
+}
+
+func (s *ProbeService) availabilityManagedCard(ctx context.Context, card domain.ModelCard) bool {
+	if !card.PoolEnabled || card.BaseURL != "" || card.UpstreamID == "" || card.SchedulerChannelID == "" {
+		return false
+	}
+	upstream, err := s.app.Store.Upstream(ctx, card.UpstreamID)
+	return err == nil && upstream.Type == "newapi"
+}
+
+func (s *ProbeService) availabilityProbePurpose(ctx context.Context, card domain.ModelCard) string {
+	row, found, err := s.app.Store.ChannelAvailability(ctx, card.SchedulerChannelID)
+	if err == nil && found && (row.ActualStatus == 2 || row.ActualStatus == 3 || row.DesiredStatus == 2 || row.DisabledAt != nil) {
+		return "recovery"
+	}
+	return "regular"
+}
+
+// 普通上游失败须再确认两次；任一次成功仅记为瞬时抖动，不生成 probe_failed blocker。
+func (s *ProbeService) confirmAvailabilityProbeFailure(ctx context.Context, card domain.ModelCard, upstreamID, baseURL, key, model string, first monitor.ProbeResult) monitor.ProbeResult {
+	if first.Success || domain.IsQuotaProbeError(first.Error) || monitor.IsInternalProbeError(first.Error) {
+		return first
+	}
+	last := first
+	for i := 0; i < 2; i++ {
+		probe := s.probeCard(ctx, baseURL, key, model)
+		if _, err := s.app.Store.SaveProbeWithPurpose(ctx, upstreamID, card.ID, model, "confirm", probe); err != nil {
+			return last
+		}
+		if probe.Success {
+			return probe
+		}
+		if domain.IsQuotaProbeError(probe.Error) {
+			return probe
+		}
+		last = probe
+	}
+	return last
 }
 
 func (s *ProbeService) checkCustomCard(ctx context.Context, card domain.ModelCard) error {
@@ -299,6 +362,8 @@ func (s *ProbeService) checkCustomCard(ctx context.Context, card domain.ModelCar
 }
 
 var cardProbeTimeout = 45 * time.Second
+
+const availabilityProbeAttempts = 3
 
 const canceledProbePersistenceTimeout = 3 * time.Second
 

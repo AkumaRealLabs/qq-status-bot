@@ -84,7 +84,6 @@ type TGService struct {
 }
 
 func New(st *store.Store) *Service {
-	time.Local = appLocation()
 	mediaDir := os.Getenv("TG_MEDIA_DIR")
 	if mediaDir == "" {
 		mediaDir = "/app/data/tg_media"
@@ -146,6 +145,7 @@ type schedulerState struct {
 
 func (s *Service) runSchedulerTick(ctx context.Context, now time.Time, state *schedulerState) {
 	runSchedulerTask(ctx, "check due", s.checkCycleTimeout(ctx), s.CheckDue)
+	runSchedulerTask(ctx, "availability reconcile", schedulerGroupSyncBudget, s.ReconcileAvailability)
 	runSchedulerTask(ctx, "TG refresh", schedulerTGTimeout, s.RefreshTGMessagesDue)
 
 	if schedulerTaskDue(state.lastRetention, now, schedulerRetentionInterval) {
@@ -212,7 +212,8 @@ func (s *Service) checkCycleTimeout(ctx context.Context) time.Duration {
 			upstreamCount++
 		}
 	}
-	timeout := schedulerCheckOverhead + time.Duration(limitedBatches(cardCount))*cardProbeTimeout + time.Duration(limitedBatches(upstreamCount))*upstreamCheckBudget
+	// 受可用性控制的普通失败会额外串行确认两次，每次沿用单卡 45 秒预算。
+	timeout := schedulerCheckOverhead + time.Duration(limitedBatches(cardCount))*cardProbeTimeout*availabilityProbeAttempts + time.Duration(limitedBatches(upstreamCount))*upstreamCheckBudget
 	if upstreamCount > 0 {
 		timeout += schedulerGroupSyncBudget
 	}

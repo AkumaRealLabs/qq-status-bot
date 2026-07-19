@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Plus, Power, PowerOff, RefreshCcw, Settings2, SlidersHorizontal, Tags, Trash2 } from 'lucide-react'
-import { ActionRow, EmptyPanel, Field, FeedbackBanner, FormError, SaveButton, StatusBadge } from '@/components/common'
+import { AlertTriangle, CirclePause, CirclePlay, Loader2, Plus, Power, PowerOff, RefreshCcw, Settings2, ShieldAlert, ShieldCheck, SlidersHorizontal, Tags, Trash2 } from 'lucide-react'
+import { ActionRow, EmptyPanel, Field, FeedbackBanner, FormError, Metric, SaveButton, StatusBadge } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,7 @@ import { api } from '@/lib/api'
 import { fmtTime } from '@/lib/format'
 import { alertError, secretPlaceholder, useFeedback } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
-import type { ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig, SchedulerGroup, SchedulerLog, SchedulerTier } from '@/types'
+import type { AvailabilityPolicy, AvailabilityRow, ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig, SchedulerGroup, SchedulerLog, SchedulerTier, UpstreamRow } from '@/types'
 
 const none = '__none__'
 const defaultTiers: SchedulerTier[] = [
@@ -122,7 +122,7 @@ export function SchedulerPage() {
   }
   return (
     <Page
-      title="调度器"
+      title="渠道管理"
       actions={
         <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
           {refreshing && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
@@ -167,6 +167,7 @@ export function SchedulerPage() {
           error
         />
       )}
+      <AvailabilityControl />
       <Section title="调度器分组">
         <FormError error={groups.error || channels.error} />
         {groups.isLoading && <EmptyPanel text="加载中..." />}
@@ -316,6 +317,201 @@ export function SchedulerPage() {
       </Section>
     </Page>
   )
+}
+
+function AvailabilityControl() {
+  const qc = useQueryClient()
+  const [upstreamID, setUpstreamID] = useState(() => new URLSearchParams(location.search).get('upstream_id') || 'all')
+  const [state, setState] = useState('all')
+  const [displayGroup, setDisplayGroup] = useState('all')
+  const [policyUpstreamID, setPolicyUpstreamID] = useState('')
+  const [policyDraft, setPolicyDraft] = useState<AvailabilityPolicy | null>(null)
+  const availability = useQuery({ queryKey: ['scheduler', 'availability'], queryFn: () => api<AvailabilityRow[]>('/api/scheduler/availability'), refetchInterval: 60000 })
+  const upstreams = useQuery({ queryKey: ['upstreams'], queryFn: () => api<UpstreamRow[]>('/api/upstreams') })
+  const cards = useQuery({ queryKey: ['cards'], queryFn: () => api<ModelCard[]>('/api/cards') })
+  const policy = useQuery({
+    queryKey: ['availability-policy', policyUpstreamID],
+    queryFn: () => api<AvailabilityPolicy>(`/api/upstreams/${policyUpstreamID}/availability-policy`),
+    enabled: Boolean(policyUpstreamID),
+  })
+  const refresh = useMutation({
+    mutationFn: () => api('/api/scheduler/availability/reconcile', { method: 'POST' }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['scheduler', 'availability'] }) },
+    onError: alertError,
+  })
+  const action = useMutation({
+    mutationFn: ({ cardID, action }: { cardID: string; action: 'force_enable' | 'hold_off' | 'release_hold' | 'check_now' }) =>
+      api(`/api/scheduler/availability/${cardID}/action`, { method: 'POST', body: JSON.stringify({ action, minutes: 30 }) }),
+    onSuccess: async () => {
+      await Promise.all([qc.invalidateQueries({ queryKey: ['scheduler', 'availability'] }), qc.invalidateQueries({ queryKey: ['cards'] })])
+    },
+    onError: alertError,
+  })
+  const savePolicy = useMutation({
+    mutationFn: () => api<AvailabilityPolicy>(`/api/upstreams/${policyUpstreamID}/availability-policy`, { method: 'PATCH', body: JSON.stringify(policyDraft ?? policy.data) }),
+    onSuccess: async (next) => {
+      setPolicyDraft(next)
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['availability-policy', policyUpstreamID] }),
+        qc.invalidateQueries({ queryKey: ['scheduler', 'availability'] }),
+        qc.invalidateQueries({ queryKey: ['balances'] }),
+      ])
+    },
+    onError: alertError,
+  })
+  const upstreamRows = upstreams.data ?? []
+  const cardsByID = new Map((cards.data ?? []).map((card) => [card.id, card]))
+  const groups = Array.from(new Set(Array.from(cardsByID.values()).map((card) => card.display_group?.trim() || '其他'))).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+  const rows = (availability.data ?? []).filter((row) => {
+    const card = cardsByID.get(row.card_id)
+    const group = card?.display_group?.trim() || '其他'
+    return (upstreamID === 'all' || row.upstream_id === upstreamID) && (state === 'all' || row.state === state) && (displayGroup === 'all' || group === displayGroup)
+  })
+  const healthy = rows.filter((row) => row.state === 'healthy').length
+  const risk = rows.filter((row) => ['warning', 'blocked', 'action_failed', 'recovering'].includes(row.state)).length
+  const autoClosed = rows.filter((row) => ['blocked', 'recovering'].includes(row.state) && (row.actual_status === 2 || row.actual_status === 3)).length
+  const manualClosed = rows.filter((row) => row.state === 'manual_off').length
+  const unmanaged = rows.filter((row) => row.state === 'unmanaged').length
+  const draft = policyDraft ?? policy.data
+
+  return (
+    <Section title="渠道可用性">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <Metric label="可用" value={healthy} accent="success" />
+        <Metric label="风险" value={risk} accent={risk > 0 ? 'danger' : undefined} />
+        <Metric label="自动关闭" value={autoClosed} accent={autoClosed > 0 ? 'danger' : undefined} />
+        <Metric label="手动关闭" value={manualClosed} />
+        <Metric label="未绑定" value={unmanaged} />
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <Select value={upstreamID} onValueChange={setUpstreamID}>
+          <SelectTrigger className="w-44"><SelectValue placeholder="上游" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部上游</SelectItem>
+            {upstreamRows.map(({ upstream }) => <SelectItem key={upstream.id} value={upstream.id}>{upstream.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={state} onValueChange={setState}>
+          <SelectTrigger className="w-36"><SelectValue placeholder="状态" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部状态</SelectItem>
+            {availabilityStates.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={displayGroup} onValueChange={setDisplayGroup}>
+          <SelectTrigger className="w-36"><SelectValue placeholder="展示分组" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部展示分组</SelectItem>
+            {groups.map((group) => <SelectItem key={group} value={group}>{group}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Button variant="outline" size="icon" title="重新协调渠道" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+          <RefreshCcw className={cn('size-4', refresh.isPending && 'animate-spin')} />
+          <span className="sr-only">重新协调渠道</span>
+        </Button>
+      </div>
+      <FormError error={availability.error || upstreams.error || cards.error} />
+      {availability.isLoading && <EmptyPanel text="加载中..." />}
+      {!availability.isLoading && rows.length === 0 && <EmptyPanel text="暂无受管理渠道" />}
+      {!availability.isLoading && rows.length > 0 && (
+        <div className="overflow-x-auto border border-border">
+          <table className="w-full min-w-[1060px] text-left text-sm">
+            <thead className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">渠道</th>
+                <th className="px-3 py-2 font-medium">上游</th>
+                <th className="px-3 py-2 font-medium">展示分组</th>
+                <th className="px-3 py-2 font-medium">状态</th>
+                <th className="px-3 py-2 font-medium">原因</th>
+                <th className="px-3 py-2 font-medium">余额</th>
+                <th className="px-3 py-2 font-medium">恢复</th>
+                <th className="px-3 py-2 font-medium">实际</th>
+                <th className="px-3 py-2 text-right font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const card = cardsByID.get(row.card_id)
+                return (
+                  <tr key={row.channel_id} className="border-b border-border last:border-0">
+                    <td className="max-w-52 px-3 py-2"><div className="truncate font-medium" title={row.channel_name || row.channel_id}>{row.channel_name || row.channel_id}</div><div className="truncate text-xs text-muted-foreground">{row.card_name}</div></td>
+                    <td className="max-w-40 px-3 py-2"><div className="truncate">{row.upstream_name || '-'}</div><button className="text-xs text-primary hover:underline" onClick={() => { setPolicyUpstreamID(row.upstream_id); setPolicyDraft(null) }}>策略</button></td>
+                    <td className="px-3 py-2 whitespace-nowrap">{card?.display_group?.trim() || '其他'}</td>
+                    <td className="px-3 py-2"><AvailabilityStateBadge state={row.state} /></td>
+                    <td className="max-w-52 px-3 py-2"><div className="truncate" title={availabilityReason(row)}>{availabilityReason(row)}</div>{row.last_error && <div className="truncate text-xs text-destructive" title={row.last_error}>{row.last_error}</div>}</td>
+                    <td className="px-3 py-2 whitespace-nowrap"><div>{row.balance_fresh ? `${row.balance_remain?.toFixed(2) ?? '-'} 元` : '数据陈旧'}</div>{row.runway.warning && <div className="text-xs text-warning">约 {row.runway.hours_remaining?.toFixed(1)} 小时</div>}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{row.disabled_at ? `${row.recovery_success_count}/3` : '-'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{channelActualState(row.actual_status)}</td>
+                    <td className="px-3 py-2"><div className="flex justify-end gap-1">
+                      {row.state === 'manual_off' ? (
+                        <Button variant="outline" size="icon" title="解除手动关闭" disabled={action.isPending} onClick={() => action.mutate({ cardID: row.card_id, action: 'release_hold' })}><CirclePlay className="size-4" /><span className="sr-only">解除手动关闭</span></Button>
+                      ) : (
+                        <Button variant="outline" size="icon" title="手动关闭渠道" disabled={action.isPending || !row.managed} onClick={() => action.mutate({ cardID: row.card_id, action: 'hold_off' })}><CirclePause className="size-4" /><span className="sr-only">手动关闭渠道</span></Button>
+                      )}
+                      <Button variant="outline" size="icon" title="限时启用 30 分钟" disabled={action.isPending || !row.managed} onClick={() => action.mutate({ cardID: row.card_id, action: 'force_enable' })}><ShieldCheck className="size-4" /><span className="sr-only">限时启用 30 分钟</span></Button>
+                      <Button variant="outline" size="icon" title="立即检查" disabled={action.isPending || !row.managed} onClick={() => action.mutate({ cardID: row.card_id, action: 'check_now' })}><RefreshCcw className="size-4" /><span className="sr-only">立即检查</span></Button>
+                    </div></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Dialog open={Boolean(policyUpstreamID)} onOpenChange={(open) => { if (!open) { setPolicyUpstreamID(''); setPolicyDraft(null) } }}>
+        <DialogContent>
+          <DialogTitle>余额保护策略</DialogTitle>
+          {!draft && <EmptyPanel text="加载中..." />}
+          {draft && <div className="grid gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="余额保护">
+                <Select value={draft.balance_guard_mode} onValueChange={(value: 'observe' | 'active') => setPolicyDraft({ ...draft, balance_guard_mode: value })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="observe">观察模式</SelectItem><SelectItem value="active">自动摘流</SelectItem></SelectContent>
+                </Select>
+              </Field>
+              <Field label="耗尽预警（小时）"><Input type="number" min="1" value={draft.runway_warning_hours} onChange={(e) => setPolicyDraft({ ...draft, runway_warning_hours: Number(e.target.value || 0) })} /></Field>
+              <Field label="预警线（元）"><Input type="number" min="0" value={draft.low_balance_threshold} onChange={(e) => setPolicyDraft({ ...draft, low_balance_threshold: Number(e.target.value || 0) })} /></Field>
+              <Field label="关闭线（元）"><Input type="number" min="0" value={draft.balance_close_threshold} onChange={(e) => setPolicyDraft({ ...draft, balance_close_threshold: Number(e.target.value || 0) })} /></Field>
+              <Field label="恢复线（元）"><Input type="number" min="0" value={draft.balance_recover_threshold} onChange={(e) => setPolicyDraft({ ...draft, balance_recover_threshold: Number(e.target.value || 0) })} /></Field>
+            </div>
+            <ActionRow><Button onClick={() => savePolicy.mutate()} disabled={savePolicy.isPending}>{savePolicy.isPending ? <Loader2 className="size-4 animate-spin" /> : <ShieldAlert className="size-4" />}保存策略</Button></ActionRow>
+          </div>}
+        </DialogContent>
+      </Dialog>
+    </Section>
+  )
+}
+
+const availabilityStates = [
+  { value: 'healthy', label: '可用' }, { value: 'warning', label: '风险' }, { value: 'blocked', label: '自动关闭' }, { value: 'recovering', label: '恢复中' }, { value: 'manual_off', label: '手动关闭' }, { value: 'forced_on', label: '限时启用' }, { value: 'action_failed', label: '动作失败' }, { value: 'unmanaged', label: '未绑定' },
+]
+
+function AvailabilityStateBadge({ state }: { state: string }) {
+  const item = availabilityStates.find((candidate) => candidate.value === state)
+  const tone = state === 'healthy' ? 'text-success' : state === 'action_failed' || state === 'blocked' ? 'text-destructive' : state === 'warning' || state === 'recovering' ? 'text-warning' : 'text-muted-foreground'
+  return <span className={cn('inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium', tone)}>{state === 'healthy' ? <ShieldCheck className="size-3.5" /> : <AlertTriangle className="size-3.5" />}{item?.label ?? state}</span>
+}
+
+function availabilityReason(row: AvailabilityRow) {
+  if (row.blockers.length > 0) return row.blockers.map((blocker) => blocker.message || availabilityBlockerText(blocker.kind)).join('；')
+  if (row.override === 'manual_hold') return '人工保持关闭'
+  if (row.override === 'force_enable') return `人工接管至 ${fmtTime(row.override_until)}`
+  return row.managed ? '-' : '未受 AUM 管理'
+}
+
+function availabilityBlockerText(kind: string) {
+  if (kind === 'balance_low') return '余额达到关闭线'
+  if (kind === 'quota_exhausted') return '额度耗尽'
+  if (kind === 'probe_failed') return '探测确认失败'
+  return kind
+}
+
+function channelActualState(status: number) {
+  if (status === 1) return '启用'
+  if (status === 2) return '关闭'
+  if (status === 3) return '自动关闭'
+  return '未知'
 }
 
 function SchedulerConfigDialog({

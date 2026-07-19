@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"ai-upstream-monitor/internal/domain"
@@ -17,14 +18,22 @@ func (s *Store) CreateUpstream(ctx context.Context, u domain.Upstream) (domain.U
 	if u.BalanceRate <= 0 {
 		u.BalanceRate = 1
 	}
+	if strings.TrimSpace(u.BalanceGuardMode) == "" {
+		u.BalanceGuardMode = domain.BalanceGuardObserve
+	}
+	if u.RunwayWarningHours <= 0 {
+		u.RunwayWarningHours = 24
+	}
 	now := time.Now().UTC()
 	u.CreatedAt, u.UpdatedAt = now, now
 	_, err := s.exec(ctx, `INSERT INTO upstreams
 		(id, name, type, base_url, enabled, user_id, access_token, email, password, sub2api_access_token, sub2api_refresh_token,
-		balance_rate, low_balance_threshold, last_error, failure_count, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		balance_rate, low_balance_threshold, balance_guard_mode, balance_close_threshold, balance_recover_threshold, runway_warning_hours,
+		last_error, failure_count, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Name, u.Type, u.BaseURL, boolInt(u.Enabled), u.UserID, u.AccessToken, u.Email, u.Password,
-		u.Sub2APIAccessToken, u.Sub2APIRefreshToken, u.BalanceRate, u.LowBalanceThreshold, u.LastError, u.FailureCount,
+		u.Sub2APIAccessToken, u.Sub2APIRefreshToken, u.BalanceRate, u.LowBalanceThreshold, u.BalanceGuardMode, u.BalanceCloseThreshold,
+		u.BalanceRecoverThreshold, u.RunwayWarningHours, u.LastError, u.FailureCount,
 		u.CreatedAt.Format(time.RFC3339Nano), u.UpdatedAt.Format(time.RFC3339Nano))
 	return u, err
 }
@@ -34,10 +43,18 @@ func (s *Store) UpdateUpstream(ctx context.Context, u domain.Upstream) (domain.U
 	if u.BalanceRate <= 0 {
 		u.BalanceRate = 1
 	}
+	if strings.TrimSpace(u.BalanceGuardMode) == "" {
+		u.BalanceGuardMode = domain.BalanceGuardObserve
+	}
+	if u.RunwayWarningHours <= 0 {
+		u.RunwayWarningHours = 24
+	}
 	_, err := s.exec(ctx, `UPDATE upstreams SET name=?, type=?, base_url=?, enabled=?, user_id=?, access_token=?, email=?, password=?,
-		sub2api_access_token=?, sub2api_refresh_token=?, balance_rate=?, low_balance_threshold=?, last_error=?, failure_count=?, updated_at=? WHERE id=?`,
+		sub2api_access_token=?, sub2api_refresh_token=?, balance_rate=?, low_balance_threshold=?, balance_guard_mode=?, balance_close_threshold=?,
+		balance_recover_threshold=?, runway_warning_hours=?, last_error=?, failure_count=?, updated_at=? WHERE id=?`,
 		u.Name, u.Type, u.BaseURL, boolInt(u.Enabled), u.UserID, u.AccessToken, u.Email, u.Password, u.Sub2APIAccessToken,
-		u.Sub2APIRefreshToken, u.BalanceRate, u.LowBalanceThreshold, u.LastError, u.FailureCount, u.UpdatedAt.Format(time.RFC3339Nano), u.ID)
+		u.Sub2APIRefreshToken, u.BalanceRate, u.LowBalanceThreshold, u.BalanceGuardMode, u.BalanceCloseThreshold, u.BalanceRecoverThreshold,
+		u.RunwayWarningHours, u.LastError, u.FailureCount, u.UpdatedAt.Format(time.RFC3339Nano), u.ID)
 	return u, err
 }
 
@@ -49,6 +66,7 @@ func (s *Store) DeleteUpstream(ctx context.Context, id string) error {
 		`DELETE FROM probe_runs WHERE upstream_id=?`,
 		`DELETE FROM alert_events WHERE upstream_id=?`,
 		`DELETE FROM balance_recharge_logs WHERE upstream_id=?`,
+		`DELETE FROM channel_availability WHERE upstream_id=?`,
 		`DELETE FROM revenue_cards WHERE upstream_id=?`,
 		`DELETE FROM upstreams WHERE id=?`,
 	} {
@@ -61,13 +79,15 @@ func (s *Store) DeleteUpstream(ctx context.Context, id string) error {
 
 func (s *Store) Upstream(ctx context.Context, id string) (domain.Upstream, error) {
 	return s.scanUpstream(s.row(ctx, `SELECT id, name, type, base_url, enabled, user_id, access_token, email, password,
-		sub2api_access_token, sub2api_refresh_token, balance_rate, low_balance_threshold, last_error, failure_count, created_at, updated_at
+		sub2api_access_token, sub2api_refresh_token, balance_rate, low_balance_threshold, balance_guard_mode, balance_close_threshold,
+		balance_recover_threshold, runway_warning_hours, last_error, failure_count, created_at, updated_at
 		FROM upstreams WHERE id=?`, id))
 }
 
 func (s *Store) ListUpstreams(ctx context.Context) ([]domain.Upstream, error) {
 	rows, err := s.query(ctx, `SELECT id, name, type, base_url, enabled, user_id, access_token, email, password,
-		sub2api_access_token, sub2api_refresh_token, balance_rate, low_balance_threshold, last_error, failure_count, created_at, updated_at
+		sub2api_access_token, sub2api_refresh_token, balance_rate, low_balance_threshold, balance_guard_mode, balance_close_threshold,
+		balance_recover_threshold, runway_warning_hours, last_error, failure_count, created_at, updated_at
 		FROM upstreams ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -89,7 +109,8 @@ func (s *Store) scanUpstream(row *sql.Row) (domain.Upstream, error) {
 	var enabled int
 	var created, updated string
 	err := row.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &enabled, &u.UserID, &u.AccessToken, &u.Email, &u.Password,
-		&u.Sub2APIAccessToken, &u.Sub2APIRefreshToken, &u.BalanceRate, &u.LowBalanceThreshold, &u.LastError, &u.FailureCount, &created, &updated)
+		&u.Sub2APIAccessToken, &u.Sub2APIRefreshToken, &u.BalanceRate, &u.LowBalanceThreshold, &u.BalanceGuardMode, &u.BalanceCloseThreshold,
+		&u.BalanceRecoverThreshold, &u.RunwayWarningHours, &u.LastError, &u.FailureCount, &created, &updated)
 	if err != nil {
 		return u, err
 	}
@@ -103,7 +124,8 @@ func scanUpstreamRows(rows *sql.Rows) (domain.Upstream, error) {
 	var enabled int
 	var created, updated string
 	err := rows.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &enabled, &u.UserID, &u.AccessToken, &u.Email, &u.Password,
-		&u.Sub2APIAccessToken, &u.Sub2APIRefreshToken, &u.BalanceRate, &u.LowBalanceThreshold, &u.LastError, &u.FailureCount, &created, &updated)
+		&u.Sub2APIAccessToken, &u.Sub2APIRefreshToken, &u.BalanceRate, &u.LowBalanceThreshold, &u.BalanceGuardMode, &u.BalanceCloseThreshold,
+		&u.BalanceRecoverThreshold, &u.RunwayWarningHours, &u.LastError, &u.FailureCount, &created, &updated)
 	u.Enabled = boolFromInt(enabled)
 	u.CreatedAt, u.UpdatedAt = parseTime(created), parseTime(updated)
 	return u, err

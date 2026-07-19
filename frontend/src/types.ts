@@ -18,6 +18,10 @@ export type Upstream = {
   sub2api_refresh_token_set?: boolean
   balance_rate: number
   low_balance_threshold: number
+	balance_guard_mode?: 'observe' | 'active'
+	balance_close_threshold?: number
+	balance_recover_threshold?: number
+	runway_warning_hours?: number
   last_error?: string
 }
 
@@ -323,7 +327,56 @@ export type SchedulerLog = {
   action: 'disable' | 'restore' | 'group_sync'
   status: 'success' | 'error' | 'skipped'
   message: string
+	reason?: string
   created_at: string
+}
+
+export type AvailabilityPolicy = {
+  balance_guard_mode: 'observe' | 'active'
+  low_balance_threshold: number
+  balance_close_threshold: number
+  balance_recover_threshold: number
+  runway_warning_hours: number
+}
+
+export type AvailabilityBlocker = {
+  kind: 'balance_low' | 'quota_exhausted' | 'probe_failed' | string
+  since: string
+  message?: string
+  observed?: boolean
+}
+
+export type BalanceRunway = {
+  hours_remaining?: number
+  rate_per_hour?: number
+  samples: number
+  warning: boolean
+}
+
+export type AvailabilityRow = {
+  channel_id: string
+  channel_name: string
+  card_id: string
+  card_name: string
+  upstream_id: string
+  upstream_name: string
+  managed: boolean
+  blockers: AvailabilityBlocker[]
+  desired_status: number
+  actual_status: number
+  disabled_at?: string
+  recovery_success_count: number
+  override?: 'force_enable' | 'manual_hold' | string
+  override_until?: string
+  pending_action?: string
+  pending_status?: number
+  retry_at?: string
+  retry_count: number
+  last_error?: string
+  state: 'healthy' | 'warning' | 'suspect' | 'blocked' | 'recovering' | 'forced_on' | 'manual_off' | 'action_failed' | 'unmanaged' | string
+  balance_fresh: boolean
+  balance_remain?: number
+  runway: BalanceRunway
 }
 
 export type SchedulerApplyResult = {

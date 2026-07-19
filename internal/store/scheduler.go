@@ -50,8 +50,8 @@ func (s *Store) CreateSchedulerLog(ctx context.Context, log domain.SchedulerLog)
 	if log.CreatedAt.IsZero() {
 		log.CreatedAt = time.Now().UTC()
 	}
-	_, err := s.exec(ctx, `INSERT INTO scheduler_logs (id, card_id, card_name, channel_id, channel_name, action, status, message, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, log.ID, log.CardID, log.CardName, log.ChannelID, log.ChannelName, log.Action, log.Status, log.Message, log.CreatedAt.Format(time.RFC3339Nano))
+	_, err := s.exec(ctx, `INSERT INTO scheduler_logs (id, card_id, card_name, channel_id, channel_name, action, status, message, reason, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, log.ID, log.CardID, log.CardName, log.ChannelID, log.ChannelName, log.Action, log.Status, log.Message, log.Reason, log.CreatedAt.Format(time.RFC3339Nano))
 	return err
 }
 
@@ -59,7 +59,7 @@ func (s *Store) SchedulerLogs(ctx context.Context, limit int) ([]domain.Schedule
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.query(ctx, `SELECT id, card_id, card_name, channel_id, channel_name, action, status, message, created_at FROM scheduler_logs ORDER BY created_at DESC LIMIT ?`, limit)
+	rows, err := s.query(ctx, `SELECT id, card_id, card_name, channel_id, channel_name, action, status, message, reason, created_at FROM scheduler_logs ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (s *Store) SchedulerLogs(ctx context.Context, limit int) ([]domain.Schedule
 	for rows.Next() {
 		var log domain.SchedulerLog
 		var created string
-		if err := rows.Scan(&log.ID, &log.CardID, &log.CardName, &log.ChannelID, &log.ChannelName, &log.Action, &log.Status, &log.Message, &created); err != nil {
+		if err := rows.Scan(&log.ID, &log.CardID, &log.CardName, &log.ChannelID, &log.ChannelName, &log.Action, &log.Status, &log.Message, &log.Reason, &created); err != nil {
 			return nil, err
 		}
 		log.CreatedAt = parseTime(created)

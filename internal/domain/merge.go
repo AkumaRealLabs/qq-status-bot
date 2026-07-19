@@ -27,6 +27,11 @@ func (in Upstream) MergeUpdate(old Upstream) Upstream {
 	out.LastError = old.LastError
 	out.FailureCount = old.FailureCount
 	out.CreatedAt = old.CreatedAt
+	// 可用性策略由专用接口维护，普通上游编辑不得意外清空。
+	out.BalanceGuardMode = old.BalanceGuardMode
+	out.BalanceCloseThreshold = old.BalanceCloseThreshold
+	out.BalanceRecoverThreshold = old.BalanceRecoverThreshold
+	out.RunwayWarningHours = old.RunwayWarningHours
 	return out
 }
 

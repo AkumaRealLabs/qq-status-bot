@@ -30,6 +30,9 @@ const eventLabels: Record<string, string> = {
   credential_invalid: '凭据失效',
   balance_query_failed: '额度查询失败',
   scheduler_changed: '调度器变更',
+  availability_changed: '渠道可用性变更',
+  availability_action_failed: '渠道动作失败',
+  balance_runway_low: '余额预计耗尽',
   cliproxy_error: '号池异常',
 }
 
@@ -123,6 +126,9 @@ function EventsTab() {
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={() => read.mutate(eventGroupFilter(group))} disabled={read.isPending}><Check className="size-4" />标为已读</Button>
                   <Button variant="outline" size="sm" onClick={() => ack.mutate(eventGroupFilter(group))} disabled={ack.isPending}><ShieldCheck className="size-4" />确认</Button>
+                  {group.target_type === 'upstream' && ['availability_changed', 'availability_action_failed', 'balance_runway_low'].includes(group.type) && (
+                    <Button asChild variant="outline" size="sm"><a href={`/admin/scheduler?upstream_id=${encodeURIComponent(group.target_id ?? '')}`}>查看渠道</a></Button>
+                  )}
                 </div>
               </div>
               {expanded[key] && <EventDetails state={state} type={group.type} targetType={group.target_type ?? ''} targetID={group.target_id ?? ''} />}
@@ -290,9 +296,9 @@ function NotificationsTab() {
           <Field label="告警失败次数阈值">
             <Input type="number" min={1} value={data.failure_threshold} onChange={(event) => update({ failure_threshold: Number(event.target.value) })} />
           </Field>
-          <Field label="静默/自动关渠阈值">
+          <Field label="静默失败次数">
             <Input type="number" min={1} value={muteThreshold} onChange={(event) => update({ mute_failure_threshold: Number(event.target.value) })} />
-            <p className="text-xs text-muted-foreground">连续失败达到该次数时发送失败告警并自动关闭调度渠道；之后静默直到恢复。</p>
+            <p className="text-xs text-muted-foreground">连续失败达到该次数后，重复失败通知会进入静默，直到状态恢复。</p>
           </Field>
           <Field label="本地错误内部重试次数">
             <Input type="number" min={1} max={5} value={internalRetries} onChange={(event) => update({ internal_retry_count: Number(event.target.value) })} />

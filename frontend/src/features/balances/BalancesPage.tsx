@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, RefreshCcw } from 'lucide-react'
+import { Loader2, RefreshCcw, ShieldAlert } from 'lucide-react'
 import { EmptyPanel, FeedbackBanner, Metric, SkeletonCardGrid, TypeBadge, StatusBadge } from '@/components/common'
 import { Page } from '@/components/layout'
 import { BalanceRechargeDialog } from '@/features/upstreams/UpstreamsPage'
@@ -78,6 +78,12 @@ function BalanceMonitorCard({ row }: { row: BalanceRow }) {
           <div className="mt-1.5 text-xs text-muted-foreground">最后刷新：{fmtTime(row.last_check)}</div>
         </div>
         <BalanceRechargeDialog upstream={{ id: row.id, name: row.name, type: row.type as Upstream['type'], base_url: '', enabled: row.enabled, balance_rate: row.balance_rate, low_balance_threshold: 0 }} />
+        <Button asChild variant="outline" size="sm">
+          <a href={`/admin/scheduler?upstream_id=${encodeURIComponent(row.id)}`}>
+            <ShieldAlert className="size-4" />
+            受影响渠道
+          </a>
+        </Button>
       </CardContent>
     </Card>
   )

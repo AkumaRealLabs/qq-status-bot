@@ -52,3 +52,38 @@ func (s *Server) setCardSchedulerStatus(w http.ResponseWriter, r *http.Request) 
 	card, err := s.App.SetCardSchedulerChannelStatus(r.Context(), r.PathValue("id"), body.Status)
 	writeJSONOrError(w, card, err)
 }
+
+func (s *Server) availabilityPolicy(w http.ResponseWriter, r *http.Request) {
+	policy, err := s.App.AvailabilityPolicy(r.Context(), r.PathValue("id"))
+	writeJSONOrError(w, policy, err)
+}
+
+func (s *Server) updateAvailabilityPolicy(w http.ResponseWriter, r *http.Request) {
+	var policy domain.AvailabilityPolicy
+	if !decode(w, r, &policy) {
+		return
+	}
+	policy, err := s.App.SaveAvailabilityPolicy(r.Context(), r.PathValue("id"), policy)
+	writeJSONOrError(w, policy, err)
+}
+
+func (s *Server) schedulerAvailability(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.App.AvailabilityRows(r.Context(), r.URL.Query().Get("upstream_id"), r.URL.Query().Get("state"))
+	writeJSONOrError(w, rows, err)
+}
+
+func (s *Server) schedulerAvailabilityAction(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Action  string `json:"action"`
+		Minutes int    `json:"minutes"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	row, err := s.App.AvailabilityAction(r.Context(), r.PathValue("card_id"), body.Action, body.Minutes)
+	writeJSONOrError(w, row, err)
+}
+
+func (s *Server) reconcileSchedulerAvailability(w http.ResponseWriter, r *http.Request) {
+	writeNoContentOrError(w, s.App.ReconcileAvailability(r.Context()))
+}

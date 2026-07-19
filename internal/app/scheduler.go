@@ -383,6 +383,17 @@ func (s *SchedulerService) SetCardSchedulerChannelStatus(ctx context.Context, ca
 	if card.SchedulerChannelID == "" {
 		return domain.ModelCard{}, ErrBadRequest("scheduler channel required")
 	}
+	if s.availabilityManagedSchedulerCard(ctx, card) {
+		action := "hold_off"
+		if status == 1 {
+			action = "force_enable"
+		}
+		if _, err := s.AvailabilityAction(ctx, card.ID, action, 30); err != nil {
+			return domain.ModelCard{}, err
+		}
+		updated, err := s.app.Cards.Card(ctx, card.ID)
+		return updated.Public(), err
+	}
 	if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, status); err != nil {
 		s.logSchedulerAction(ctx, card, schedulerAction(status), "error", err.Error())
 		return domain.ModelCard{}, err
@@ -394,6 +405,14 @@ func (s *SchedulerService) SetCardSchedulerChannelStatus(ctx context.Context, ca
 	card.SchedulerAutoDisabled = false
 	s.logSchedulerAction(ctx, card, schedulerAction(status), "success", schedulerManualMessage(status))
 	return card.Public(), nil
+}
+
+func (s *SchedulerService) availabilityManagedSchedulerCard(ctx context.Context, card domain.ModelCard) bool {
+	if !card.PoolEnabled || card.BaseURL != "" || card.UpstreamID == "" || card.SchedulerChannelID == "" {
+		return false
+	}
+	upstream, err := s.app.Store.Upstream(ctx, card.UpstreamID)
+	return err == nil && upstream.Type == "newapi"
 }
 
 func (s *SchedulerService) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {

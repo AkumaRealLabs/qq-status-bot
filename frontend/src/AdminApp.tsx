@@ -54,7 +54,7 @@ const tabs: NavTab[] = [
   { id: 'profit', label: '调度池利润', short: '利润', icon: TrendingUp },
   { id: 'messages', label: '最新消息', short: '消息', icon: MessageSquare },
   { id: 'upstreams', label: '上游管理', short: '上游', icon: Database },
-  { id: 'scheduler', label: '调度器', short: '调度', icon: SlidersHorizontal },
+  { id: 'scheduler', label: '渠道管理', short: '渠道', icon: SlidersHorizontal },
   { id: 'pools', label: '号池管理', short: '号池', icon: KeyRound },
   { id: 'events', label: '事件中心', short: '事件', icon: Activity },
   { id: 'audit', label: '审计日志', short: '审计', icon: FileText },

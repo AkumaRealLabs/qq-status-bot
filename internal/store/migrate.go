@@ -32,6 +32,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 			user_id TEXT NOT NULL DEFAULT '', access_token TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '',
 			password TEXT NOT NULL DEFAULT '', sub2api_access_token TEXT NOT NULL DEFAULT '', sub2api_refresh_token TEXT NOT NULL DEFAULT '',
 			balance_rate REAL NOT NULL DEFAULT 1, low_balance_threshold REAL NOT NULL DEFAULT 0,
+			balance_guard_mode TEXT NOT NULL DEFAULT 'observe', balance_close_threshold REAL NOT NULL DEFAULT 0,
+			balance_recover_threshold REAL NOT NULL DEFAULT 0, runway_warning_hours REAL NOT NULL DEFAULT 24,
 			last_error TEXT NOT NULL DEFAULT '', failure_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS api_keys (
@@ -58,7 +60,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 			id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, card_id TEXT NOT NULL DEFAULT '', checked_at TEXT NOT NULL,
 			model TEXT NOT NULL, input TEXT NOT NULL DEFAULT 'ping', status TEXT NOT NULL DEFAULT '',
 			output TEXT NOT NULL DEFAULT '', http_status INTEGER NOT NULL DEFAULT 0,
-			latency_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT ''
+			latency_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
+			purpose TEXT NOT NULL DEFAULT 'regular'
 		)`,
 		`CREATE TABLE IF NOT EXISTS alert_events (
 			id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, type TEXT NOT NULL, recover INTEGER NOT NULL DEFAULT 0,
@@ -93,7 +96,17 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS scheduler_logs (
 			id TEXT PRIMARY KEY, card_id TEXT NOT NULL DEFAULT '', card_name TEXT NOT NULL DEFAULT '',
 			channel_id TEXT NOT NULL DEFAULT '', channel_name TEXT NOT NULL DEFAULT '',
-			action TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+			action TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS channel_availability (
+			channel_id TEXT PRIMARY KEY, channel_name TEXT NOT NULL DEFAULT '', card_id TEXT NOT NULL DEFAULT '', card_name TEXT NOT NULL DEFAULT '',
+			upstream_id TEXT NOT NULL DEFAULT '', upstream_name TEXT NOT NULL DEFAULT '', managed INTEGER NOT NULL DEFAULT 1,
+			blockers TEXT NOT NULL DEFAULT '[]', desired_status INTEGER NOT NULL DEFAULT 1, actual_status INTEGER NOT NULL DEFAULT 0,
+			disabled_at TEXT NOT NULL DEFAULT '', recovery_success_count INTEGER NOT NULL DEFAULT 0,
+			override_kind TEXT NOT NULL DEFAULT '', override_until TEXT NOT NULL DEFAULT '',
+			pending_action TEXT NOT NULL DEFAULT '', pending_status INTEGER NOT NULL DEFAULT 0,
+			retry_at TEXT NOT NULL DEFAULT '', retry_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
+			version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS scheduler_channel_cost_snapshots (
 			id TEXT PRIMARY KEY, channel_id TEXT NOT NULL DEFAULT '', channel_name TEXT NOT NULL DEFAULT '',
@@ -141,6 +154,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_recharge_upstream_time ON balance_recharge_logs(upstream_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_recharge_pending ON balance_recharge_logs(method, status, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_logs_time ON scheduler_logs(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_channel_availability_upstream ON channel_availability(upstream_id, managed)`,
+		`CREATE INDEX IF NOT EXISTS idx_channel_availability_retry ON channel_availability(pending_action, retry_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_cost_snapshots_lookup ON scheduler_channel_cost_snapshots(channel_id, effective_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_sale_snapshots_lookup ON scheduler_group_sale_snapshots(group_name, effective_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_revenue_cards_upstream ON revenue_cards(upstream_id)`,
@@ -194,6 +209,12 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "probe_runs", "output", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := s.addColumnIfMissing(ctx, "probe_runs", "purpose", "TEXT NOT NULL DEFAULT 'regular'"); err != nil {
+		return err
+	}
+	if _, err := s.DB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_probe_card_purpose_time ON probe_runs(card_id, purpose, checked_at)`); err != nil {
+		return err
+	}
 	if err := s.dropColumnIfExists(ctx, "probe_runs", "expected_answer"); err != nil {
 		return err
 	}
@@ -233,6 +254,19 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "model_cards", "scheduler_auto_disabled_at", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	for _, col := range []struct{ name, def string }{
+		{"balance_guard_mode", "TEXT NOT NULL DEFAULT 'observe'"},
+		{"balance_close_threshold", "REAL NOT NULL DEFAULT 0"},
+		{"balance_recover_threshold", "REAL NOT NULL DEFAULT 0"},
+		{"runway_warning_hours", "REAL NOT NULL DEFAULT 24"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "upstreams", col.name, col.def); err != nil {
+			return err
+		}
+	}
+	if err := s.addColumnIfMissing(ctx, "scheduler_logs", "reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := s.addColumnIfMissing(ctx, "balance_recharge_logs", "raw_status", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -262,6 +296,19 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.exec(ctx, `UPDATE model_cards SET model=? WHERE model IN ('', 'gpt-5.5')`, domain.ProbeModel); err != nil {
+		return err
+	}
+	if _, err := s.exec(ctx, `UPDATE upstreams SET balance_guard_mode='observe' WHERE TRIM(balance_guard_mode)=''`); err != nil {
+		return err
+	}
+	// 兼容旧自动关闭：只接管状态，不自动远端恢复。
+	if _, err := s.exec(ctx, `INSERT INTO channel_availability
+		(channel_id, channel_name, card_id, card_name, upstream_id, managed, blockers, desired_status, actual_status, disabled_at, recovery_success_count, version, updated_at)
+		SELECT scheduler_channel_id, scheduler_channel_name, id, name, upstream_id, 1, '[{"kind":"probe_failed","message":"从旧自动关闭状态迁移"}]', 2, 2,
+			CASE WHEN scheduler_auto_disabled_at<>'' THEN scheduler_auto_disabled_at ELSE ? END, 0, 1, ?
+		FROM model_cards
+		WHERE pool_enabled=1 AND scheduler_auto_disabled=1 AND TRIM(scheduler_channel_id)<>''
+		ON CONFLICT(channel_id) DO NOTHING`, nowText(), nowText()); err != nil {
 		return err
 	}
 	return s.ensureDefaultRevenueCard(ctx)

@@ -40,6 +40,26 @@ func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID stri
 	return s.Scheduler.SetCardSchedulerChannelStatus(ctx, cardID, status)
 }
 
+func (s *Service) AvailabilityPolicy(ctx context.Context, upstreamID string) (domain.AvailabilityPolicy, error) {
+	return s.Scheduler.AvailabilityPolicy(ctx, upstreamID)
+}
+
+func (s *Service) SaveAvailabilityPolicy(ctx context.Context, upstreamID string, policy domain.AvailabilityPolicy) (domain.AvailabilityPolicy, error) {
+	return s.Scheduler.SaveAvailabilityPolicy(ctx, upstreamID, policy)
+}
+
+func (s *Service) AvailabilityRows(ctx context.Context, upstreamID, state string) ([]domain.AvailabilityView, error) {
+	return s.Scheduler.AvailabilityRows(ctx, upstreamID, state)
+}
+
+func (s *Service) AvailabilityAction(ctx context.Context, cardID, action string, minutes int) (domain.AvailabilityView, error) {
+	return s.Scheduler.AvailabilityAction(ctx, cardID, action, minutes)
+}
+
+func (s *Service) ReconcileAvailability(ctx context.Context) error {
+	return s.Scheduler.ReconcileAvailability(ctx)
+}
+
 func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitResponse, error) {
 	return s.ProfitSvc.Profit(ctx, window)
 }
@@ -107,7 +127,6 @@ func (s *Service) CheckAll(ctx context.Context) error {
 func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
 	return s.Probe.CheckUpstream(ctx, upstreamID)
 }
-
 
 // CLIProxy 公开 API
 
