@@ -38,7 +38,7 @@ services:
     restart: unless-stopped
 
   llbot:
-    image: linyuchen/llbot:8.0.14@sha256:e28926fc74b64a6f40c61ac8c8dfa8f4e9e2dd4f385017837c567268d0a60311
+    image: linyuchen/llbot:latest
     ports:
       - "127.0.0.1:3080:3080"
     expose:
