@@ -94,6 +94,34 @@ func TestEventRequiresExactMentionCommand(t *testing.T) {
 	}
 }
 
+func TestEventAcceptsStatusCommandSpacingAndSignedMessageID(t *testing.T) {
+	for _, text := range []string{"状态", " 状态", "  状态 ", "\u3000状态", "status", " status "} {
+		body, err := json.Marshal(map[string]any{
+			"self_id":      42,
+			"post_type":    "message",
+			"message_type": "group",
+			"sub_type":     "normal",
+			"message_id":   -2073968570,
+			"group_id":     100,
+			"user_id":      8,
+			"message": []any{
+				map[string]any{"type": "at", "data": map[string]any{"qq": "42"}},
+				map[string]any{"type": "text", "data": map[string]any{"text": text}},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var event Event
+		if err := json.Unmarshal(body, &event); err != nil {
+			t.Fatal(err)
+		}
+		if !event.IsStatusCommand() || event.MessageIDString() != "-2073968570" {
+			t.Fatalf("text=%q command=%v message_id=%q", text, event.IsStatusCommand(), event.MessageIDString())
+		}
+	}
+}
+
 func TestEventAcceptsStrictRawCQFallback(t *testing.T) {
 	var event Event
 	if err := json.Unmarshal([]byte(`{"self_id":42,"post_type":"message","message_type":"group","sub_type":"normal","message_id":1,"group_id":100,"user_id":8,"raw_message":"[CQ:at,qq=42,name=bot] \u200b状态","message":null}`), &event); err != nil {

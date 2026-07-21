@@ -17,7 +17,10 @@ import (
 
 const maxResponseBytes = 1 << 20
 
-var positiveIDPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
+var (
+	positiveIDPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
+	messageIDPattern  = regexp.MustCompile(`^-?[1-9][0-9]*$`)
+)
 
 type Client struct {
 	HTTP *http.Client
@@ -57,7 +60,7 @@ func (e Event) IsNormalGroupMessage() bool {
 
 func (e Event) GroupIDString() string   { return rawID(e.GroupID) }
 func (e Event) UserIDString() string    { return rawID(e.UserID) }
-func (e Event) MessageIDString() string { return rawID(e.MessageID) }
+func (e Event) MessageIDString() string { return rawMessageID(e.MessageID) }
 func (e Event) SelfIDString() string    { return rawID(e.SelfID) }
 
 // IsStatusCommand 仅接受数组消息段中的 @机器人 + 精确命令。
@@ -150,6 +153,23 @@ func rawID(raw json.RawMessage) string {
 func rawIDString(value string) string {
 	value = strings.TrimSpace(value)
 	if !positiveIDPattern.MatchString(value) {
+		return ""
+	}
+	return value
+}
+
+// rawMessageID 兼容 LLBot 生成的有符号 32 位短消息 ID；群号、用户号仍只允许正整数。
+func rawMessageID(raw json.RawMessage) string {
+	value := strings.TrimSpace(string(raw))
+	if value == "" {
+		return ""
+	}
+	var quoted string
+	if json.Unmarshal(raw, &quoted) == nil {
+		value = quoted
+	}
+	value = strings.TrimSpace(value)
+	if !messageIDPattern.MatchString(value) {
 		return ""
 	}
 	return value

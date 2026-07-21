@@ -158,6 +158,12 @@ func TestOneBotEventFiltersSecretsAndRateLimits(t *testing.T) {
 	if len(fake.sent) != 2 {
 		t.Fatalf("non-whitelist messages = %d", len(fake.sent))
 	}
+	if err := svc.HandleOneBotEvent(t.Context(), oneBotEvent(t, "-2073968570", "200", "10")); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.sent) != 3 || fake.sent[2].groupID != "200" {
+		t.Fatalf("signed message ID should reply: %+v", fake.sent)
+	}
 	payload := []byte(`{"message":"payload"}`)
 	if err := svc.AuthorizeOneBotEvent(t.Context(), testOneBotSignature("webhook-token", payload), payload); err != nil {
 		t.Fatalf("valid signature error = %v", err)
