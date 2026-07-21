@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"sort"
+	"sync"
 	"testing"
 
 	"ai-upstream-monitor/internal/domain"
@@ -98,5 +99,83 @@ func TestAvailabilityBalanceObserveThenActiveCascadesSub2APIBoundChannels(t *tes
 	sort.Ints(actions)
 	if len(actions) != 2 || actions[0] != 2 || actions[1] != 2 || status["9"] != 2 || status["10"] != 2 {
 		t.Fatalf("active actions=%v status=%v", actions, status)
+	}
+}
+
+func TestReconcileMissingChannelNotifiesOnlyOnTransition(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []any{}}})
+	}))
+	defer server.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "availability.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	upstream, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "上游", Type: "newapi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "失效绑定", UpstreamID: upstream.ID, PoolEnabled: true, SchedulerChannelID: "9", SchedulerChannelName: "已删除渠道", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: server.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: server.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
+		t.Fatal(err)
+	}
+	notifier := &mockNotifier{}
+	svc.Notify = notifier
+
+	const workers = 8
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- svc.ReconcileAvailability(t.Context())
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	logs, err := svc.SchedulerLogs(t.Context(), 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].Reason != "binding_invalid" || logs[0].CardID != card.ID {
+		t.Fatalf("logs = %+v", logs)
+	}
+	notifier.mu.Lock()
+	notificationCount := len(notifier.msgs)
+	notifier.mu.Unlock()
+	if notificationCount != 1 {
+		t.Fatalf("notifications = %d, want 1", notificationCount)
+	}
+	row, found, err := st.ChannelAvailability(t.Context(), "9")
+	if err != nil || !found || row.Managed || row.LastError == "" {
+		t.Fatalf("row=%+v found=%v err=%v", row, found, err)
+	}
+	version := row.Version
+	if err := svc.ReconcileAvailability(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	row, _, err = st.ChannelAvailability(t.Context(), "9")
+	if err != nil || row.Version != version {
+		t.Fatalf("unchanged reconcile wrote state: version=%d want=%d err=%v", row.Version, version, err)
 	}
 }

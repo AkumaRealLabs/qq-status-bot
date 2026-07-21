@@ -175,13 +175,18 @@ func (s *SchedulerService) ensureAvailabilityBinding(ctx context.Context, card d
 
 func (s *SchedulerService) markAvailabilityBindingInvalid(ctx context.Context, card domain.ModelCard, upstream domain.Upstream) error {
 	seed := domain.ChannelAvailability{ChannelID: card.SchedulerChannelID, ChannelName: card.SchedulerChannelName, CardID: card.ID, CardName: card.Name, UpstreamID: upstream.ID, UpstreamName: upstream.Name, Managed: false}
-	_, err := s.mutateAvailability(ctx, seed, func(next *domain.ChannelAvailability) {
+	updated, changed, err := s.mutateAvailabilityIfChanged(ctx, seed, func(next *domain.ChannelAvailability) bool {
+		changed := next.Managed || next.PendingAction != "" || next.PendingStatus != 0 || next.RetryAt != nil || next.LastError != "调度器中找不到该渠道，绑定已失效"
+		if !changed {
+			return false
+		}
 		next.Managed = false
 		next.PendingAction, next.PendingStatus, next.RetryAt = "", 0, nil
 		next.LastError = "调度器中找不到该渠道，绑定已失效"
+		return true
 	})
-	if err == nil {
-		s.recordAvailabilityLog(ctx, seed, "binding_invalid", "error", "调度器中找不到该渠道，已解除 AUM 所有权", "binding_invalid")
+	if err == nil && changed {
+		s.recordAvailabilityLog(ctx, updated, "binding_invalid", "error", "调度器中找不到该渠道，已解除 AUM 所有权", "binding_invalid")
 	}
 	return err
 }
@@ -400,10 +405,19 @@ func availabilityActionMessage(status int) string {
 }
 
 func (s *SchedulerService) mutateAvailability(ctx context.Context, seed domain.ChannelAvailability, mutate func(*domain.ChannelAvailability)) (domain.ChannelAvailability, error) {
+	current, _, err := s.mutateAvailabilityIfChanged(ctx, seed, func(next *domain.ChannelAvailability) bool {
+		mutate(next)
+		return true
+	})
+	return current, err
+}
+
+// mutateAvailabilityIfChanged 只在回调确认状态发生变化时执行 CAS，供需要按状态转换记录事件的路径使用。
+func (s *SchedulerService) mutateAvailabilityIfChanged(ctx context.Context, seed domain.ChannelAvailability, mutate func(*domain.ChannelAvailability) bool) (domain.ChannelAvailability, bool, error) {
 	for attempt := 0; attempt < 6; attempt++ {
 		current, found, err := s.app.Store.ChannelAvailability(ctx, seed.ChannelID)
 		if err != nil {
-			return domain.ChannelAvailability{}, err
+			return domain.ChannelAvailability{}, false, err
 		}
 		expected := int64(0)
 		if !found {
@@ -414,18 +428,20 @@ func (s *SchedulerService) mutateAvailability(ctx context.Context, seed domain.C
 		} else {
 			expected = current.Version
 		}
-		mutate(&current)
+		if !mutate(&current) {
+			return current, false, nil
+		}
 		current.UpdatedAt = time.Now().UTC()
 		ok, err := s.app.Store.SaveChannelAvailabilityCAS(ctx, current, expected)
 		if err != nil {
-			return domain.ChannelAvailability{}, err
+			return domain.ChannelAvailability{}, false, err
 		}
 		if ok {
 			current.Version = expected + 1
-			return current, nil
+			return current, true, nil
 		}
 	}
-	return domain.ChannelAvailability{}, errors.New("渠道可用性状态并发更新过多，请重试")
+	return domain.ChannelAvailability{}, false, errors.New("渠道可用性状态并发更新过多，请重试")
 }
 
 func schedulerConfigured(cfg domain.SchedulerConfig) bool {
