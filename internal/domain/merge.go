@@ -203,6 +203,21 @@ func (in SchedulerConfig) MergeUpdate(old SchedulerConfig) SchedulerConfig {
 	out.AccessToken = KeepSecret(in.AccessToken, old.AccessToken)
 	out.UnassignedGroup = strings.TrimSpace(in.UnassignedGroup)
 	out.Tiers = NormalizeSchedulerTiers(in.Tiers)
+	if strings.TrimSpace(in.TrafficMode) == "" {
+		out.TrafficMode = NormalizeTrafficMode(old.TrafficMode)
+	} else {
+		out.TrafficMode = NormalizeTrafficMode(in.TrafficMode)
+	}
+	if strings.TrimSpace(in.TrafficProfile) == "" {
+		out.TrafficProfile = NormalizeTrafficProfile(old.TrafficProfile)
+	} else {
+		out.TrafficProfile = NormalizeTrafficProfile(in.TrafficProfile)
+	}
+	if in.TrafficPollSecs == 0 {
+		out.TrafficPollSecs = NormalizeTrafficPollSeconds(old.TrafficPollSecs)
+	} else {
+		out.TrafficPollSecs = NormalizeTrafficPollSeconds(in.TrafficPollSecs)
+	}
 	return out
 }
 

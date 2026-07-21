@@ -25,6 +25,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 			scheduler_base_url TEXT NOT NULL DEFAULT '', scheduler_user_id TEXT NOT NULL DEFAULT '', scheduler_access_token TEXT NOT NULL DEFAULT '',
 			scheduler_unassigned_group TEXT NOT NULL DEFAULT '',
 			scheduler_tiers TEXT NOT NULL DEFAULT '',
+			scheduler_traffic_mode TEXT NOT NULL DEFAULT 'off', scheduler_traffic_profile TEXT NOT NULL DEFAULT 'balanced',
+			scheduler_log_poll_seconds INTEGER NOT NULL DEFAULT 5,
 			cliproxy_name TEXT NOT NULL DEFAULT 'CLIProxyAPI', cliproxy_base_url TEXT NOT NULL DEFAULT '',
 			cliproxy_management_key TEXT NOT NULL DEFAULT '', cliproxy_enabled INTEGER NOT NULL DEFAULT 1,
 			notification_rules TEXT NOT NULL DEFAULT ''
@@ -122,6 +124,42 @@ func (s *Store) Migrate(ctx context.Context) error {
 			id TEXT PRIMARY KEY, group_name TEXT NOT NULL DEFAULT '', tag TEXT NOT NULL DEFAULT '',
 			sale_price REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 0, effective_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS scheduler_traffic_events (
+			id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, source TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL,
+			channel_id TEXT NOT NULL DEFAULT '', channel_name TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', group_name TEXT NOT NULL DEFAULT '',
+			request_id TEXT NOT NULL DEFAULT '', upstream_request_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '', http_status INTEGER NOT NULL DEFAULT 0,
+			error_type TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '', duration_ms INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER NOT NULL DEFAULT 0,
+			stream_ended INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0, retry_count INTEGER NOT NULL DEFAULT 0,
+			retry_succeeded INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS scheduler_traffic_10s (
+			id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, channel_name TEXT NOT NULL DEFAULT '', model TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT '',
+			window_start TEXT NOT NULL, window_end TEXT NOT NULL, requests INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0,
+			soft_failures INTEGER NOT NULL DEFAULT 0, hard_failures INTEGER NOT NULL DEFAULT 0, user_errors INTEGER NOT NULL DEFAULT 0,
+			p95_ttft_ms INTEGER NOT NULL DEFAULT 0, avg_ttft_ms INTEGER NOT NULL DEFAULT 0, failure_rate REAL NOT NULL DEFAULT 0,
+			last_success_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, UNIQUE(channel_id, model, window_start)
+		)`,
+		`CREATE TABLE IF NOT EXISTS scheduler_traffic_1m (
+			id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, channel_name TEXT NOT NULL DEFAULT '', model TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT '',
+			window_start TEXT NOT NULL, window_end TEXT NOT NULL, requests INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0,
+			soft_failures INTEGER NOT NULL DEFAULT 0, hard_failures INTEGER NOT NULL DEFAULT 0, user_errors INTEGER NOT NULL DEFAULT 0,
+			p95_ttft_ms INTEGER NOT NULL DEFAULT 0, avg_ttft_ms INTEGER NOT NULL DEFAULT 0, failure_rate REAL NOT NULL DEFAULT 0,
+			last_success_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, UNIQUE(channel_id, model, window_start)
+		)`,
+		`CREATE TABLE IF NOT EXISTS scheduler_traffic_cursors (
+			source TEXT PRIMARY KEY, cursor_at TEXT NOT NULL DEFAULT '', scan_start_at TEXT NOT NULL DEFAULT '', scan_end_at TEXT NOT NULL DEFAULT '',
+			next_page INTEGER NOT NULL DEFAULT 0, last_poll_at TEXT NOT NULL DEFAULT '', last_event_at TEXT NOT NULL DEFAULT '',
+			backlog_pages INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS scheduler_traffic_control (
+			channel_id TEXT PRIMARY KEY, base_priority INTEGER NOT NULL DEFAULT 0, base_weight INTEGER NOT NULL DEFAULT 0,
+			desired_priority INTEGER NOT NULL DEFAULT 0, desired_weight INTEGER NOT NULL DEFAULT 0,
+			actual_priority INTEGER NOT NULL DEFAULT 0, actual_weight INTEGER NOT NULL DEFAULT 0, desired_status INTEGER NOT NULL DEFAULT 1,
+			actual_status INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'healthy', reason TEXT NOT NULL DEFAULT '',
+			failure_windows INTEGER NOT NULL DEFAULT 0, recovery_stage INTEGER NOT NULL DEFAULT 0, cooldown_until TEXT NOT NULL DEFAULT '',
+			last_probe_at TEXT NOT NULL DEFAULT '', recovery_successes INTEGER NOT NULL DEFAULT 0, stage_changed_at TEXT NOT NULL DEFAULT '',
+			retry_at TEXT NOT NULL DEFAULT '', retry_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS revenue_cards (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, source_type TEXT NOT NULL, upstream_id TEXT NOT NULL DEFAULT '',
 			base_url TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', access_token TEXT NOT NULL DEFAULT '',
@@ -160,6 +198,10 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_channel_availability_retry ON channel_availability(pending_action, retry_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_cost_snapshots_lookup ON scheduler_channel_cost_snapshots(channel_id, effective_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_sale_snapshots_lookup ON scheduler_group_sale_snapshots(group_name, effective_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_events_time ON scheduler_traffic_events(occurred_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_events_channel_model ON scheduler_traffic_events(channel_id, model, occurred_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_10s_time ON scheduler_traffic_10s(window_start)`,
+		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_1m_time ON scheduler_traffic_1m(window_start)`,
 		`CREATE INDEX IF NOT EXISTS idx_revenue_cards_upstream ON revenue_cards(upstream_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_tg_messages_channel_time ON tg_messages(channel_id, published_at)`,
 	}
@@ -204,6 +246,30 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if err := s.addColumnIfMissing(ctx, "settings", "scheduler_unassigned_group", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
+	}
+	for _, col := range []struct{ name, def string }{
+		{"scheduler_traffic_mode", "TEXT NOT NULL DEFAULT 'off'"},
+		{"scheduler_traffic_profile", "TEXT NOT NULL DEFAULT 'balanced'"},
+		{"scheduler_log_poll_seconds", "INTEGER NOT NULL DEFAULT 5"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "settings", col.name, col.def); err != nil {
+			return err
+		}
+	}
+	for _, col := range []struct{ name, def string }{
+		{"scan_start_at", "TEXT NOT NULL DEFAULT ''"}, {"scan_end_at", "TEXT NOT NULL DEFAULT ''"}, {"next_page", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "scheduler_traffic_cursors", col.name, col.def); err != nil {
+			return err
+		}
+	}
+	for _, col := range []struct{ name, def string }{
+		{"desired_priority", "INTEGER NOT NULL DEFAULT 0"}, {"desired_weight", "INTEGER NOT NULL DEFAULT 0"},
+		{"last_probe_at", "TEXT NOT NULL DEFAULT ''"}, {"recovery_successes", "INTEGER NOT NULL DEFAULT 0"}, {"stage_changed_at", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "scheduler_traffic_control", col.name, col.def); err != nil {
+			return err
+		}
 	}
 	for _, col := range []struct{ name, def string }{
 		{"cliproxy_name", "TEXT NOT NULL DEFAULT 'CLIProxyAPI'"},

@@ -253,6 +253,19 @@ func (s *SchedulerService) driveAvailabilityAction(ctx context.Context, row doma
 	if !row.Managed {
 		return nil
 	}
+	// 真实流量控制是同一渠道的另一条决策来源。余额恢复时不能把仍处于
+	// 流量熔断/恢复阶段的渠道提前打开；余额侧的关闭动作仍然允许执行。
+	if row.DesiredStatus == 1 {
+		if cfg, cfgErr := s.app.Store.SchedulerConfig(ctx); cfgErr == nil && cfg.TrafficMode == domain.TrafficModeActive {
+			if control, found, controlErr := s.app.Store.TrafficControl(ctx, row.ChannelID); controlErr == nil && found {
+				trafficOwnsClosedState := control.ActualStatus == 2 && control.DesiredStatus == 2
+				trafficRecovering := control.ActualStatus == 2 && (control.State == "recovering" || control.State == "hard_recovering")
+				if trafficOwnsClosedState || trafficRecovering {
+					return nil
+				}
+			}
+		}
+	}
 	if row.PendingAction == "" && (row.ActualStatus == 0 || row.ActualStatus == row.DesiredStatus) {
 		return nil
 	}

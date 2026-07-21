@@ -87,3 +87,22 @@ func (s *Server) schedulerAvailabilityAction(w http.ResponseWriter, r *http.Requ
 func (s *Server) reconcileSchedulerAvailability(w http.ResponseWriter, r *http.Request) {
 	writeNoContentOrError(w, s.App.ReconcileAvailability(r.Context()))
 }
+
+func (s *Server) schedulerTrafficStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := s.App.TrafficStatus(r.Context())
+	writeJSONOrError(w, status, err)
+}
+
+func (s *Server) schedulerTraffic(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.App.TrafficRows(r.Context())
+	writeJSONOrError(w, rows, err)
+}
+
+func (s *Server) reconcileSchedulerTraffic(w http.ResponseWriter, r *http.Request) {
+	writeNoContentOrError(w, s.App.ReconcileTraffic(r.Context()))
+}
+
+func (s *Server) adoptSchedulerTrafficBaseline(w http.ResponseWriter, r *http.Request) {
+	row, err := s.App.AdoptTrafficBaseline(r.Context(), r.PathValue("channel_id"))
+	writeJSONOrError(w, row, err)
+}

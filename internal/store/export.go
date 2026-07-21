@@ -33,6 +33,7 @@ var exportTables = []string{
 	"channel_availability",
 	"scheduler_channel_cost_snapshots",
 	"scheduler_group_sale_snapshots",
+	"scheduler_traffic_control",
 	"revenue_cards",
 	"tg_session",
 	"tg_channels",
@@ -99,6 +100,12 @@ func (s *Store) ImportData(ctx context.Context, in ExportData) error {
 	}()
 	for i := len(exportTables) - 1; i >= 0; i-- {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+quoteIdent(exportTables[i])); err != nil {
+			return err
+		}
+	}
+	// 遥测事件、汇总与游标属于可重建运行数据，不进入敏感备份；导入时必须清空。
+	for _, table := range []string{"scheduler_traffic_events", "scheduler_traffic_10s", "scheduler_traffic_1m", "scheduler_traffic_cursors"} {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+quoteIdent(table)); err != nil {
 			return err
 		}
 	}

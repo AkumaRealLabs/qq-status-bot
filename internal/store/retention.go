@@ -19,21 +19,27 @@ const (
 	SchedulerCostSnapshotRetention = 180 * 24 * time.Hour
 	SchedulerSaleSnapshotRetention = 180 * 24 * time.Hour
 	BalanceRechargeLogRetention    = 90 * 24 * time.Hour
+	SchedulerTrafficEventRetention = 24 * time.Hour
+	SchedulerTraffic10sRetention   = 24 * time.Hour
+	SchedulerTraffic1mRetention    = 30 * 24 * time.Hour
 )
 
 type RetentionStats struct {
-	ProbeRuns           int64 `json:"probe_runs"`
-	BalanceSnapshots    int64 `json:"balance_snapshots"`
-	AlertEvents         int64 `json:"alert_events"`
-	OpsEvents           int64 `json:"ops_events"`
-	AuditLogs           int64 `json:"audit_logs"`
-	RevenueSnapshots    int64 `json:"revenue_snapshots"`
-	CLIProxyQuota       int64 `json:"cliproxy_quota_snapshots"`
-	SchedulerLogs       int64 `json:"scheduler_logs"`
-	SchedulerCostSnaps  int64 `json:"scheduler_channel_cost_snapshots"`
-	SchedulerSaleSnaps  int64 `json:"scheduler_group_sale_snapshots"`
-	BalanceRechargeLogs int64 `json:"balance_recharge_logs"`
-	ExpiredSessions     int64 `json:"expired_sessions"`
+	ProbeRuns              int64 `json:"probe_runs"`
+	BalanceSnapshots       int64 `json:"balance_snapshots"`
+	AlertEvents            int64 `json:"alert_events"`
+	OpsEvents              int64 `json:"ops_events"`
+	AuditLogs              int64 `json:"audit_logs"`
+	RevenueSnapshots       int64 `json:"revenue_snapshots"`
+	CLIProxyQuota          int64 `json:"cliproxy_quota_snapshots"`
+	SchedulerLogs          int64 `json:"scheduler_logs"`
+	SchedulerCostSnaps     int64 `json:"scheduler_channel_cost_snapshots"`
+	SchedulerSaleSnaps     int64 `json:"scheduler_group_sale_snapshots"`
+	BalanceRechargeLogs    int64 `json:"balance_recharge_logs"`
+	SchedulerTrafficEvents int64 `json:"scheduler_traffic_events"`
+	SchedulerTraffic10s    int64 `json:"scheduler_traffic_10s"`
+	SchedulerTraffic1m     int64 `json:"scheduler_traffic_1m"`
+	ExpiredSessions        int64 `json:"expired_sessions"`
 }
 
 func (s *Store) CleanupExpiredData(ctx context.Context) (RetentionStats, error) {
@@ -57,6 +63,9 @@ func (s *Store) CleanupExpiredData(ctx context.Context) (RetentionStats, error) 
 		{`DELETE FROM scheduler_channel_cost_snapshots WHERE effective_at<?`, SchedulerCostSnapshotRetention, &stats.SchedulerCostSnaps},
 		{`DELETE FROM scheduler_group_sale_snapshots WHERE effective_at<?`, SchedulerSaleSnapshotRetention, &stats.SchedulerSaleSnaps},
 		{`DELETE FROM balance_recharge_logs WHERE created_at<?`, BalanceRechargeLogRetention, &stats.BalanceRechargeLogs},
+		{`DELETE FROM scheduler_traffic_events WHERE occurred_at<?`, SchedulerTrafficEventRetention, &stats.SchedulerTrafficEvents},
+		{`DELETE FROM scheduler_traffic_10s WHERE window_start<?`, SchedulerTraffic10sRetention, &stats.SchedulerTraffic10s},
+		{`DELETE FROM scheduler_traffic_1m WHERE window_start<?`, SchedulerTraffic1mRetention, &stats.SchedulerTraffic1m},
 	}
 	for _, j := range jobs {
 		cutoff := now.Add(-j.age).Format(time.RFC3339Nano)
@@ -78,5 +87,6 @@ func (s *Store) CleanupExpiredData(ctx context.Context) (RetentionStats, error) 
 func (stats RetentionStats) DeletedTotal() int64 {
 	return stats.ProbeRuns + stats.BalanceSnapshots + stats.AlertEvents + stats.OpsEvents +
 		stats.AuditLogs + stats.RevenueSnapshots + stats.CLIProxyQuota + stats.SchedulerLogs +
-		stats.SchedulerCostSnaps + stats.SchedulerSaleSnaps + stats.BalanceRechargeLogs + stats.ExpiredSessions
+		stats.SchedulerCostSnaps + stats.SchedulerSaleSnaps + stats.BalanceRechargeLogs + stats.ExpiredSessions +
+		stats.SchedulerTrafficEvents + stats.SchedulerTraffic10s + stats.SchedulerTraffic1m
 }

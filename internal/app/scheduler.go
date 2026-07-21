@@ -26,6 +26,9 @@ func (s *SchedulerService) SchedulerConfig(ctx context.Context) (domain.Schedule
 }
 
 func (s *SchedulerService) SaveSchedulerConfig(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerConfig, error) {
+	if err := domain.ValidateTrafficConfig(cfg.TrafficMode, cfg.TrafficProfile, cfg.TrafficPollSecs); err != nil {
+		return domain.SchedulerConfig{}, BadRequest(err)
+	}
 	old, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return domain.SchedulerConfig{}, err
@@ -294,6 +297,33 @@ func (s *SchedulerService) ApplySchedulerGroups(ctx context.Context) (domain.Sch
 			out.Skipped++
 			continue
 		}
+		basePriority := priority
+		if control, exists, controlErr := s.app.Store.TrafficControl(ctx, channelID); controlErr == nil && exists {
+			control.BasePriority = basePriority
+			control.UpdatedAt = time.Now().UTC()
+			if cfg.TrafficMode == domain.TrafficModeActive {
+				forceEnabled := false
+				if availability, found, _ := s.app.Store.ChannelAvailability(ctx, channelID); found && availability.Override == domain.OverrideForceEnable {
+					forceEnabled = availability.OverrideUntil == nil || time.Now().UTC().Before(*availability.OverrideUntil)
+				}
+				if !forceEnabled {
+					switch control.State {
+					case "warning":
+						priority -= 1000
+					case "degraded", "soft_blocked", "hard_blocked", "hard_recovering":
+						priority -= 2000
+					case "recovering":
+						if control.RecoveryStage >= 3 {
+							priority -= 1000
+						} else {
+							priority -= 2000
+						}
+					}
+				}
+			}
+			control.DesiredPriority = priority
+			_ = s.app.Store.SaveTrafficControl(ctx, control)
+		}
 		groups := domain.AssignedTargetGroups(tiers, managed, price, current.Group, unassigned)
 		if domain.SameGroups(domain.SplitGroups(current.Group), groups) && current.Priority == priority {
 			out.Unchanged++
@@ -416,6 +446,16 @@ func (s *SchedulerService) availabilityManagedSchedulerCard(ctx context.Context,
 }
 
 func (s *SchedulerService) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {
+	if success {
+		if cfg, cfgErr := s.app.Store.SchedulerConfig(ctx); cfgErr == nil && cfg.TrafficMode == domain.TrafficModeActive {
+			if control, found, controlErr := s.app.Store.TrafficControl(ctx, card.SchedulerChannelID); controlErr == nil && found && control.ActualStatus == 2 {
+				if control.State == "soft_blocked" || control.State == "hard_blocked" || control.State == "recovering" || control.State == "hard_recovering" {
+					// 真实流量控制尚未确认恢复，旧的探测自动恢复不能抢先打开渠道。
+					return nil
+				}
+			}
+		}
+	}
 	muteAt := s.app.probeMuteFailureThreshold(ctx)
 	if domain.ShouldAutoDisableScheduler(card.PoolEnabled, card.SchedulerChannelID, success, failures, muteAt, card.SchedulerAutoDisabled) {
 		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 2); err != nil {

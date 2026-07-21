@@ -214,6 +214,9 @@ type SchedulerConfig struct {
 	AccessTokenSet  bool            `json:"scheduler_access_token_set,omitempty"`
 	UnassignedGroup string          `json:"scheduler_unassigned_group"`
 	Tiers           []SchedulerTier `json:"scheduler_tiers"`
+	TrafficMode     string          `json:"scheduler_traffic_mode"`
+	TrafficProfile  string          `json:"scheduler_traffic_profile"`
+	TrafficPollSecs int             `json:"scheduler_log_poll_seconds"`
 }
 
 type SchedulerTier struct {

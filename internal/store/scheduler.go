@@ -14,9 +14,13 @@ import (
 func (s *Store) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, error) {
 	var cfg domain.SchedulerConfig
 	var tiers string
-	err := s.row(ctx, `SELECT scheduler_base_url, scheduler_user_id, scheduler_access_token, scheduler_unassigned_group, scheduler_tiers FROM settings WHERE id='default'`).
-		Scan(&cfg.BaseURL, &cfg.UserID, &cfg.AccessToken, &cfg.UnassignedGroup, &tiers)
+	err := s.row(ctx, `SELECT scheduler_base_url, scheduler_user_id, scheduler_access_token, scheduler_unassigned_group, scheduler_tiers,
+		scheduler_traffic_mode, scheduler_traffic_profile, scheduler_log_poll_seconds FROM settings WHERE id='default'`).
+		Scan(&cfg.BaseURL, &cfg.UserID, &cfg.AccessToken, &cfg.UnassignedGroup, &tiers, &cfg.TrafficMode, &cfg.TrafficProfile, &cfg.TrafficPollSecs)
 	cfg.Tiers = schedulerTiers(tiers)
+	cfg.TrafficMode = domain.NormalizeTrafficMode(cfg.TrafficMode)
+	cfg.TrafficProfile = domain.NormalizeTrafficProfile(cfg.TrafficProfile)
+	cfg.TrafficPollSecs = domain.NormalizeTrafficPollSeconds(cfg.TrafficPollSecs)
 	return cfg, err
 }
 
@@ -32,8 +36,9 @@ func (s *Store) UpdateSchedulerConfig(ctx context.Context, cfg domain.SchedulerC
 	if err != nil {
 		return cfg, err
 	}
-	_, err = s.exec(ctx, `UPDATE settings SET scheduler_base_url=?, scheduler_user_id=?, scheduler_access_token=?, scheduler_unassigned_group=?, scheduler_tiers=? WHERE id='default'`,
-		cfg.BaseURL, cfg.UserID, cfg.AccessToken, cfg.UnassignedGroup, string(b))
+	_, err = s.exec(ctx, `UPDATE settings SET scheduler_base_url=?, scheduler_user_id=?, scheduler_access_token=?, scheduler_unassigned_group=?, scheduler_tiers=?,
+		scheduler_traffic_mode=?, scheduler_traffic_profile=?, scheduler_log_poll_seconds=? WHERE id='default'`,
+		cfg.BaseURL, cfg.UserID, cfg.AccessToken, cfg.UnassignedGroup, string(b), cfg.TrafficMode, cfg.TrafficProfile, cfg.TrafficPollSecs)
 	return cfg, err
 }
 

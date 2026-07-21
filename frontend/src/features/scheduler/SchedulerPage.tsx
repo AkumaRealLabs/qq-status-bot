@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, CirclePause, CirclePlay, Loader2, Plus, Power, PowerOff, RefreshCcw, Settings2, ShieldAlert, ShieldCheck, SlidersHorizontal, Tags, Trash2 } from 'lucide-react'
+import { Activity, AlertTriangle, CirclePause, CirclePlay, Loader2, Plus, Power, PowerOff, RefreshCcw, Settings2, ShieldAlert, ShieldCheck, SlidersHorizontal, Tags, Trash2 } from 'lucide-react'
 import { ActionRow, EmptyPanel, Field, FeedbackBanner, FormError, Metric, SaveButton, StatusBadge } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
@@ -13,7 +13,7 @@ import { api } from '@/lib/api'
 import { fmtTime } from '@/lib/format'
 import { alertError, secretPlaceholder, useFeedback } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
-import type { AvailabilityPolicy, AvailabilityRow, ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig, SchedulerGroup, SchedulerLog, SchedulerTier, UpstreamRow } from '@/types'
+import type { AvailabilityPolicy, AvailabilityRow, ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig, SchedulerGroup, SchedulerLog, SchedulerTier, TrafficStatus, TrafficWindow, UpstreamRow } from '@/types'
 
 const none = '__none__'
 const defaultTiers: SchedulerTier[] = [
@@ -168,6 +168,7 @@ export function SchedulerPage() {
         />
       )}
       <AvailabilityControl />
+      <TrafficControl />
       <Section title="调度器分组">
         <FormError error={groups.error || channels.error} />
         {groups.isLoading && <EmptyPanel text="加载中..." />}
@@ -317,6 +318,118 @@ export function SchedulerPage() {
       </Section>
     </Page>
   )
+}
+
+function TrafficControl() {
+  const qc = useQueryClient()
+  const status = useQuery({
+    queryKey: ['scheduler', 'traffic', 'status'],
+    queryFn: () => api<TrafficStatus>('/api/scheduler/traffic/status'),
+    refetchInterval: 5000,
+  })
+  const reconcile = useMutation({
+    mutationFn: () => api('/api/scheduler/traffic/reconcile', { method: 'POST' }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['scheduler', 'traffic'] }) },
+    onError: alertError,
+  })
+  const baseline = useMutation({
+    mutationFn: (channelID: string) => api(`/api/scheduler/traffic/${channelID}/baseline`, { method: 'POST' }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['scheduler', 'traffic'] }) },
+    onError: alertError,
+  })
+  const data = status.data
+  const rows = data?.channels ?? []
+  const healthy = rows.filter((row) => row.state === 'healthy').length
+  const degraded = rows.filter((row) => ['warning', 'probe_required', 'degraded'].includes(row.state)).length
+  const blocked = rows.filter((row) => ['soft_blocked', 'hard_blocked', 'recovering', 'hard_recovering'].includes(row.state)).length
+  return (
+    <Section title="真实流量调度">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <Metric label="遥测" value={data?.connected ? '已连接' : data?.mode === 'off' ? '已关闭' : '异常'} accent={data?.connected ? 'success' : data?.mode === 'off' ? undefined : 'danger'} />
+        <Metric label="延迟" value={data ? `${data.lag_seconds}s` : '-'} accent={data && data.lag_seconds > 15 ? 'danger' : undefined} />
+        <Metric label="健康" value={healthy} accent="success" />
+        <Metric label="退化" value={degraded} accent={degraded > 0 ? 'danger' : undefined} />
+        <Metric label="熔断" value={blocked} accent={blocked > 0 ? 'danger' : undefined} />
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Activity className="size-4" />
+          <span>{trafficModeLabel(data?.mode)}</span>
+          {data?.frozen && <Badge variant="destructive">冻结 · {data.freeze_reason || '遥测过期'}</Badge>}
+          {!data?.frozen && data?.backlog_pages ? <Badge variant="outline">积压 {data.backlog_pages}</Badge> : null}
+        </div>
+        <Button variant="outline" size="icon" title="立即拉取并协调" onClick={() => reconcile.mutate()} disabled={reconcile.isPending || data?.mode === 'off'}>
+          <RefreshCcw className={cn('size-4', reconcile.isPending && 'animate-spin')} />
+          <span className="sr-only">立即拉取并协调</span>
+        </Button>
+      </div>
+      <FormError error={status.error} />
+      {status.isLoading && <EmptyPanel text="加载中..." />}
+      {!status.isLoading && rows.length === 0 && <EmptyPanel text="暂无真实流量遥测" />}
+      {!status.isLoading && rows.length > 0 && (
+        <div className="overflow-x-auto border border-border">
+          <table className="w-full min-w-[1180px] text-left text-sm">
+            <thead className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">渠道</th>
+                <th className="px-3 py-2 font-medium">状态</th>
+                <th className="px-3 py-2 font-medium">模型</th>
+                <th className="px-3 py-2 font-medium">15 秒</th>
+                <th className="px-3 py-2 font-medium">1 分钟</th>
+                <th className="px-3 py-2 font-medium">5 分钟</th>
+                <th className="px-3 py-2 font-medium">优先级</th>
+                <th className="px-3 py-2 font-medium">权重</th>
+                <th className="px-3 py-2 font-medium">原因</th>
+                <th className="px-3 py-2 text-right font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map((row) => (
+                <tr key={row.channel_id}>
+                  <td className="px-3 py-2"><div className="font-medium">{row.channel_name || row.channel_id}</div><div className="text-xs text-muted-foreground">健康 {Math.round(row.health_score)} · 基准 {row.healthy_baseline_ttft_ms || '-'}ms</div></td>
+                  <td className="px-3 py-2"><Badge variant={trafficStateVariant(row.state)}>{trafficStateLabel(row.state)}</Badge></td>
+                  <td className="px-3 py-2">{row.model || '-'}</td>
+                  <td className="px-3 py-2">{trafficWindowLabel(row.window_15s)}</td>
+                  <td className="px-3 py-2">{trafficWindowLabel(row.window_1m)}</td>
+                  <td className="px-3 py-2">{trafficWindowLabel(row.window_5m)}</td>
+                  <td className="px-3 py-2">{row.base_priority} → {row.actual_priority}</td>
+                  <td className="px-3 py-2">{row.base_weight} → {row.actual_weight}</td>
+                  <td className="max-w-64 px-3 py-2 text-xs text-muted-foreground"><span className="block truncate" title={row.reason}>{row.reason || '-'}</span></td>
+                  <td className="px-3 py-2 text-right">
+                    {row.managed ? (
+                      <Button variant="ghost" size="sm" onClick={() => baseline.mutate(row.channel_id)} disabled={baseline.isPending}>采纳基准</Button>
+                    ) : <span className="text-xs text-muted-foreground">仅展示</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Section>
+  )
+}
+
+function trafficModeLabel(mode?: TrafficStatus['mode']) {
+  if (mode === 'active') return '主动控制'
+  if (mode === 'observe') return '仅观察'
+  return '已关闭'
+}
+
+function trafficStateLabel(state: string) {
+  return ({ healthy: '健康', warning: '降权', probe_required: '待探测', degraded: '严重降权', soft_blocked: '软熔断', hard_blocked: '硬关闭', recovering: '阶梯恢复', hard_recovering: '恢复确认', unmanaged: '未绑定' } as Record<string, string>)[state] ?? state
+}
+
+function trafficStateVariant(state: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (['soft_blocked', 'hard_blocked'].includes(state)) return 'destructive'
+  if (['warning', 'degraded', 'probe_required', 'recovering', 'hard_recovering'].includes(state)) return 'secondary'
+  if (state === 'unmanaged') return 'outline'
+  return 'default'
+}
+
+function trafficWindowLabel(window?: TrafficWindow) {
+  if (!window || window.requests === 0) return '-'
+  return `${window.requests} 次 · ${Math.round(window.failure_rate * 100)}% · P95 ${window.p95_ttft_ms || 0}ms`
 }
 
 function AvailabilityControl() {
@@ -585,6 +698,19 @@ function SchedulerConfigDialog({
                 ))}
               </SelectContent>
             </Select>
+          </Field>
+          <Field label="真实流量模式">
+            <Select value={form.scheduler_traffic_mode || 'off'} onValueChange={(value) => onChange({ scheduler_traffic_mode: value as SchedulerConfig['scheduler_traffic_mode'] })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">关闭</SelectItem>
+                <SelectItem value="observe">仅观察</SelectItem>
+                <SelectItem value="active">主动控制</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="日志轮询（秒）">
+            <Input type="number" min="1" max="60" value={form.scheduler_log_poll_seconds || 5} onChange={(e) => onChange({ scheduler_log_poll_seconds: Number(e.target.value || 5), scheduler_traffic_profile: 'balanced' })} />
           </Field>
         </div>
         <p className="text-xs text-muted-foreground">

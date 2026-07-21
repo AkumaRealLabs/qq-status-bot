@@ -302,6 +302,9 @@ export type SchedulerConfig = {
   /** 价格未命中托管档位时落到该 new-api 分组（不可空串） */
   scheduler_unassigned_group: string
   scheduler_tiers: SchedulerTier[]
+  scheduler_traffic_mode: 'off' | 'observe' | 'active'
+  scheduler_traffic_profile: 'balanced'
+  scheduler_log_poll_seconds: number
 }
 
 export type SchedulerTier = {
@@ -336,11 +339,63 @@ export type SchedulerLog = {
   card_name: string
   channel_id: string
   channel_name: string
-  action: 'disable' | 'restore' | 'group_sync'
+  action: 'disable' | 'restore' | 'group_sync' | 'traffic_control'
   status: 'success' | 'error' | 'skipped'
   message: string
 	reason?: string
   created_at: string
+}
+
+export type TrafficWindow = {
+  channel_id: string
+  channel_name?: string
+  model: string
+  group?: string
+  window_start: string
+  window_end: string
+  requests: number
+  successes: number
+  soft_failures: number
+  hard_failures: number
+  auth_failures: number
+  user_errors: number
+  p95_ttft_ms: number
+  avg_ttft_ms: number
+  failure_rate: number
+}
+
+export type TrafficChannelState = {
+  channel_id: string
+  channel_name?: string
+  managed: boolean
+  state: string
+  reason?: string
+  desired_status: number
+  actual_status: number
+  base_priority: number
+  actual_priority: number
+  base_weight: number
+  actual_weight: number
+  health_score: number
+  healthy_baseline_ttft_ms?: number
+  model?: string
+  window_15s?: TrafficWindow
+  window_1m?: TrafficWindow
+  window_5m?: TrafficWindow
+  updated_at?: string
+}
+
+export type TrafficStatus = {
+  mode: 'off' | 'observe' | 'active'
+  profile: 'balanced'
+  connected: boolean
+  last_poll_at?: string
+  last_event_at?: string
+  lag_seconds: number
+  backlog_pages: number
+  frozen: boolean
+  freeze_reason?: string
+  channels: TrafficChannelState[]
 }
 
 export type AvailabilityPolicy = {

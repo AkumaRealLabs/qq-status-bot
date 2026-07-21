@@ -61,6 +61,22 @@ func (s *Service) ReconcileAvailability(ctx context.Context) error {
 	return s.Scheduler.ReconcileAvailability(ctx)
 }
 
+func (s *Service) ReconcileTraffic(ctx context.Context) error {
+	return s.Scheduler.ReconcileTraffic(ctx)
+}
+
+func (s *Service) TrafficStatus(ctx context.Context) (domain.TrafficStatus, error) {
+	return s.Scheduler.TrafficStatus(ctx)
+}
+
+func (s *Service) TrafficRows(ctx context.Context) ([]domain.TrafficChannelState, error) {
+	return s.Scheduler.TrafficRows(ctx)
+}
+
+func (s *Service) AdoptTrafficBaseline(ctx context.Context, channelID string) (domain.TrafficControlState, error) {
+	return s.Scheduler.AdoptTrafficBaseline(ctx, channelID)
+}
+
 func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitResponse, error) {
 	return s.ProfitSvc.Profit(ctx, window)
 }

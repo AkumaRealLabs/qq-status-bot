@@ -11,6 +11,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/monitor"
 	"ai-upstream-monitor/internal/onebot"
 	"ai-upstream-monitor/internal/store"
@@ -34,6 +35,7 @@ const (
 	schedulerRevenueInterval   = 15 * time.Minute
 	schedulerRechargeInterval  = 15 * time.Minute
 	schedulerCLIProxyInterval  = 30 * time.Minute
+	schedulerTrafficTimeout    = 90 * time.Second
 )
 
 type Service struct {
@@ -132,6 +134,7 @@ func (s *Service) StartScheduler(ctx context.Context) {
 		state.lastRetention = time.Now()
 	}
 	t := time.NewTicker(schedulerTickInterval)
+	s.startTrafficScheduler(ctx)
 	go func() {
 		defer t.Stop()
 		for {
@@ -141,6 +144,29 @@ func (s *Service) StartScheduler(ctx context.Context) {
 			case <-t.C:
 				s.runSchedulerTick(ctx, time.Now(), &state)
 			}
+		}
+	}()
+}
+
+func (s *Service) startTrafficScheduler(ctx context.Context) {
+	go func() {
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			interval := 5 * time.Second
+			cfg, err := s.Store.SchedulerConfig(ctx)
+			if err == nil {
+				interval = time.Duration(domain.NormalizeTrafficPollSeconds(cfg.TrafficPollSecs)) * time.Second
+				if cfg.TrafficMode != domain.TrafficModeOff {
+					runSchedulerTask(ctx, "traffic reconcile", schedulerTrafficTimeout, s.ReconcileTraffic)
+				}
+			}
+			timer.Reset(interval)
 		}
 	}()
 }
