@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/monitor"
@@ -17,6 +18,7 @@ import (
 func TestAvailabilityBalanceObserveThenActiveCascadesSub2APIBoundChannels(t *testing.T) {
 	status := map[string]int{"9": 1, "10": 1}
 	var actions []int
+	cacheClears := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/channel/":
@@ -36,6 +38,12 @@ func TestAvailabilityBalanceObserveThenActiveCascadesSub2APIBoundChannels(t *tes
 			status[id] = body.Status
 			actions = append(actions, body.Status)
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": false})
+		case "/api/option/channel_affinity_cache":
+			if r.Method != http.MethodDelete || r.URL.Query().Get("all") != "true" {
+				t.Fatalf("cache request = %s %s", r.Method, r.URL.String())
+			}
+			cacheClears++
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 		default:
 			http.NotFound(w, r)
 		}
@@ -97,8 +105,89 @@ func TestAvailabilityBalanceObserveThenActiveCascadesSub2APIBoundChannels(t *tes
 		t.Fatal(err)
 	}
 	sort.Ints(actions)
-	if len(actions) != 2 || actions[0] != 2 || actions[1] != 2 || status["9"] != 2 || status["10"] != 2 {
-		t.Fatalf("active actions=%v status=%v", actions, status)
+	if len(actions) != 2 || actions[0] != 2 || actions[1] != 2 || cacheClears != 2 || status["9"] != 2 || status["10"] != 2 {
+		t.Fatalf("active actions=%v cache_clears=%d status=%v", actions, cacheClears, status)
+	}
+}
+
+func TestAvailabilityCacheClearFailureKeepsPendingAndRetries(t *testing.T) {
+	remoteStatus := 1
+	statusWrites, cacheClears := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/channel/" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "name": "渠道9", "status": remoteStatus}}}})
+		case r.URL.Path == "/api/channel/9/status" && r.Method == http.MethodPost:
+			statusWrites++
+			remoteStatus = 2
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case r.URL.Path == "/api/option/channel_affinity_cache" && r.Method == http.MethodDelete:
+			cacheClears++
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": cacheClears > 1, "message": "cache unavailable"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "availability.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	upstream, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "上游", Type: "newapi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", UpstreamID: upstream.ID, PoolEnabled: true, SchedulerChannelID: "9", SchedulerChannelName: "渠道9", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: server.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: server.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveBalance(t.Context(), upstream.ID, monitor.Balance{Remain: 5}, "", 1); err != nil {
+		t.Fatal(err)
+	}
+	policy := domain.AvailabilityPolicy{BalanceGuardMode: domain.BalanceGuardActive, LowBalanceThreshold: 30, BalanceCloseThreshold: 10, BalanceRecoverThreshold: 20, RunwayWarningHours: 24}
+	if _, err := st.UpdateAvailabilityPolicy(t.Context(), upstream.ID, policy); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.ReconcileAvailability(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := st.ChannelAvailability(t.Context(), "9")
+	if err != nil || !found {
+		t.Fatalf("pending row found=%v err=%v", found, err)
+	}
+	if remoteStatus != 2 || row.PendingAction != domain.AvailabilityActionDisable || row.PendingStatus != 2 || row.RetryCount != 1 || row.LastError == "" || row.ActualStatus == 2 {
+		t.Fatalf("after cache failure row=%+v remote=%d", row, remoteStatus)
+	}
+	past := time.Now().UTC().Add(-time.Second)
+	row.RetryAt = &past
+	if ok, err := st.SaveChannelAvailabilityCAS(t.Context(), row, row.Version); err != nil || !ok {
+		t.Fatalf("make retry due ok=%v err=%v", ok, err)
+	}
+
+	if err := svc.ReconcileAvailability(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	row, _, err = st.ChannelAvailability(t.Context(), "9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statusWrites != 2 || cacheClears != 2 || row.PendingAction != "" || row.PendingStatus != 0 || row.RetryCount != 0 || row.LastError != "" || row.ActualStatus != 2 {
+		t.Fatalf("after retry writes=%d clears=%d row=%+v", statusWrites, cacheClears, row)
+	}
+	updated, err := st.Card(t.Context(), card.ID)
+	if err != nil || !updated.SchedulerAutoDisabled {
+		t.Fatalf("card=%+v err=%v", updated, err)
 	}
 }
 

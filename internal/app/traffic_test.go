@@ -22,6 +22,7 @@ func TestTrafficActiveSoftCircuitWritesAndVerifiesRemote(t *testing.T) {
 		Weight   uint
 	}
 	channels := map[string]*remoteChannel{"9": {Status: 1, Priority: 100, Weight: 100}, "10": {Status: 1, Priority: 99, Weight: 100}}
+	cacheClears := 0
 	now := time.Now().UTC()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -62,6 +63,12 @@ func TestTrafficActiveSoftCircuitWritesAndVerifiesRemote(t *testing.T) {
 			_ = json.Unmarshal(body, &status)
 			channels["9"].Status = status.Status
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case r.URL.Path == "/api/option/channel_affinity_cache" && r.Method == http.MethodDelete:
+			if r.URL.Query().Get("all") != "true" {
+				t.Fatalf("cache query = %q", r.URL.RawQuery)
+			}
+			cacheClears++
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 		default:
 			http.NotFound(w, r)
 		}
@@ -89,8 +96,8 @@ func TestTrafficActiveSoftCircuitWritesAndVerifiesRemote(t *testing.T) {
 	if err := svc.ReconcileTraffic(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if got := channels["9"]; got.Status != 2 || got.Priority != -1900 || got.Weight != 0 {
-		t.Fatalf("remote=%+v", got)
+	if got := channels["9"]; got.Status != 2 || got.Priority != -1900 || got.Weight != 0 || cacheClears != 1 {
+		t.Fatalf("remote=%+v cache_clears=%d", got, cacheClears)
 	}
 	control, found, err := st.TrafficControl(t.Context(), "9")
 	if err != nil || !found {

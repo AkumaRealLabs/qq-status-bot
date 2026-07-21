@@ -697,7 +697,10 @@ func (s *SchedulerService) applyTrafficControl(ctx context.Context, cfg domain.S
 		if err := s.app.Store.SaveTrafficControl(ctx, control); err != nil {
 			return err
 		}
-		if current.Status == status && current.Priority == priority && current.Weight == weight {
+		// 关闭请求可能已写入远端，但亲和性缓存清理失败；到达重试时间后
+		// 即使远端字段已经吻合，也要重放关闭动作完成清理。
+		retryClosedWrite := status == 2 && control.RetryCount > 0
+		if current.Status == status && current.Priority == priority && current.Weight == weight && !retryClosedWrite {
 			if stateChanged {
 				s.recordTrafficTransition(ctx, current, view)
 			}
@@ -784,7 +787,7 @@ func healthyTrafficAlternativeForView(views []domain.TrafficChannelState, curren
 }
 
 func (s *SchedulerService) writeTrafficChannel(ctx context.Context, cfg domain.SchedulerConfig, current domain.SchedulerChannel, status int, priority int64, weight uint) error {
-	if current.Status != status {
+	if current.Status != status || status == 2 {
 		if err := s.setSchedulerChannelStatus(ctx, current.ID, status); err != nil {
 			return err
 		}

@@ -1249,16 +1249,25 @@ func TestSchedulerProfitLogsUsesNewAPICappedPageSize(t *testing.T) {
 
 func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	var statuses []int
+	cacheClears := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/channel/9/status" {
-			t.Fatalf("path = %q", r.URL.Path)
+		switch {
+		case r.URL.Path == "/api/channel/9/status" && r.Method == http.MethodPost:
+			var body map[string]int
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			statuses = append(statuses, body["status"])
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case r.URL.Path == "/api/option/channel_affinity_cache" && r.Method == http.MethodDelete:
+			if r.URL.Query().Get("all") != "true" {
+				t.Fatalf("cache query = %q", r.URL.RawQuery)
+			}
+			cacheClears++
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		default:
+			http.NotFound(w, r)
 		}
-		var body map[string]int
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		statuses = append(statuses, body["status"])
-		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 	}))
 	defer ts.Close()
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
@@ -1300,8 +1309,8 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	card, _ = st.Card(t.Context(), card.ID)
-	if len(statuses) != 1 || statuses[0] != 2 || !card.SchedulerAutoDisabled {
-		t.Fatalf("disable statuses=%v card=%+v", statuses, card)
+	if len(statuses) != 1 || statuses[0] != 2 || cacheClears != 1 || !card.SchedulerAutoDisabled {
+		t.Fatalf("disable statuses=%v cache_clears=%d card=%+v", statuses, cacheClears, card)
 	}
 	if err := svc.applySchedulerAutomation(t.Context(), card, false, 5); err != nil {
 		t.Fatal(err)
@@ -1343,8 +1352,8 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	card, _ = st.Card(t.Context(), card.ID)
-	if len(statuses) != 2 || statuses[1] != 1 || card.SchedulerAutoDisabled {
-		t.Fatalf("restore statuses=%v card=%+v", statuses, card)
+	if len(statuses) != 2 || statuses[1] != 1 || cacheClears != 1 || card.SchedulerAutoDisabled {
+		t.Fatalf("restore statuses=%v cache_clears=%d card=%+v", statuses, cacheClears, card)
 	}
 	out, err = svc.MonitorStatus(t.Context(), "1h")
 	if err != nil {
@@ -1364,16 +1373,29 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 
 func TestSetCardSchedulerChannelStatus(t *testing.T) {
 	var statuses []int
+	var requests []string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/channel/9/status" {
-			t.Fatalf("path = %q", r.URL.Path)
+		if r.Header.Get("Authorization") != "token" || r.Header.Get("New-Api-User") != "42" {
+			t.Fatalf("scheduler auth headers missing: %+v", r.Header)
 		}
-		var body map[string]int
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
+		switch {
+		case r.URL.Path == "/api/channel/9/status" && r.Method == http.MethodPost:
+			requests = append(requests, "POST "+r.URL.Path)
+			var body map[string]int
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			statuses = append(statuses, body["status"])
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case r.URL.Path == "/api/option/channel_affinity_cache" && r.Method == http.MethodDelete:
+			if r.URL.Query().Get("all") != "true" {
+				t.Fatalf("cache query = %q", r.URL.RawQuery)
+			}
+			requests = append(requests, "DELETE "+r.URL.RequestURI())
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		default:
+			http.NotFound(w, r)
 		}
-		statuses = append(statuses, body["status"])
-		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 	}))
 	defer ts.Close()
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
@@ -1397,8 +1419,8 @@ func TestSetCardSchedulerChannelStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	card, _ = st.Card(t.Context(), card.ID)
-	if len(statuses) != 1 || statuses[0] != 1 || card.SchedulerAutoDisabled {
-		t.Fatalf("enable statuses=%v card=%+v", statuses, card)
+	if len(statuses) != 1 || statuses[0] != 1 || len(requests) != 1 || requests[0] != "POST /api/channel/9/status" || card.SchedulerAutoDisabled {
+		t.Fatalf("enable statuses=%v requests=%v card=%+v", statuses, requests, card)
 	}
 	if _, err := svc.SetCardSchedulerChannelStatus(t.Context(), card.ID, 2); err != nil {
 		t.Fatal(err)
@@ -1407,8 +1429,99 @@ func TestSetCardSchedulerChannelStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(statuses) != 2 || statuses[1] != 2 || len(logs) != 2 || logs[0].Message != "手动关闭调度器渠道" {
-		t.Fatalf("statuses=%v logs=%+v", statuses, logs)
+	if len(statuses) != 2 || statuses[1] != 2 || len(requests) != 3 || requests[1] != "POST /api/channel/9/status" || requests[2] != "DELETE /api/option/channel_affinity_cache?all=true" || len(logs) != 2 || logs[0].Message != "手动关闭调度器渠道" {
+		t.Fatalf("statuses=%v requests=%v logs=%+v", statuses, requests, logs)
+	}
+}
+
+func TestSetCardSchedulerChannelStatusDoesNotClearCacheWhenStatusWriteFails(t *testing.T) {
+	statusWrites, cacheClears := 0, 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/channel/9/status":
+			statusWrites++
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "message": "blocked"})
+		case "/api/option/channel_affinity_cache":
+			cacheClears++
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.SetCardSchedulerChannelStatus(t.Context(), card.ID, 2); err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Fatalf("close error = %v", err)
+	}
+	if statusWrites != 1 || cacheClears != 0 {
+		t.Fatalf("status_writes=%d cache_clears=%d", statusWrites, cacheClears)
+	}
+}
+
+func TestSetCardSchedulerChannelStatusReportsCacheClearFailureAfterClose(t *testing.T) {
+	remoteStatus, cacheClears := 1, 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/channel/9/status":
+			remoteStatus = 2
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case "/api/option/channel_affinity_cache":
+			cacheClears++
+			http.Error(w, "cache unavailable", http.StatusServiceUnavailable)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: ts.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.SetCardSchedulerChannelStatus(t.Context(), card.ID, 2); err == nil || !strings.Contains(err.Error(), "渠道已关闭，但清空亲和性缓存失败") {
+		t.Fatalf("close error = %v", err)
+	}
+	if remoteStatus != 2 || cacheClears != 1 {
+		t.Fatalf("remote_status=%d cache_clears=%d", remoteStatus, cacheClears)
+	}
+	logs, err := svc.SchedulerLogs(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].Status != "error" || !strings.Contains(logs[0].Message, "清空亲和性缓存失败") {
+		t.Fatalf("logs=%+v", logs)
 	}
 }
 

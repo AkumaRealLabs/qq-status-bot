@@ -589,6 +589,22 @@ func (s *SchedulerService) setSchedulerChannelStatus(ctx context.Context, channe
 	if ok, exists := raw["success"].(bool); exists && !ok {
 		return errors.New(schedulerMessage(raw))
 	}
+	if status == 2 {
+		if err := s.clearSchedulerChannelAffinityCache(ctx, cfg); err != nil {
+			return fmt.Errorf("渠道已关闭，但清空亲和性缓存失败：%w", err)
+		}
+	}
+	return nil
+}
+
+func (s *SchedulerService) clearSchedulerChannelAffinityCache(ctx context.Context, cfg domain.SchedulerConfig) error {
+	var raw map[string]any
+	if err := s.schedulerJSON(ctx, cfg, http.MethodDelete, "/api/option/channel_affinity_cache?all=true", nil, &raw); err != nil {
+		return err
+	}
+	if ok, exists := raw["success"].(bool); !exists || !ok {
+		return errors.New(schedulerMessage(raw))
+	}
 	return nil
 }
 

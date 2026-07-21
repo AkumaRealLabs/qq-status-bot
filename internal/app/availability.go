@@ -309,7 +309,9 @@ func (s *SchedulerService) executeAvailabilityAction(ctx context.Context, row do
 	if err == nil && !found {
 		return s.finishAvailabilityMissing(ctx, row)
 	}
-	if err == nil && channel.Status == row.PendingStatus {
+	// 关闭写入可能已生效、但亲和性缓存清理失败。此时 pending intent
+	// 必须重放完整关闭动作，不能仅凭远端状态为 2 就确认完成。
+	if err == nil && channel.Status == row.PendingStatus && row.PendingStatus != 2 {
 		return s.finishAvailabilityAction(ctx, row, channel.Status)
 	}
 	if err == nil {
