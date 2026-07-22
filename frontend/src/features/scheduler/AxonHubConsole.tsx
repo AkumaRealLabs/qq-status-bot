@@ -14,6 +14,10 @@ import { cn } from '@/lib/utils'
 import type { AxonHubConfig, AxonHubControlPlane, AxonHubPreflight, ModelCard, SchedulerChannel, SchedulerLog } from '@/types'
 
 const none = '__none__'
+const axonHubTiers = [
+  { tag: 'payg_low', label: '低价池', min: 0, max: 0.099, sale: 0.10 },
+  { tag: 'payg_stable', label: '稳定池', min: 0.10, max: 0.20, sale: 0.25 },
+] as const
 
 export function AxonHubConsole() {
   const qc = useQueryClient()
@@ -23,7 +27,12 @@ export function AxonHubConsole() {
   const config = useQuery({ queryKey: ['scheduler', 'axonhub', 'config'], queryFn: () => api<AxonHubConfig>('/api/scheduler/axonhub/config') })
   const cards = useQuery({ queryKey: ['cards'], queryFn: () => api<ModelCard[]>('/api/cards') })
   const configured = Boolean(config.data?.base_url && config.data?.admin_email && config.data.admin_password_set)
-  const channels = useQuery({ queryKey: ['scheduler', 'channels'], queryFn: () => api<SchedulerChannel[]>('/api/scheduler/channels'), enabled: configured })
+  const channels = useQuery({
+    queryKey: ['scheduler', 'channels'],
+    queryFn: () => api<SchedulerChannel[]>('/api/scheduler/channels'),
+    enabled: configured,
+    refetchInterval: 10000,
+  })
   const control = useQuery({
     queryKey: ['scheduler', 'axonhub', 'control-plane'],
     queryFn: () => api<AxonHubControlPlane>('/api/scheduler/control-plane'),
@@ -113,15 +122,17 @@ export function AxonHubConsole() {
           <Metric label="外部接管" value={external} accent={external ? 'danger' : undefined} />
           <Metric label="远端关闭" value={disabled} accent={disabled ? 'danger' : undefined} />
         </div>
+        <AxonHubTierPanel rows={rows} />
         <FormError error={channels.error || control.error} />
         <section className="grid min-w-0 gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-base font-semibold">卡片绑定</h3><Button variant="outline" size="sm" onClick={() => adoptBound.mutate()} disabled={adoptBound.isPending}>{adoptBound.isPending ? <Loader2 className="size-4 animate-spin" /> : <ShieldAlert className="size-4" />}接管已绑定渠道</Button></div>
-          {poolCards.length === 0 ? <EmptyPanel text="暂无号池卡片" /> : <DataTable minWidthClass="min-w-[860px]" head={<tr><Header>卡片</Header><Header>GPT 模型</Header><Header>成本</Header><Header>AxonHub 渠道</Header><Header>状态</Header></tr>}>
+          {poolCards.length === 0 ? <EmptyPanel text="暂无号池卡片" /> : <DataTable minWidthClass="min-w-[960px]" head={<tr><Header>卡片</Header><Header>GPT 模型</Header><Header>成本</Header><Header>档位</Header><Header>AxonHub 渠道</Header><Header>状态</Header></tr>}>
             {poolCards.map((card) => {
               const options = axonHubOptions(channels.data ?? [], card, poolCards)
               const current = options.find((item) => item.id === card.axonhub_channel_id)
               const state = rows.find((item) => item.card_id === card.id)
-              return <tr key={card.id} className="border-t border-border"><Cell><div className="font-medium">{card.name}</div></Cell><Cell>{card.model}</Cell><Cell>{card.effective_ratio || card.manual_cost_ratio || '-'}</Cell><Cell><Select value={card.axonhub_channel_id || none} onValueChange={(value) => bind.mutate({ card, channel: value === none ? undefined : options.find((item) => item.id === value) })}><SelectTrigger className="min-w-64"><SelectValue placeholder="选择渠道" /></SelectTrigger><SelectContent><SelectItem value={none}>不绑定</SelectItem>{options.map((item) => <SelectItem key={item.id} value={item.id}>{item.name || item.id}</SelectItem>)}</SelectContent></Select></Cell><Cell>{current ? <Badge variant={current.remote_status === 'enabled' ? 'success' : 'secondary'}>{channelStatus(current.remote_status)}</Badge> : state?.external_takeover ? <Badge variant="destructive">外部接管</Badge> : '-'}</Cell></tr>
+              const tier = tierForCost(cardCost(card))
+              return <tr key={card.id} className="border-t border-border"><Cell><div className="font-medium">{card.name}</div></Cell><Cell>{card.model}</Cell><Cell>{card.effective_ratio || card.manual_cost_ratio || '-'}</Cell><Cell>{tier ? <Badge variant="outline">{tier.tag}</Badge> : <span className="text-muted-foreground">未命中</span>}</Cell><Cell><Select value={card.axonhub_channel_id || none} onValueChange={(value) => bind.mutate({ card, channel: value === none ? undefined : options.find((item) => item.id === value) })}><SelectTrigger className="min-w-64"><SelectValue placeholder="选择渠道" /></SelectTrigger><SelectContent><SelectItem value={none}>不绑定（AUM 不管理）</SelectItem>{options.map((item) => <SelectItem key={item.id} value={item.id} title={channelOptionText(item)}>{channelOptionText(item)}</SelectItem>)}</SelectContent></Select>{current && <div className="mt-1 max-w-80 truncate text-xs text-muted-foreground" title={tagText(current.tags)}>远端标签：{tagText(current.tags)}</div>}</Cell><Cell>{current ? <Badge variant={current.remote_status === 'enabled' ? 'success' : 'secondary'}>{channelStatus(current.remote_status)}</Badge> : state?.external_takeover ? <Badge variant="destructive">外部接管</Badge> : <Badge variant="outline">AUM 不管理</Badge>}</Cell></tr>
             })}
           </DataTable>}
         </section>
@@ -153,6 +164,14 @@ function AxonHubLogs({ rows }: { rows: SchedulerLog[] }) {
   return <section className="grid min-w-0 gap-3"><h3 className="text-base font-semibold">操作历史</h3>{rows.length === 0 ? <EmptyPanel text="暂无操作记录" /> : <div className="grid gap-2">{rows.map((row) => <div key={row.id} className="grid min-w-0 gap-1 border border-border px-3 py-2 text-sm md:grid-cols-[150px_1fr_auto]"><span className="text-xs text-muted-foreground">{fmtTime(row.created_at)}</span><div className="min-w-0"><div className="font-medium">{row.channel_name || row.channel_id}</div><div className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{row.message}</div></div><Badge variant={row.status === 'success' ? 'success' : row.status === 'error' ? 'destructive' : 'secondary'}>{row.status}</Badge></div>)}</div>}</section>
 }
 
+function AxonHubTierPanel({ rows }: { rows: AxonHubControlPlane['channels'] }) {
+  return <section className="grid min-w-0 gap-3"><div className="flex flex-wrap items-baseline justify-between gap-2"><h3 className="text-base font-semibold">成本档位</h3><span className="text-xs text-muted-foreground">AxonHub 模式固定规则，只读展示</span></div><div className="grid gap-3 md:grid-cols-2">{axonHubTiers.map((tier) => { const count = rows.filter((row) => row.desired_tag === tier.tag).length; return <div key={tier.tag} className="grid min-w-0 gap-3 rounded-md border border-border bg-background p-3"><div className="flex items-center justify-between gap-2"><div className="font-medium">{tier.label}</div><Badge variant="outline">{tier.tag}</Badge></div><div className="grid grid-cols-2 gap-2 text-sm"><TierValue label="上游成本下限" value={tier.min} /><TierValue label="上游成本上限" value={tier.max} /><TierValue label="对外售价（元/刀）" value={tier.sale} /><TierValue label="当前绑定" value={`${count} 个`} /></div></div> })}</div><p className="text-xs text-muted-foreground">每个档位内按成本排序生成 orderingWeight：最低成本 100，每增加一个不同成本档降低 10，最低 10；AxonHub 的健康、延迟、负载和限流评分仍优先。</p></section>
+}
+
+function TierValue({ label, value }: { label: string; value: number | string }) {
+  return <div className="min-w-0 rounded-md border border-border bg-background px-3 py-2"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1 font-medium">{value}</div></div>
+}
+
 function axonHubOptions(channels: SchedulerChannel[], card: ModelCard, cards: ModelCard[]) {
   const used = new Set(cards.filter((item) => item.id !== card.id).map((item) => item.axonhub_channel_id).filter(Boolean))
   const available = channels.filter((channel) => !channel.archived && supportsCardModel(channel, card) && !used.has(channel.id))
@@ -163,6 +182,21 @@ function axonHubOptions(channels: SchedulerChannel[], card: ModelCard, cards: Mo
 function supportsCardModel(channel: SchedulerChannel, card: ModelCard) {
   const model = card.model.trim().toLowerCase()
   return model.startsWith('gpt-') && (channel.models ?? []).some((item) => item.trim().toLowerCase() === model)
+}
+
+function cardCost(card: ModelCard) {
+  const value = Number(card.effective_ratio || card.manual_cost_ratio)
+  return Number.isFinite(value) ? value : undefined
+}
+
+function tierForCost(cost?: number) {
+  if (cost === undefined) return undefined
+  return axonHubTiers.find((tier) => cost >= tier.min && cost <= tier.max)
+}
+
+function channelOptionText(channel: SchedulerChannel) {
+  const name = channel.name || channel.id
+  return `${name} · 标签：${tagText(channel.tags)}`
 }
 
 function tagText(tags?: string[]) { return (tags ?? []).join(', ') || '-' }
