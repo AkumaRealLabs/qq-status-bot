@@ -471,6 +471,9 @@ func (s *SchedulerService) trafficChannelView(ctx context.Context, channel domai
 	}
 	models := map[string]bool{}
 	for _, event := range own {
+		if event.SessionScoped {
+			continue
+		}
 		models[domain.NormalizeProbeModel(event.Model)] = true
 	}
 	worstRank := -1

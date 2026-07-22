@@ -342,3 +342,23 @@ func TestTrafficChannelViewDoesNotReuseAvailabilityCloseState(t *testing.T) {
 		t.Fatalf("view=%+v", view)
 	}
 }
+
+func TestTrafficChannelViewDoesNotCreateQualityWindowFromSessionFailures(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "traffic-session.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	events := []domain.TrafficEvent{{
+		ChannelID: "9", Model: "gpt-test", Kind: domain.TrafficEventSoftFailure,
+		SessionScoped: true, OccurredAt: now.Add(-10 * time.Second),
+	}}
+	view := New(st).Scheduler.trafficChannelView(t.Context(), domain.SchedulerChannel{ID: "9", Name: "渠道9", Status: 1}, events, events, true, now)
+	if view.Window15s != nil || view.Window1m != nil || view.Window5m != nil {
+		t.Fatalf("session-only quality windows=%+v %+v %+v", view.Window15s, view.Window1m, view.Window5m)
+	}
+}
