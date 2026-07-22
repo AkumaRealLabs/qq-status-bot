@@ -20,6 +20,7 @@ const (
 	TrafficEventSoftFailure = "soft_failure"
 	TrafficEventHardFailure = "hard_failure"
 	TrafficEventUserError   = "user_error"
+	TrafficStateExternalOff = "external_disabled"
 )
 
 // TrafficEvent 是脱敏后的单次请求尝试。禁止把原始错误、请求体、token、IP 或用户名写入这里。

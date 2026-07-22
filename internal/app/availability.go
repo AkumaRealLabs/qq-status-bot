@@ -286,6 +286,15 @@ func (s *SchedulerService) driveAvailabilityAction(ctx context.Context, row doma
 	if !row.Managed {
 		return nil
 	}
+	if row.ActualStatus == 3 && row.Override != domain.OverrideForceEnable && row.Override != domain.OverrideManualHold {
+		if row.PendingAction == "" {
+			return nil
+		}
+		_, err := s.mutateAvailability(ctx, row, func(next *domain.ChannelAvailability) {
+			next.PendingAction, next.PendingStatus, next.RetryAt = "", 0, nil
+		})
+		return err
+	}
 	// 真实流量控制是同一渠道的另一条决策来源。余额恢复时不能把仍处于
 	// 流量熔断/恢复阶段的渠道提前打开；余额侧的关闭动作仍然允许执行。
 	if row.DesiredStatus == 1 {

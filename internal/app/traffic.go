@@ -454,6 +454,8 @@ func (s *SchedulerService) trafficChannelView(ctx context.Context, channel domai
 	}
 	if !managed {
 		row.State, row.Reason = "unmanaged", "未显式绑定，仅展示遥测"
+	} else if channel.Status == 3 {
+		row.State, row.Reason, row.DesiredStatus = domain.TrafficStateExternalOff, "调度器自动禁用，等待调度器自身恢复", 3
 	} else if row.State == "healthy" && (control.State == "recovering" || control.State == "hard_recovering") {
 		row.State, row.Reason, row.DesiredStatus = control.State, control.Reason, control.DesiredStatus
 	}
@@ -520,10 +522,12 @@ func trafficStateRank(state string) int {
 		return 4
 	case "recovering", "hard_recovering":
 		return 5
-	case "soft_blocked":
+	case domain.TrafficStateExternalOff:
 		return 6
-	case "hard_blocked":
+	case "soft_blocked":
 		return 7
+	case "hard_blocked":
+		return 8
 	default:
 		return 1
 	}
@@ -567,6 +571,25 @@ func (s *SchedulerService) applyTrafficControl(ctx context.Context, cfg domain.S
 		}
 		if !found {
 			control = domain.TrafficControlState{ChannelID: view.ChannelID, BasePriority: current.Priority, BaseWeight: current.Weight, DesiredPriority: current.Priority, DesiredWeight: current.Weight, ActualPriority: current.Priority, ActualWeight: current.Weight, DesiredStatus: current.Status, ActualStatus: current.Status, State: "healthy"}
+		}
+		if current.Status == 3 {
+			allowExplicitOverride := false
+			if availability, found, _ := s.app.Store.ChannelAvailability(ctx, view.ChannelID); found {
+				forceEnable := availability.Override == domain.OverrideForceEnable && (availability.OverrideUntil == nil || now.Before(*availability.OverrideUntil))
+				allowExplicitOverride = forceEnable || availability.Override == domain.OverrideManualHold
+			}
+			if !allowExplicitOverride {
+				control.State, control.Reason = domain.TrafficStateExternalOff, "调度器自动禁用，等待调度器自身恢复"
+				control.DesiredStatus, control.ActualStatus = 3, 3
+				control.DesiredPriority, control.ActualPriority = current.Priority, current.Priority
+				control.DesiredWeight, control.ActualWeight = current.Weight, current.Weight
+				control.RetryCount, control.RetryAt = 0, time.Time{}
+				control.UpdatedAt = now
+				if err := s.app.Store.SaveTrafficControl(ctx, control); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 		if !control.RetryAt.IsZero() && now.Before(control.RetryAt) {
 			continue

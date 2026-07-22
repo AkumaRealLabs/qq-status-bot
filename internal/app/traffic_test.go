@@ -108,6 +108,54 @@ func TestTrafficActiveSoftCircuitWritesAndVerifiesRemote(t *testing.T) {
 	}
 }
 
+func TestTrafficActivePreservesExternalAutoDisabledChannel(t *testing.T) {
+	statusWrites := 0
+	remoteStatus := 3
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/log/" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []any{}}})
+		case r.URL.Path == "/api/channel/" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "name": "渠道 9", "status": remoteStatus, "priority": 100, "weight": 100, "group": "gpt"}}}})
+		case r.URL.Path == "/api/channel/9/status" && r.Method == http.MethodPost:
+			statusWrites++
+			remoteStatus = 1
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case r.URL.Path == "/api/channel/" && r.Method == http.MethodPut:
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "traffic-external-disabled.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", BaseURL: "https://upstream.invalid", APIKey: "secret", Model: "m", PoolEnabled: true, SchedulerChannelID: "9", SchedulerChannelName: "渠道 9", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client.HTTP = server.Client()
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: server.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned", TrafficMode: domain.TrafficModeActive}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileTraffic(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if statusWrites != 0 || remoteStatus != 3 {
+		t.Fatalf("status writes=%d remote status=%d", statusWrites, remoteStatus)
+	}
+	status, err := svc.TrafficStatus(t.Context())
+	if err != nil || len(status.Channels) != 1 || status.Channels[0].State != domain.TrafficStateExternalOff || status.Channels[0].DesiredStatus != 3 {
+		t.Fatalf("traffic status=%+v err=%v", status, err)
+	}
+}
+
 func TestTrafficReconcilePaginationOverlapAndDedup(t *testing.T) {
 	var mu sync.Mutex
 	starts := []int64{}

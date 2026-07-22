@@ -83,3 +83,19 @@ func TestForceEnableAndManualHoldTakePrecedence(t *testing.T) {
 		t.Fatalf("hold decision = %+v", got)
 	}
 }
+
+func TestExternalAutoDisabledChannelWaitsForSchedulerRecovery(t *testing.T) {
+	now := time.Now().UTC()
+	policy := AvailabilityPolicy{BalanceGuardMode: BalanceGuardActive, LowBalanceThreshold: 30, BalanceCloseThreshold: 10, BalanceRecoverThreshold: 20}
+	row := ChannelAvailability{Managed: true, ActualStatus: 3, DisabledAt: &now}
+	got := AvailabilityDecisionFor(now, policy, row)
+	if got.State != AvailabilityExternalOff || got.DesiredStatus != 3 {
+		t.Fatalf("external decision = %+v", got)
+	}
+	until := now.Add(30 * time.Minute)
+	row.Override, row.OverrideUntil = OverrideForceEnable, &until
+	got = AvailabilityDecisionFor(now, policy, row)
+	if got.State != AvailabilityForcedOn || got.DesiredStatus != 1 {
+		t.Fatalf("force decision = %+v", got)
+	}
+}

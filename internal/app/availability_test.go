@@ -110,6 +110,52 @@ func TestAvailabilityBalanceObserveThenActiveCascadesSub2APIBoundChannels(t *tes
 	}
 }
 
+func TestAvailabilityDoesNotRestoreExternalAutoDisabledChannel(t *testing.T) {
+	statusWrites := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/channel/" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "name": "渠道9", "status": 3}}}})
+		case r.URL.Path == "/api/channel/9/status" && r.Method == http.MethodPost:
+			statusWrites++
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "availability-external-disabled.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	upstream, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "上游", Type: "newapi", BaseURL: server.URL, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", UpstreamID: upstream.ID, PoolEnabled: true, SchedulerChannelID: "9", SchedulerChannelName: "渠道9", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client.HTTP = server.Client()
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: server.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileAvailability(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := st.ChannelAvailability(t.Context(), "9")
+	if err != nil || !found || row.DesiredStatus != 3 || row.ActualStatus != 3 || row.PendingAction != "" {
+		t.Fatalf("row=%+v found=%v err=%v", row, found, err)
+	}
+	if statusWrites != 0 {
+		t.Fatalf("status writes=%d", statusWrites)
+	}
+}
+
 func TestAvailabilityCacheClearFailureKeepsPendingAndRetries(t *testing.T) {
 	remoteStatus := 1
 	statusWrites, cacheClears := 0, 0

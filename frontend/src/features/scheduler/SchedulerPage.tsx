@@ -341,7 +341,7 @@ function TrafficControl() {
   const rows = data?.channels ?? []
   const healthy = rows.filter((row) => row.state === 'healthy').length
   const degraded = rows.filter((row) => ['warning', 'probe_required', 'degraded'].includes(row.state)).length
-  const blocked = rows.filter((row) => ['soft_blocked', 'hard_blocked', 'recovering', 'hard_recovering'].includes(row.state)).length
+  const blocked = rows.filter((row) => ['soft_blocked', 'hard_blocked', 'recovering', 'hard_recovering', 'external_disabled'].includes(row.state)).length
   return (
     <Section title="真实流量调度">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -417,12 +417,12 @@ function trafficModeLabel(mode?: TrafficStatus['mode']) {
 }
 
 function trafficStateLabel(state: string) {
-  return ({ healthy: '健康', warning: '降权', probe_required: '待探测', degraded: '严重降权', soft_blocked: '软熔断', hard_blocked: '硬关闭', recovering: '阶梯恢复', hard_recovering: '恢复确认', unmanaged: '未绑定' } as Record<string, string>)[state] ?? state
+  return ({ healthy: '健康', warning: '降权', probe_required: '待探测', degraded: '严重降权', soft_blocked: '软熔断', hard_blocked: '硬关闭', recovering: '阶梯恢复', hard_recovering: '恢复确认', external_disabled: '调度器自动关闭', unmanaged: '未绑定' } as Record<string, string>)[state] ?? state
 }
 
 function trafficStateVariant(state: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (['soft_blocked', 'hard_blocked'].includes(state)) return 'destructive'
-  if (['warning', 'degraded', 'probe_required', 'recovering', 'hard_recovering'].includes(state)) return 'secondary'
+  if (['warning', 'degraded', 'probe_required', 'recovering', 'hard_recovering', 'external_disabled'].includes(state)) return 'secondary'
   if (state === 'unmanaged') return 'outline'
   return 'default'
 }
@@ -484,7 +484,7 @@ function AvailabilityControl() {
   })
   const healthy = rows.filter((row) => row.state === 'healthy').length
   const risk = rows.filter((row) => ['warning', 'blocked', 'action_failed', 'recovering'].includes(row.state)).length
-  const autoClosed = rows.filter((row) => ['blocked', 'recovering'].includes(row.state) && (row.actual_status === 2 || row.actual_status === 3)).length
+  const autoClosed = rows.filter((row) => ['blocked', 'recovering', 'external_disabled'].includes(row.state) && (row.actual_status === 2 || row.actual_status === 3)).length
   const manualClosed = rows.filter((row) => row.state === 'manual_off').length
   const unmanaged = rows.filter((row) => row.state === 'unmanaged').length
   const draft = policyDraft ?? policy.data
@@ -605,12 +605,12 @@ function AvailabilityControl() {
 }
 
 const availabilityStates = [
-  { value: 'healthy', label: '可用' }, { value: 'warning', label: '风险' }, { value: 'blocked', label: '自动关闭' }, { value: 'recovering', label: '恢复中' }, { value: 'manual_off', label: '手动关闭' }, { value: 'forced_on', label: '限时启用' }, { value: 'action_failed', label: '动作失败' }, { value: 'unmanaged', label: '未绑定' },
+  { value: 'healthy', label: '可用' }, { value: 'warning', label: '风险' }, { value: 'blocked', label: '自动关闭' }, { value: 'recovering', label: '恢复中' }, { value: 'external_disabled', label: '调度器自动关闭' }, { value: 'manual_off', label: '手动关闭' }, { value: 'forced_on', label: '限时启用' }, { value: 'action_failed', label: '动作失败' }, { value: 'unmanaged', label: '未绑定' },
 ]
 
 function AvailabilityStateBadge({ state }: { state: string }) {
   const item = availabilityStates.find((candidate) => candidate.value === state)
-  const tone = state === 'healthy' ? 'text-success' : state === 'action_failed' || state === 'blocked' ? 'text-destructive' : state === 'warning' || state === 'recovering' ? 'text-warning' : 'text-muted-foreground'
+  const tone = state === 'healthy' ? 'text-success' : state === 'action_failed' || state === 'blocked' ? 'text-destructive' : state === 'warning' || state === 'recovering' || state === 'external_disabled' ? 'text-warning' : 'text-muted-foreground'
   return <span className={cn('inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium', tone)}>{state === 'healthy' ? <ShieldCheck className="size-3.5" /> : <AlertTriangle className="size-3.5" />}{item?.label ?? state}</span>
 }
 
@@ -618,6 +618,7 @@ function availabilityReason(row: AvailabilityRow) {
   if (row.blockers.length > 0) return row.blockers.map((blocker) => blocker.message || availabilityBlockerText(blocker.kind)).join('；')
   if (row.override === 'manual_hold') return '人工保持关闭'
   if (row.override === 'force_enable') return `人工接管至 ${fmtTime(row.override_until)}`
+  if (row.state === 'external_disabled') return '由调度器自动禁用，等待调度器自身恢复'
   return row.managed ? '-' : '未受 AUM 管理'
 }
 

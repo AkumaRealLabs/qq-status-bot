@@ -20,6 +20,7 @@ const (
 	AvailabilityManualOff    = "manual_off"
 	AvailabilityActionFailed = "action_failed"
 	AvailabilityUnmanaged    = "unmanaged"
+	AvailabilityExternalOff  = "external_disabled"
 
 	BlockerBalanceLow     = "balance_low"
 	BlockerQuotaExhausted = "quota_exhausted"
@@ -214,6 +215,10 @@ func AvailabilityDecisionFor(now time.Time, policy AvailabilityPolicy, row Chann
 	}
 	if row.Override == OverrideForceEnable && row.OverrideUntil != nil && now.Before(*row.OverrideUntil) {
 		return AvailabilityDecision{State: AvailabilityForcedOn, DesiredStatus: 1}
+	}
+	// 状态 3 是调度器自身的自动禁用；由调度器的被动恢复机制负责重新启用。
+	if row.ActualStatus == 3 {
+		return AvailabilityDecision{State: AvailabilityExternalOff, DesiredStatus: 3}
 	}
 	hard, observed := false, false
 	for _, blocker := range row.Blockers {
