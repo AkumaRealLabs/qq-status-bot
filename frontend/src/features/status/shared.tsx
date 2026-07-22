@@ -59,13 +59,14 @@ export function StatusMonitorCard({
   const latest = history.at(-1)
   const muted = card.probe_muted
   const autoProbePaused = isModelCard(card) ? !card.enabled : card.auto_probe_paused
-  const samplesInsufficient = history.length <= 1
+  const historySlots = emptyHistorySlots(windowValue)
+  const bucketedHistory = bucketProbeHistory(history, windowValue)
+  const populatedSlots = bucketedHistory.filter((probe): probe is Probe => Boolean(probe))
+  const samplesInsufficient = populatedSlots.length <= 1
   const ok = muted || (latest ? probeOK(latest) : !card.last_error)
   const statusText = muted ? '静默测试中' : latest ? probeStatusLabel(probeStatus(latest)) : ok ? probeStatusLabel('operational') : probeStatusLabel('failed')
-  const successCount = history.filter(probeOK).length
-  const uptime = history.length ? `${((successCount / history.length) * 100).toFixed(2)}%` : '-'
-  const historySlots = samplesInsufficient ? emptyHistorySlots(windowValue) : history.length
-  const missingHistorySlots = historySlots - history.length
+  const successCount = populatedSlots.filter(probeOK).length
+  const uptime = populatedSlots.length ? `${((successCount / populatedSlots.length) * 100).toFixed(2)}%` : '-'
   const editableCard = isModelCard(card) ? card : undefined
   const groupName = editableCard?.key_group || (editableCard?.base_url ? '自定义' : '-')
   const displayGroup = cardDisplayGroup(card)
@@ -106,8 +107,8 @@ export function StatusMonitorCard({
               className="grid min-w-full gap-1"
               style={{ gridTemplateColumns: `repeat(${historySlots}, minmax(6px, 1fr))` }}
             >
-              {Array.from({ length: missingHistorySlots }).map((_, index) => <span key={`missing-${index}`} className="h-4 rounded-xs bg-surface-cream-strong" />)}
-              {history.map((probe, index) => {
+              {bucketedHistory.map((probe, index) => {
+                if (!probe) return <span key={`missing-${index}`} className="h-4 rounded-xs bg-surface-cream-strong" />
                 const good = probeOK(probe)
                 return (
                   <HoverText
@@ -158,6 +159,33 @@ export function probeOK(probe: Probe) {
 
 export function emptyHistorySlots(windowValue: string) {
   return ({ '1h': 12, '3h': 18, '5h': 20, '1d': 24, '7d': 28, '15d': 30 } as Record<string, number>)[windowValue] || 24
+}
+
+function historyWindowMilliseconds(windowValue: string) {
+  return ({ '1h': 60, '3h': 180, '5h': 300, '1d': 1440, '7d': 10080, '15d': 21600 } as Record<string, number>)[windowValue] * 60 * 1000 || 60 * 60 * 1000
+}
+
+function probeTime(probe: Probe) {
+  const value = Date.parse(probe.checked_at)
+  return Number.isFinite(value) ? value : 0
+}
+
+// 每个时间桶只展示一个代表探测，避免探测频率差异把某张卡的格子撑得更多。
+export function bucketProbeHistory(history: Probe[], windowValue: string, now = Date.now()): Array<Probe | undefined> {
+  const slotCount = emptyHistorySlots(windowValue)
+  const slots: Array<Probe | undefined> = Array.from({ length: slotCount })
+  const start = now - historyWindowMilliseconds(windowValue)
+  const slotDuration = historyWindowMilliseconds(windowValue) / slotCount
+  for (const probe of history) {
+    const checkedAt = probeTime(probe)
+    if (checkedAt < start || checkedAt > now) continue
+    const index = Math.min(slotCount - 1, Math.floor((checkedAt - start) / slotDuration))
+    const existing = slots[index]
+    if (!existing || (probeOK(existing) && !probeOK(probe)) || (probeOK(existing) === probeOK(probe) && probeTime(probe) > probeTime(existing))) {
+      slots[index] = probe
+    }
+  }
+  return slots
 }
 
 export function probeStatusLabel(status: string) {
