@@ -43,6 +43,10 @@ func (s *SchedulerService) ReconcileTraffic(ctx context.Context) error {
 		return errSchedulerNotConfigured
 	}
 	now := time.Now().UTC()
+	affinitySkipRules := map[string]bool{}
+	if settings, settingsErr := s.GGAPISettings(ctx); settingsErr == nil {
+		affinitySkipRules = ggapiAffinitySkipRules(settings)
+	}
 	sources := []struct {
 		name    string
 		logType int
@@ -57,7 +61,7 @@ func (s *SchedulerService) ReconcileTraffic(ctx context.Context) error {
 		wg.Add(1)
 		go func(i int, source string, logType int, cursor domain.TrafficCursor) {
 			defer wg.Done()
-			results[i] = s.fetchTrafficSource(ctx, cfg, source, logType, cursor, now)
+			results[i] = s.fetchTrafficSource(ctx, cfg, source, logType, cursor, now, affinitySkipRules)
 		}(i, source.name, source.logType, cursor)
 	}
 	wg.Wait()
@@ -95,7 +99,7 @@ func (s *SchedulerService) ReconcileTraffic(ctx context.Context) error {
 	return nil
 }
 
-func (s *SchedulerService) fetchTrafficSource(ctx context.Context, cfg domain.SchedulerConfig, source string, logType int, cursor domain.TrafficCursor, now time.Time) trafficFetchResult {
+func (s *SchedulerService) fetchTrafficSource(ctx context.Context, cfg domain.SchedulerConfig, source string, logType int, cursor domain.TrafficCursor, now time.Time, affinitySkipRules map[string]bool) trafficFetchResult {
 	result := trafficFetchResult{cursor: cursor}
 	result.cursor.Source = source
 	start, end, firstPage := cursor.ScanStartAt, cursor.ScanEndAt, cursor.NextPage
@@ -132,7 +136,7 @@ func (s *SchedulerService) fetchTrafficSource(ctx context.Context, cfg domain.Sc
 			if !ok {
 				continue
 			}
-			event, ok := parseTrafficEvent(source, logType, m)
+			event, ok := parseTrafficEvent(source, logType, m, affinitySkipRules)
 			if !ok || event.OccurredAt.Before(start) || event.OccurredAt.After(end.Add(time.Minute)) {
 				continue
 			}
@@ -164,8 +168,10 @@ func (s *SchedulerService) fetchTrafficSource(ctx context.Context, cfg domain.Sc
 	return result
 }
 
-func parseTrafficEvent(source string, logType int, raw map[string]any) (domain.TrafficEvent, bool) {
+func parseTrafficEvent(source string, logType int, raw map[string]any, skipRuleSets ...map[string]bool) (domain.TrafficEvent, bool) {
 	other := profitMap(firstScheduler(raw, "other", "metadata", "meta", "details"))
+	adminInfo := profitMap(firstScheduler(other, "admin_info"))
+	affinity := profitMap(firstScheduler(adminInfo, "channel_affinity"))
 	lookup := func(keys ...string) any {
 		if value := firstScheduler(raw, keys...); value != nil {
 			return value
@@ -204,6 +210,31 @@ func parseTrafficEvent(source string, logType int, raw map[string]any) (domain.T
 		// 本渠道失败后由其他渠道重试成功，仍应惩罚原渠道的软失败率。
 		kind = domain.TrafficEventSoftFailure
 	}
+	affinityRule := compactTrafficField(schedulerString(firstScheduler(affinity, "rule_name", "reason")))
+	affinityGroup := compactTrafficField(schedulerString(firstScheduler(affinity, "selected_group", "using_group")))
+	affinityHit := affinityRule != ""
+	if rawHit := firstScheduler(affinity, "hit", "cache_hit"); rawHit != nil {
+		switch value := rawHit.(type) {
+		case bool:
+			affinityHit = value
+		case string:
+			parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+			if err == nil {
+				affinityHit = parsed
+			}
+		default:
+			affinityHit = schedulerInt(rawHit) != 0
+		}
+	}
+	sessionScoped := false
+	if affinityRule != "" && kind != domain.TrafficEventSuccess {
+		for _, skipRules := range skipRuleSets {
+			if skipRules[affinityRule] {
+				sessionScoped = true
+				break
+			}
+		}
+	}
 	event := domain.TrafficEvent{
 		Source: source, OccurredAt: occurred, ChannelID: channelID, ChannelName: channelName,
 		Model: domain.NormalizeProbeModel(schedulerString(lookup("model", "model_name", "modelName"))), Group: schedulerString(lookup("group", "group_name", "groupName")),
@@ -212,6 +243,7 @@ func parseTrafficEvent(source string, logType int, raw map[string]any) (domain.T
 		Kind:              kind, HTTPStatus: status, ErrorType: errorType, ErrorCode: errorCode, DurationMS: duration, TTFTMS: ttft, StreamEnded: streamEnded,
 		Tokens: tokens, RetryCount: schedulerInt(lookup("retry_count", "retryCount", "retries")),
 		RetrySucceeded: retrySucceeded,
+		AffinityRule:   affinityRule, AffinityGroup: affinityGroup, AffinityHit: affinityHit, SessionScoped: sessionScoped,
 	}
 	event.DedupeKey = domain.TrafficDedupeKey(event)
 	sum := sha256.Sum256([]byte(event.DedupeKey))
@@ -400,11 +432,19 @@ func (s *SchedulerService) trafficStatus(ctx context.Context, cfg domain.Schedul
 		}
 	}
 	byChannel := map[string][]domain.TrafficEvent{}
+	filteredEvents := make([]domain.TrafficEvent, 0, len(events))
 	for _, event := range events {
+		if lifecycle, found, lifecycleErr := s.app.Store.SchedulerChannelLifecycle(ctx, event.ChannelID); lifecycleErr == nil && found && !lifecycle.TrafficSince.IsZero() && event.OccurredAt.Before(lifecycle.TrafficSince) {
+			continue
+		}
+		filteredEvents = append(filteredEvents, event)
+		if event.SessionScoped {
+			out.SessionFailures++
+		}
 		byChannel[event.ChannelID] = append(byChannel[event.ChannelID], event)
 	}
 	for _, channel := range channels {
-		row := s.trafficChannelView(ctx, channel, byChannel[channel.ID], events, managed[channel.ID], now)
+		row := s.trafficChannelView(ctx, channel, byChannel[channel.ID], filteredEvents, managed[channel.ID], now)
 		out.Channels = append(out.Channels, row)
 	}
 	sort.Slice(out.Channels, func(i, j int) bool {
@@ -814,25 +854,19 @@ func healthyTrafficAlternativeForView(views []domain.TrafficChannelState, curren
 
 func (s *SchedulerService) writeTrafficChannel(ctx context.Context, cfg domain.SchedulerConfig, current domain.SchedulerChannel, status int, priority int64, weight uint) error {
 	if current.Status != status || status == 2 {
-		if err := s.setSchedulerChannelStatus(ctx, current.ID, status); err != nil {
+		confirmedRestore := false
+		if lifecycle, found, _ := s.app.Store.SchedulerChannelLifecycle(ctx, current.ID); found {
+			confirmedRestore = lifecycle.AUMDisabled
+		}
+		if err := s.setSchedulerChannelStatus(ctx, current.ID, status, domain.ControlSourceTraffic, "真实流量协调", confirmedRestore); err != nil {
 			return err
 		}
 	}
 	if current.Priority == priority && current.Weight == weight {
 		return nil
 	}
-	id, err := strconv.Atoi(strings.TrimSpace(current.ID))
-	if err != nil || id <= 0 {
-		return ErrBadRequest("invalid scheduler channel id")
-	}
-	var raw map[string]any
-	if err := s.schedulerJSON(ctx, cfg, http.MethodPut, "/api/channel/", map[string]any{"id": id, "group": current.Group, "priority": priority, "weight": weight}, &raw); err != nil {
-		return err
-	}
-	if ok, exists := raw["success"].(bool); exists && !ok {
-		return errors.New(schedulerMessage(raw))
-	}
-	return nil
+	current.Status = status
+	return s.coordinateSchedulerFields(ctx, cfg, current, current.Group, priority, weight, true, domain.ControlSourceTraffic, "真实流量优先级与权重")
 }
 
 func (s *SchedulerService) AdoptTrafficBaseline(ctx context.Context, channelID string) (domain.TrafficControlState, error) {

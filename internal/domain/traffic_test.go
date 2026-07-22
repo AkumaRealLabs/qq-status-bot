@@ -68,7 +68,18 @@ func TestAggregateTrafficP95AndUserErrors(t *testing.T) {
 		{ChannelID: "1", Model: "m", OccurredAt: start.Add(3 * time.Second), Kind: TrafficEventUserError, HTTPStatus: 400},
 	}
 	rows := AggregateTraffic(events, start, start.Add(10*time.Second))
-	if len(rows) != 1 || rows[0].Requests != 3 || rows[0].UserErrors != 1 || rows[0].FailureRate != .5 || rows[0].P95TTFTMS != 300 || rows[0].AvgTTFTMS != 200 {
+	if len(rows) != 1 || rows[0].Requests != 3 || rows[0].UserErrors != 1 || rows[0].FailureRate != .5 || rows[0].P95TTFTMS != 100 || rows[0].AvgTTFTMS != 100 {
+		t.Fatalf("rows=%+v", rows)
+	}
+}
+
+func TestAggregateTrafficExcludesSessionFailures(t *testing.T) {
+	start := time.Unix(1000, 0)
+	rows := AggregateTraffic([]TrafficEvent{
+		{ChannelID: "1", Model: "m", OccurredAt: start.Add(time.Second), Kind: TrafficEventSoftFailure, SessionScoped: true},
+		{ChannelID: "1", Model: "m", OccurredAt: start.Add(2 * time.Second), Kind: TrafficEventSuccess, TTFTMS: 120},
+	}, start, start.Add(10*time.Second))
+	if len(rows) != 1 || rows[0].Requests != 1 || rows[0].Successes != 1 || rows[0].SoftFailures != 0 {
 		t.Fatalf("rows=%+v", rows)
 	}
 }

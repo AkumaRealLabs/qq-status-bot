@@ -14,6 +14,7 @@ import { fmtTime } from '@/lib/format'
 import { alertError, secretPlaceholder, useFeedback } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
 import type { AvailabilityPolicy, AvailabilityRow, ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig, SchedulerGroup, SchedulerLog, SchedulerTier, TrafficStatus, TrafficWindow, UpstreamRow } from '@/types'
+import { GGAPICollaborationConsole } from './GGAPIConsole'
 
 const none = '__none__'
 const defaultTiers: SchedulerTier[] = [
@@ -167,8 +168,7 @@ export function SchedulerPage() {
           error
         />
       )}
-      <AvailabilityControl />
-      <TrafficControl />
+      <GGAPICollaborationConsole configured={configured} />
       <Section title="调度器分组">
         <FormError error={groups.error || channels.error} />
         {groups.isLoading && <EmptyPanel text="加载中..." />}
@@ -320,7 +320,7 @@ export function SchedulerPage() {
   )
 }
 
-function TrafficControl() {
+export function TrafficControl() {
   const qc = useQueryClient()
   const status = useQuery({
     queryKey: ['scheduler', 'traffic', 'status'],
@@ -434,7 +434,7 @@ function trafficWindowLabel(window?: TrafficWindow) {
   return `${window.requests} 次 · 成功 ${successRate}% · P95 ${p95}`
 }
 
-function AvailabilityControl() {
+export function AvailabilityControl() {
   const qc = useQueryClient()
   const [upstreamID, setUpstreamID] = useState(() => new URLSearchParams(location.search).get('upstream_id') || 'all')
   const [state, setState] = useState('all')

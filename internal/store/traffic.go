@@ -18,11 +18,13 @@ func (s *Store) SaveTrafficEvent(ctx context.Context, event domain.TrafficEvent)
 	}
 	result, err := s.exec(ctx, `INSERT INTO scheduler_traffic_events
 		(id, dedupe_key, source, occurred_at, channel_id, channel_name, model, group_name, request_id, upstream_request_id, kind,
-		http_status, error_type, error_code, duration_ms, ttft_ms, stream_ended, tokens, retry_count, retry_succeeded, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(dedupe_key) DO NOTHING`,
+		http_status, error_type, error_code, duration_ms, ttft_ms, stream_ended, tokens, retry_count, retry_succeeded,
+		affinity_rule, affinity_group, affinity_hit, session_scoped, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(dedupe_key) DO NOTHING`,
 		event.ID, event.DedupeKey, event.Source, event.OccurredAt.UTC().Format(time.RFC3339Nano), event.ChannelID, event.ChannelName,
 		event.Model, event.Group, event.RequestID, event.UpstreamRequestID, event.Kind, event.HTTPStatus, event.ErrorType, event.ErrorCode,
-		event.DurationMS, event.TTFTMS, boolInt(event.StreamEnded), event.Tokens, event.RetryCount, boolInt(event.RetrySucceeded), nowText())
+		event.DurationMS, event.TTFTMS, boolInt(event.StreamEnded), event.Tokens, event.RetryCount, boolInt(event.RetrySucceeded),
+		event.AffinityRule, event.AffinityGroup, boolInt(event.AffinityHit), boolInt(event.SessionScoped), nowText())
 	if err != nil {
 		return false, err
 	}
@@ -32,7 +34,8 @@ func (s *Store) SaveTrafficEvent(ctx context.Context, event domain.TrafficEvent)
 
 func (s *Store) TrafficEventsSince(ctx context.Context, since time.Time) ([]domain.TrafficEvent, error) {
 	rows, err := s.query(ctx, `SELECT id, dedupe_key, source, occurred_at, channel_id, channel_name, model, group_name, request_id,
-		upstream_request_id, kind, http_status, error_type, error_code, duration_ms, ttft_ms, stream_ended, tokens, retry_count, retry_succeeded
+		upstream_request_id, kind, http_status, error_type, error_code, duration_ms, ttft_ms, stream_ended, tokens, retry_count, retry_succeeded,
+		affinity_rule, affinity_group, affinity_hit, session_scoped
 		FROM scheduler_traffic_events WHERE occurred_at>=? ORDER BY occurred_at`, since.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
@@ -42,14 +45,16 @@ func (s *Store) TrafficEventsSince(ctx context.Context, since time.Time) ([]doma
 	for rows.Next() {
 		var event domain.TrafficEvent
 		var occurred string
-		var streamEnded, retrySucceeded int
+		var streamEnded, retrySucceeded, affinityHit, sessionScoped int
 		if err := rows.Scan(&event.ID, &event.DedupeKey, &event.Source, &occurred, &event.ChannelID, &event.ChannelName, &event.Model,
 			&event.Group, &event.RequestID, &event.UpstreamRequestID, &event.Kind, &event.HTTPStatus, &event.ErrorType, &event.ErrorCode,
-			&event.DurationMS, &event.TTFTMS, &streamEnded, &event.Tokens, &event.RetryCount, &retrySucceeded); err != nil {
+			&event.DurationMS, &event.TTFTMS, &streamEnded, &event.Tokens, &event.RetryCount, &retrySucceeded,
+			&event.AffinityRule, &event.AffinityGroup, &affinityHit, &sessionScoped); err != nil {
 			return nil, err
 		}
 		event.OccurredAt = parseTime(occurred)
 		event.StreamEnded, event.RetrySucceeded = boolFromInt(streamEnded), boolFromInt(retrySucceeded)
+		event.AffinityHit, event.SessionScoped = boolFromInt(affinityHit), boolFromInt(sessionScoped)
 		out = append(out, event)
 	}
 	return out, rows.Err()

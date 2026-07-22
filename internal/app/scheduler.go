@@ -207,6 +207,7 @@ func (s *SchedulerService) fetchSchedulerChannels(ctx context.Context, cfg domai
 		page := schedulerChannels(raw)
 		out = append(out, page...)
 		if len(page) < 100 {
+			s.observeSchedulerChannels(ctx, out)
 			return out, nil
 		}
 	}
@@ -330,7 +331,11 @@ func (s *SchedulerService) ApplySchedulerGroups(ctx context.Context) (domain.Sch
 			continue
 		}
 		group := domain.JoinGroups(groups)
-		if err := s.setSchedulerChannelGroup(ctx, cfg, channelID, group, priority); err != nil {
+		if err := s.setSchedulerChannelGroup(ctx, cfg, current, group, priority); err != nil {
+			if errors.Is(err, errControlPlaneExternalTakeover) || errors.Is(err, errControlPlaneOwnedByGGAPI) {
+				out.Skipped++
+				continue
+			}
 			return out, err
 		}
 		// new-api 对部分写入可能 success 但不生效；始终校验分组、优先级与原权重。
@@ -424,7 +429,7 @@ func (s *SchedulerService) SetCardSchedulerChannelStatus(ctx context.Context, ca
 		updated, err := s.app.Cards.Card(ctx, card.ID)
 		return updated.Public(), err
 	}
-	if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, status); err != nil {
+	if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, status, domain.ControlSourceManual, schedulerManualMessage(status), card.SchedulerAutoDisabled); err != nil {
 		s.logSchedulerAction(ctx, card, schedulerAction(status), "error", err.Error())
 		return domain.ModelCard{}, err
 	}
@@ -458,7 +463,7 @@ func (s *SchedulerService) applySchedulerAutomation(ctx context.Context, card do
 	}
 	muteAt := s.app.probeMuteFailureThreshold(ctx)
 	if domain.ShouldAutoDisableScheduler(card.PoolEnabled, card.SchedulerChannelID, success, failures, muteAt, card.SchedulerAutoDisabled) {
-		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 2); err != nil {
+		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 2, domain.ControlSourceProbe, fmt.Sprintf("连续探测失败 %d 次", muteAt), false); err != nil {
 			if errors.Is(err, errSchedulerNotConfigured) {
 				s.logSchedulerAction(ctx, card, "disable", "skipped", "调度器未配置")
 				return nil
@@ -474,7 +479,7 @@ func (s *SchedulerService) applySchedulerAutomation(ctx context.Context, card do
 		return nil
 	}
 	if success && card.SchedulerAutoDisabled && s.schedulerRestoreReady(ctx, card) {
-		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 1); err != nil {
+		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 1, domain.ControlSourceProbe, "连续探测恢复确认", card.SchedulerAutoDisabled); err != nil {
 			if errors.Is(err, errSchedulerNotConfigured) {
 				s.logSchedulerAction(ctx, card, "restore", "skipped", "调度器未配置")
 				return nil
@@ -574,27 +579,8 @@ func (s *SchedulerService) cardPrice(ctx context.Context, card domain.ModelCard)
 	return price, true
 }
 
-func (s *SchedulerService) setSchedulerChannelStatus(ctx context.Context, channelID string, status int) error {
-	cfg, err := s.app.Store.SchedulerConfig(ctx)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
-		return errSchedulerNotConfigured
-	}
-	var raw map[string]any
-	if err := s.schedulerJSON(ctx, cfg, http.MethodPost, "/api/channel/"+url.PathEscape(channelID)+"/status", map[string]int{"status": status}, &raw); err != nil {
-		return err
-	}
-	if ok, exists := raw["success"].(bool); exists && !ok {
-		return errors.New(schedulerMessage(raw))
-	}
-	if status == 2 {
-		if err := s.clearSchedulerChannelAffinityCache(ctx, cfg); err != nil {
-			return fmt.Errorf("渠道已关闭，但清空亲和性缓存失败：%w", err)
-		}
-	}
-	return nil
+func (s *SchedulerService) setSchedulerChannelStatus(ctx context.Context, channelID string, status int, source, reason string, confirmedRestore bool) error {
+	return s.coordinateSchedulerStatus(ctx, channelID, status, source, reason, confirmedRestore)
 }
 
 func (s *SchedulerService) clearSchedulerChannelAffinityCache(ctx context.Context, cfg domain.SchedulerConfig) error {
@@ -608,19 +594,8 @@ func (s *SchedulerService) clearSchedulerChannelAffinityCache(ctx context.Contex
 	return nil
 }
 
-func (s *SchedulerService) setSchedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, channelID, group string, priority int64) error {
-	id, err := strconv.Atoi(strings.TrimSpace(channelID))
-	if err != nil || id <= 0 {
-		return ErrBadRequest(fmt.Sprintf("invalid scheduler channel id: %s", channelID))
-	}
-	var raw map[string]any
-	if err := s.schedulerJSON(ctx, cfg, http.MethodPut, "/api/channel/", map[string]any{"id": id, "group": group, "priority": priority}, &raw); err != nil {
-		return err
-	}
-	if ok, exists := raw["success"].(bool); exists && !ok {
-		return errors.New(schedulerMessage(raw))
-	}
-	return nil
+func (s *SchedulerService) setSchedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, current domain.SchedulerChannel, group string, priority int64) error {
+	return s.coordinateSchedulerFields(ctx, cfg, current, group, priority, current.Weight, false, domain.ControlSourceCost, "成本分组基线")
 }
 
 func (s *SchedulerService) schedulerJSON(ctx context.Context, cfg domain.SchedulerConfig, method, path string, body any, out any) error {

@@ -357,7 +357,8 @@ func (s *SchedulerService) executeAvailabilityAction(ctx context.Context, row do
 		return s.finishAvailabilityAction(ctx, row, channel.Status)
 	}
 	if err == nil {
-		err = s.setSchedulerChannelStatus(ctx, row.ChannelID, row.PendingStatus)
+		source := availabilityControlSource(row)
+		err = s.setSchedulerChannelStatus(ctx, row.ChannelID, row.PendingStatus, source, availabilityControlReason(row), row.ActualStatus == 2 && row.DisabledAt != nil)
 	}
 	if err == nil {
 		channel, found, err = s.schedulerChannel(ctx, cfg, row.ChannelID)
@@ -372,6 +373,31 @@ func (s *SchedulerService) executeAvailabilityAction(ctx context.Context, row do
 		return s.failAvailabilityAction(ctx, row, err)
 	}
 	return s.finishAvailabilityAction(ctx, row, channel.Status)
+}
+
+func availabilityControlSource(row domain.ChannelAvailability) string {
+	if row.Override == domain.OverrideManualHold || row.Override == domain.OverrideForceEnable {
+		return domain.ControlSourceManual
+	}
+	if domain.HasBlocker(row.Blockers, domain.BlockerBalanceLow) {
+		return domain.ControlSourceBalance
+	}
+	return domain.ControlSourceProbe
+}
+
+func availabilityControlReason(row domain.ChannelAvailability) string {
+	if row.Override == domain.OverrideManualHold {
+		return "AUM 手动关闭"
+	}
+	if row.Override == domain.OverrideForceEnable {
+		return "AUM 限时启用"
+	}
+	for _, blocker := range row.Blockers {
+		if blocker.Message != "" {
+			return blocker.Message
+		}
+	}
+	return availabilityActionMessage(row.PendingStatus)
 }
 
 func (s *SchedulerService) finishAvailabilityMissing(ctx context.Context, row domain.ChannelAvailability) error {

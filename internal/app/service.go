@@ -67,7 +67,8 @@ type Service struct {
 
 // SchedulerService 负责调度配置、渠道/分组应用、成本快照与自动化。
 type SchedulerService struct {
-	app *Service
+	app       *Service
+	controlMu sync.Mutex
 }
 
 // ProfitService 负责调度号池利润汇总。
@@ -118,6 +119,9 @@ func New(st *store.Store) *Service {
 func (s *Service) StartScheduler(ctx context.Context) {
 	if err := s.SeedSchedulerSnapshots(ctx); err != nil {
 		log.Printf("scheduler: seed snapshots: %v", err)
+	}
+	if err := s.Scheduler.SeedControlPlaneBaseline(ctx); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
+		log.Printf("scheduler: seed control plane: %v", err)
 	}
 	// 启动时跑一次数据保留清理，让长期闲置主机立刻腾出空间。
 	retentionCtx, cancel := context.WithTimeout(ctx, schedulerRetentionTimeout)
@@ -179,6 +183,7 @@ type schedulerState struct {
 }
 
 func (s *Service) runSchedulerTick(ctx context.Context, now time.Time, state *schedulerState) {
+	runSchedulerTask(ctx, "control plane reconcile", schedulerGroupSyncBudget, s.Scheduler.ReconcileControlPlane)
 	runSchedulerTask(ctx, "check due", s.checkCycleTimeout(ctx), s.CheckDue)
 	runSchedulerTask(ctx, "availability reconcile", schedulerGroupSyncBudget, s.ReconcileAvailability)
 	runSchedulerTask(ctx, "TG refresh", schedulerTGTimeout, s.RefreshTGMessagesDue)

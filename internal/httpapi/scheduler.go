@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"ai-upstream-monitor/internal/domain"
 )
@@ -105,4 +106,39 @@ func (s *Server) reconcileSchedulerTraffic(w http.ResponseWriter, r *http.Reques
 func (s *Server) adoptSchedulerTrafficBaseline(w http.ResponseWriter, r *http.Request) {
 	row, err := s.App.AdoptTrafficBaseline(r.Context(), r.PathValue("channel_id"))
 	writeJSONOrError(w, row, err)
+}
+
+func (s *Server) schedulerControlPlane(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.SchedulerControlPlane(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) adoptSchedulerControlPlaneChannel(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.AdoptSchedulerControlPlaneChannel(r.Context(), r.PathValue("channel_id"))
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) ggapiSettings(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.GGAPISettings(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) updateGGAPISettings(w http.ResponseWriter, r *http.Request) {
+	var body domain.GGAPISettings
+	if !decode(w, r, &body) {
+		return
+	}
+	out, err := s.App.SaveGGAPISettings(r.Context(), body)
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) ggapiAffinityCache(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.GGAPIAffinityCache(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) clearGGAPIAffinityCache(w http.ResponseWriter, r *http.Request) {
+	all := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("all")), "true")
+	out, err := s.App.ClearGGAPIAffinityCache(r.Context(), r.URL.Query().Get("rule_name"), all)
+	writeJSONOrError(w, out, err)
 }

@@ -34,6 +34,7 @@ var exportTables = []string{
 	"scheduler_channel_cost_snapshots",
 	"scheduler_group_sale_snapshots",
 	"scheduler_traffic_control",
+	"scheduler_channel_lifecycle",
 	"revenue_cards",
 	"tg_session",
 	"tg_channels",

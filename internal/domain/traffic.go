@@ -45,6 +45,10 @@ type TrafficEvent struct {
 	Tokens            int64     `json:"tokens,omitempty"`
 	RetryCount        int       `json:"retry_count,omitempty"`
 	RetrySucceeded    bool      `json:"retry_succeeded,omitempty"`
+	AffinityRule      string    `json:"affinity_rule,omitempty"`
+	AffinityGroup     string    `json:"affinity_group,omitempty"`
+	AffinityHit       bool      `json:"affinity_hit,omitempty"`
+	SessionScoped     bool      `json:"session_scoped,omitempty"`
 }
 
 // TrafficWindow 是渠道×模型在一个窗口内的统计。
@@ -89,16 +93,17 @@ type TrafficChannelState struct {
 }
 
 type TrafficStatus struct {
-	Mode         string                `json:"mode"`
-	Profile      string                `json:"profile"`
-	Connected    bool                  `json:"connected"`
-	LastPollAt   time.Time             `json:"last_poll_at,omitempty"`
-	LastEventAt  time.Time             `json:"last_event_at,omitempty"`
-	LagSeconds   int                   `json:"lag_seconds"`
-	BacklogPages int                   `json:"backlog_pages"`
-	Frozen       bool                  `json:"frozen"`
-	FreezeReason string                `json:"freeze_reason,omitempty"`
-	Channels     []TrafficChannelState `json:"channels"`
+	Mode            string                `json:"mode"`
+	Profile         string                `json:"profile"`
+	Connected       bool                  `json:"connected"`
+	LastPollAt      time.Time             `json:"last_poll_at,omitempty"`
+	LastEventAt     time.Time             `json:"last_event_at,omitempty"`
+	LagSeconds      int                   `json:"lag_seconds"`
+	BacklogPages    int                   `json:"backlog_pages"`
+	Frozen          bool                  `json:"frozen"`
+	FreezeReason    string                `json:"freeze_reason,omitempty"`
+	SessionFailures int                   `json:"session_failures"`
+	Channels        []TrafficChannelState `json:"channels"`
 }
 
 type TrafficControlState struct {
@@ -212,6 +217,7 @@ func TrafficDedupeKey(event TrafficEvent) string {
 		event.UpstreamRequestID, event.Model, event.ErrorType, event.ErrorCode, strconv.Itoa(event.HTTPStatus),
 		strconv.Itoa(event.DurationMS), strconv.Itoa(event.TTFTMS), strconv.FormatBool(event.StreamEnded), strconv.FormatInt(event.Tokens, 10),
 		strconv.Itoa(event.RetryCount), strconv.FormatBool(event.RetrySucceeded),
+		event.AffinityRule, event.AffinityGroup, strconv.FormatBool(event.AffinityHit), strconv.FormatBool(event.SessionScoped),
 	}, "|")
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
@@ -223,6 +229,9 @@ func AggregateTraffic(events []TrafficEvent, start, end time.Time) []TrafficWind
 	ttfts := map[key][]int{}
 	for _, event := range events {
 		if event.OccurredAt.Before(start) || !event.OccurredAt.Before(end) {
+			continue
+		}
+		if event.SessionScoped {
 			continue
 		}
 		k := key{event.ChannelID, NormalizeProbeModel(event.Model)}
@@ -248,7 +257,7 @@ func AggregateTraffic(events []TrafficEvent, start, end time.Time) []TrafficWind
 		case TrafficEventUserError:
 			row.UserErrors++
 		}
-		if event.TTFTMS > 0 {
+		if event.Kind == TrafficEventSuccess && event.TTFTMS > 0 {
 			ttfts[k] = append(ttfts[k], event.TTFTMS)
 		}
 	}

@@ -262,7 +262,7 @@ func TestSchedulerConfigAndChannelsProxy(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	cfg, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL + "/", UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",})
+	cfg, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL + "/", UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -832,7 +832,7 @@ func TestCheckAllGroupSyncFailureDoesNotStopCardProbe(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.CheckAll(t.Context()); err != nil {
@@ -1238,7 +1238,7 @@ func TestSchedulerProfitLogsUsesNewAPICappedPageSize(t *testing.T) {
 
 	svc := New(nil)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	logs, err := svc.ProfitSvc.schedulerProfitLogs(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned",}, time.Unix(1, 0), time.Unix(2, 0), "gpt_low")
+	logs, err := svc.ProfitSvc.schedulerProfitLogs(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned"}, time.Unix(1, 0), time.Unix(2, 0), "gpt_low")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1280,7 +1280,7 @@ func TestSchedulerAutomationDisableAndRestore(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
 		t.Fatal(err)
 	}
 	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", Enabled: true})
@@ -1408,7 +1408,7 @@ func TestSetCardSchedulerChannelStatus(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
 		t.Fatal(err)
 	}
 	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", SchedulerAutoDisabled: true, Enabled: true})
@@ -1476,7 +1476,7 @@ func TestSetCardSchedulerChannelStatusDoesNotClearCacheWhenStatusWriteFails(t *t
 	}
 }
 
-func TestSetCardSchedulerChannelStatusReportsCacheClearFailureAfterClose(t *testing.T) {
+func TestSetCardSchedulerChannelStatusPersistsCacheClearFailureAfterClose(t *testing.T) {
 	remoteStatus, cacheClears := 1, 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1510,7 +1510,7 @@ func TestSetCardSchedulerChannelStatusReportsCacheClearFailureAfterClose(t *test
 		t.Fatal(err)
 	}
 
-	if _, err := svc.SetCardSchedulerChannelStatus(t.Context(), card.ID, 2); err == nil || !strings.Contains(err.Error(), "渠道已关闭，但清空亲和性缓存失败") {
+	if _, err := svc.SetCardSchedulerChannelStatus(t.Context(), card.ID, 2); err != nil {
 		t.Fatalf("close error = %v", err)
 	}
 	if remoteStatus != 2 || cacheClears != 1 {
@@ -1520,8 +1520,12 @@ func TestSetCardSchedulerChannelStatusReportsCacheClearFailureAfterClose(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(logs) != 1 || logs[0].Status != "error" || !strings.Contains(logs[0].Message, "清空亲和性缓存失败") {
+	if len(logs) != 2 || logs[0].Action != "disable" || logs[0].Status != "success" || logs[1].Action != "affinity_cleanup" {
 		t.Fatalf("logs=%+v", logs)
+	}
+	lifecycle, found, err := st.SchedulerChannelLifecycle(t.Context(), "9")
+	if err != nil || !found || !lifecycle.AffinityCleanupPending || lifecycle.AffinityCleanupError == "" {
+		t.Fatalf("lifecycle=%+v found=%v err=%v", lifecycle, found, err)
 	}
 }
 
@@ -1568,7 +1572,7 @@ func TestSchedulerNoConfigNoBindingAndSuccessFalse(t *testing.T) {
 	}))
 	defer ts.Close()
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
 		t.Fatal(err)
 	}
 	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "C", BaseURL: "https://api.example.test", APIKey: "sk", SchedulerChannelID: "9", SchedulerChannelName: "C", Enabled: true})
@@ -1839,7 +1843,7 @@ func TestSchedulerGroupsFallbackAndParse(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
 		t.Fatal(err)
 	}
 	groups, err := svc.SchedulerGroups(t.Context())
@@ -2205,7 +2209,7 @@ func TestSchedulerAutomationSkipsMonitorOnlyCards(t *testing.T) {
 	}
 	svc := New(st)
 	svc.Client = monitor.Client{HTTP: ts.Client()}
-	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned",}); err != nil {
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: ts.URL, UserID: "42", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
 		t.Fatal(err)
 	}
 	err = svc.applySchedulerAutomation(t.Context(), domain.ModelCard{ID: "c", Name: "监控", PoolEnabled: false, SchedulerChannelID: "9"}, false, 2)

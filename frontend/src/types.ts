@@ -339,10 +339,10 @@ export type SchedulerLog = {
   card_name: string
   channel_id: string
   channel_name: string
-  action: 'disable' | 'restore' | 'group_sync' | 'traffic_control'
+  action: string
   status: 'success' | 'error' | 'skipped'
   message: string
-	reason?: string
+  reason?: string
   created_at: string
 }
 
@@ -395,7 +395,95 @@ export type TrafficStatus = {
   backlog_pages: number
   frozen: boolean
   freeze_reason?: string
+  session_failures: number
   channels: TrafficChannelState[]
+}
+
+export type SchedulerControlPlaneChannel = {
+  channel_id: string
+  channel_name?: string
+  remote_status: number
+  remote_priority: number
+  remote_weight: number
+  owner: 'aum' | 'ggapi' | 'external'
+  external_takeover: boolean
+  aum_disabled: boolean
+  close_source?: string
+  close_reason?: string
+  traffic_since?: string
+  new_traffic_requests: number
+  session_failures: number
+  affinity_cleanup_pending: boolean
+  affinity_cleanup_retry_at?: string
+  affinity_cleanup_error?: string
+  availability?: AvailabilityRow
+  traffic?: TrafficChannelState
+  updated_at?: string
+}
+
+export type SchedulerControlPlane = {
+  traffic: TrafficStatus
+  channels: SchedulerControlPlaneChannel[]
+  logs: SchedulerLog[]
+}
+
+export type GGAPIAffinityKeySource = {
+  type: 'context_int' | 'context_string' | 'request_header' | 'gjson'
+  key?: string
+  path?: string
+  [key: string]: unknown
+}
+
+export type GGAPIAffinityRule = {
+  name: string
+  model_regex: string[]
+  path_regex: string[]
+  user_agent_include?: string[]
+  key_sources: GGAPIAffinityKeySource[]
+  value_regex: string
+  ttl_seconds: number
+  skip_retry_on_failure: boolean
+  include_using_group: boolean
+  include_model_name: boolean
+  include_rule_name: boolean
+  param_override_template?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export type GGAPISettings = {
+  retry_times: number
+  automatic_retry_status_codes: string
+  automatic_disable_status_codes: string
+  channel_test_mode: 'scheduled_all' | 'passive_recovery'
+  auto_test_channel_enabled: boolean
+  auto_test_channel_minutes: number
+  automatic_disable_channel_enabled: boolean
+  automatic_enable_channel_enabled: boolean
+  affinity: {
+    enabled: boolean
+    switch_on_success: boolean
+    keep_on_channel_disabled: boolean
+    max_entries: number
+    default_ttl_seconds: number
+    rules: GGAPIAffinityRule[]
+  }
+}
+
+export type GGAPISettingsUpdateResult = {
+  complete: boolean
+  applied: string[]
+  failed_key?: string
+  error?: string
+  settings: GGAPISettings
+}
+
+export type GGAPIAffinityCacheStats = {
+  enabled: boolean
+  total: number
+  unknown: number
+  by_rule_name: Record<string, number>
+  cache_capacity: number
+  cache_algo: string
 }
 
 export type AvailabilityPolicy = {

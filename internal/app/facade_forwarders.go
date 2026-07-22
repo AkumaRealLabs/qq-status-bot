@@ -77,6 +77,30 @@ func (s *Service) AdoptTrafficBaseline(ctx context.Context, channelID string) (d
 	return s.Scheduler.AdoptTrafficBaseline(ctx, channelID)
 }
 
+func (s *Service) SchedulerControlPlane(ctx context.Context) (domain.SchedulerControlPlane, error) {
+	return s.Scheduler.ControlPlane(ctx)
+}
+
+func (s *Service) AdoptSchedulerControlPlaneChannel(ctx context.Context, channelID string) (domain.SchedulerChannelLifecycle, error) {
+	return s.Scheduler.AdoptControlPlaneChannel(ctx, channelID)
+}
+
+func (s *Service) GGAPISettings(ctx context.Context) (domain.GGAPISettings, error) {
+	return s.Scheduler.GGAPISettings(ctx)
+}
+
+func (s *Service) SaveGGAPISettings(ctx context.Context, settings domain.GGAPISettings) (domain.GGAPISettingsUpdateResult, error) {
+	return s.Scheduler.SaveGGAPISettings(ctx, settings)
+}
+
+func (s *Service) GGAPIAffinityCache(ctx context.Context) (domain.GGAPIAffinityCacheStats, error) {
+	return s.Scheduler.GGAPIAffinityCache(ctx)
+}
+
+func (s *Service) ClearGGAPIAffinityCache(ctx context.Context, ruleName string, all bool) (domain.GGAPIAffinityCacheClearResult, error) {
+	return s.Scheduler.ClearGGAPIAffinityCache(ctx, ruleName, all)
+}
+
 func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitResponse, error) {
 	return s.ProfitSvc.Profit(ctx, window)
 }

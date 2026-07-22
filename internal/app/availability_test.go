@@ -212,24 +212,26 @@ func TestAvailabilityCacheClearFailureKeepsPendingAndRetries(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("pending row found=%v err=%v", found, err)
 	}
-	if remoteStatus != 2 || row.PendingAction != domain.AvailabilityActionDisable || row.PendingStatus != 2 || row.RetryCount != 1 || row.LastError == "" || row.ActualStatus == 2 {
+	if remoteStatus != 2 || row.PendingAction != "" || row.PendingStatus != 0 || row.RetryCount != 0 || row.LastError != "" || row.ActualStatus != 2 {
 		t.Fatalf("after cache failure row=%+v remote=%d", row, remoteStatus)
 	}
-	past := time.Now().UTC().Add(-time.Second)
-	row.RetryAt = &past
-	if ok, err := st.SaveChannelAvailabilityCAS(t.Context(), row, row.Version); err != nil || !ok {
-		t.Fatalf("make retry due ok=%v err=%v", ok, err)
+	lifecycle, found, err := st.SchedulerChannelLifecycle(t.Context(), "9")
+	if err != nil || !found || !lifecycle.AffinityCleanupPending || lifecycle.AffinityCleanupRetries != 1 || lifecycle.AffinityCleanupError == "" {
+		t.Fatalf("lifecycle=%+v found=%v err=%v", lifecycle, found, err)
 	}
-
-	if err := svc.ReconcileAvailability(t.Context()); err != nil {
+	lifecycle.AffinityCleanupRetryAt = time.Now().UTC().Add(-time.Second)
+	if err := st.SaveSchedulerChannelLifecycle(t.Context(), lifecycle); err != nil {
 		t.Fatal(err)
 	}
-	row, _, err = st.ChannelAvailability(t.Context(), "9")
+	if err := svc.Scheduler.ReconcileControlPlane(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, _, err = st.SchedulerChannelLifecycle(t.Context(), "9")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if statusWrites != 2 || cacheClears != 2 || row.PendingAction != "" || row.PendingStatus != 0 || row.RetryCount != 0 || row.LastError != "" || row.ActualStatus != 2 {
-		t.Fatalf("after retry writes=%d clears=%d row=%+v", statusWrites, cacheClears, row)
+	if statusWrites != 1 || cacheClears != 2 || lifecycle.AffinityCleanupPending || lifecycle.AffinityCleanupRetries != 0 || lifecycle.AffinityCleanupError != "" {
+		t.Fatalf("after retry writes=%d clears=%d lifecycle=%+v", statusWrites, cacheClears, lifecycle)
 	}
 	updated, err := st.Card(t.Context(), card.ID)
 	if err != nil || !updated.SchedulerAutoDisabled {

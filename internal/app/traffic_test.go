@@ -93,6 +93,19 @@ func TestTrafficActiveSoftCircuitWritesAndVerifiesRemote(t *testing.T) {
 	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: server.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned", TrafficMode: domain.TrafficModeActive}); err != nil {
 		t.Fatal(err)
 	}
+	if err := svc.Scheduler.SeedControlPlaneBaseline(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, channelID := range []string{"9", "10"} {
+		lifecycle, found, err := st.SchedulerChannelLifecycle(t.Context(), channelID)
+		if err != nil || !found {
+			t.Fatalf("lifecycle %s found=%v err=%v", channelID, found, err)
+		}
+		lifecycle.TrafficSince = now.Add(-time.Minute)
+		if err := st.SaveSchedulerChannelLifecycle(t.Context(), lifecycle); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := svc.ReconcileTraffic(t.Context()); err != nil {
 		t.Fatal(err)
 	}

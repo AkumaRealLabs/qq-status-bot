@@ -130,7 +130,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 			request_id TEXT NOT NULL DEFAULT '', upstream_request_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '', http_status INTEGER NOT NULL DEFAULT 0,
 			error_type TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '', duration_ms INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER NOT NULL DEFAULT 0,
 			stream_ended INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0, retry_count INTEGER NOT NULL DEFAULT 0,
-			retry_succeeded INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+			retry_succeeded INTEGER NOT NULL DEFAULT 0, affinity_rule TEXT NOT NULL DEFAULT '', affinity_group TEXT NOT NULL DEFAULT '',
+			affinity_hit INTEGER NOT NULL DEFAULT 0, session_scoped INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS scheduler_traffic_10s (
 			id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, channel_name TEXT NOT NULL DEFAULT '', model TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT '',
@@ -159,6 +160,15 @@ func (s *Store) Migrate(ctx context.Context) error {
 			failure_windows INTEGER NOT NULL DEFAULT 0, recovery_stage INTEGER NOT NULL DEFAULT 0, cooldown_until TEXT NOT NULL DEFAULT '',
 			last_probe_at TEXT NOT NULL DEFAULT '', recovery_successes INTEGER NOT NULL DEFAULT 0, stage_changed_at TEXT NOT NULL DEFAULT '',
 			retry_at TEXT NOT NULL DEFAULT '', retry_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS scheduler_channel_lifecycle (
+			channel_id TEXT PRIMARY KEY, channel_name TEXT NOT NULL DEFAULT '', remote_status INTEGER NOT NULL DEFAULT 0,
+			remote_priority INTEGER NOT NULL DEFAULT 0, remote_weight INTEGER NOT NULL DEFAULT 0, owner TEXT NOT NULL DEFAULT 'aum',
+			external_takeover INTEGER NOT NULL DEFAULT 0, aum_disabled INTEGER NOT NULL DEFAULT 0, last_aum_status INTEGER NOT NULL DEFAULT 0,
+			last_aum_write_at TEXT NOT NULL DEFAULT '', last_source TEXT NOT NULL DEFAULT '', last_reason TEXT NOT NULL DEFAULT '',
+			traffic_since TEXT NOT NULL DEFAULT '', affinity_cleanup_pending INTEGER NOT NULL DEFAULT 0,
+			affinity_cleanup_retry_at TEXT NOT NULL DEFAULT '', affinity_cleanup_retries INTEGER NOT NULL DEFAULT 0,
+			affinity_cleanup_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS revenue_cards (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, source_type TEXT NOT NULL, upstream_id TEXT NOT NULL DEFAULT '',
@@ -202,6 +212,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_events_channel_model ON scheduler_traffic_events(channel_id, model, occurred_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_10s_time ON scheduler_traffic_10s(window_start)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_1m_time ON scheduler_traffic_1m(window_start)`,
+		`CREATE INDEX IF NOT EXISTS idx_scheduler_channel_lifecycle_cleanup ON scheduler_channel_lifecycle(affinity_cleanup_pending, affinity_cleanup_retry_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_revenue_cards_upstream ON revenue_cards(upstream_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_tg_messages_channel_time ON tg_messages(channel_id, published_at)`,
 	}
@@ -260,6 +271,14 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"scan_start_at", "TEXT NOT NULL DEFAULT ''"}, {"scan_end_at", "TEXT NOT NULL DEFAULT ''"}, {"next_page", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.addColumnIfMissing(ctx, "scheduler_traffic_cursors", col.name, col.def); err != nil {
+			return err
+		}
+	}
+	for _, col := range []struct{ name, def string }{
+		{"affinity_rule", "TEXT NOT NULL DEFAULT ''"}, {"affinity_group", "TEXT NOT NULL DEFAULT ''"},
+		{"affinity_hit", "INTEGER NOT NULL DEFAULT 0"}, {"session_scoped", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "scheduler_traffic_events", col.name, col.def); err != nil {
 			return err
 		}
 	}
@@ -387,6 +406,14 @@ func (s *Store) Migrate(ctx context.Context) error {
 			CASE WHEN scheduler_auto_disabled_at<>'' THEN scheduler_auto_disabled_at ELSE ? END, 0, 1, ?
 		FROM model_cards
 		WHERE pool_enabled=1 AND scheduler_auto_disabled=1 AND TRIM(scheduler_channel_id)<>''
+		ON CONFLICT(channel_id) DO NOTHING`, nowText(), nowText()); err != nil {
+		return err
+	}
+	// 旧运行态里明确由 AUM 关闭的渠道可以继续恢复；其余远端状态在首轮读取时只建立基线。
+	if _, err := s.exec(ctx, `INSERT INTO scheduler_channel_lifecycle
+		(channel_id, channel_name, remote_status, owner, aum_disabled, last_aum_status, last_source, last_reason, traffic_since, updated_at)
+		SELECT channel_id, channel_name, actual_status, 'aum', 1, 2, 'migration', '从既有可用性运行态迁移', ?, ?
+		FROM channel_availability WHERE actual_status=2 AND desired_status=2 AND disabled_at<>''
 		ON CONFLICT(channel_id) DO NOTHING`, nowText(), nowText()); err != nil {
 		return err
 	}
