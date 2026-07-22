@@ -244,6 +244,21 @@ func TestParseTrafficEventRetrySuccessIsSoftFailure(t *testing.T) {
 	}
 }
 
+func TestParseTrafficEventReadsNewAPIFirstResponseTime(t *testing.T) {
+	event, ok := parseTrafficEvent("consume", 2, map[string]any{
+		"created_at": time.Now().UTC().Unix(),
+		"channel":    9,
+		"model_name": "gpt-test",
+		"other":      `{"frt":321}`,
+	})
+	if !ok {
+		t.Fatal("event was not parsed")
+	}
+	if event.TTFTMS != 321 {
+		t.Fatalf("ttft=%d want=321", event.TTFTMS)
+	}
+}
+
 func TestTrafficChannelViewDoesNotReuseAvailabilityCloseState(t *testing.T) {
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "traffic-control.sqlite"))
 	if err != nil {

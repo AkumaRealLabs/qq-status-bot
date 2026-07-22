@@ -109,6 +109,11 @@ func (s *Store) DeleteChannelAvailabilityForUpstream(ctx context.Context, upstre
 	return err
 }
 
+func (s *Store) DeleteChannelAvailabilityBinding(ctx context.Context, channelID, cardID string) error {
+	_, err := s.exec(ctx, `DELETE FROM channel_availability WHERE channel_id=? AND card_id=?`, strings.TrimSpace(channelID), strings.TrimSpace(cardID))
+	return err
+}
+
 const availabilitySelect = `SELECT channel_id, channel_name, card_id, card_name, upstream_id, upstream_name, managed, blockers, desired_status, actual_status,
 	disabled_at, recovery_success_count, override_kind, override_until, pending_action, pending_status, retry_at, retry_count, last_error, version, updated_at FROM channel_availability`
 

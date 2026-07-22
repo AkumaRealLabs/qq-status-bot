@@ -189,7 +189,8 @@ func parseTrafficEvent(source string, logType int, raw map[string]any) (domain.T
 	if duration == 0 {
 		duration = trafficMilliseconds(lookup("use_time", "useTime"), true)
 	}
-	ttft := trafficMilliseconds(lookup("ttft_ms", "ttftMs", "first_token_ms", "firstTokenMs", "time_to_first_token", "timeToFirstToken"), false)
+	// new-api 把首响应耗时以毫秒写入日志 other.frt；同时兼容其他调度器的显式 TTFT 字段。
+	ttft := trafficMilliseconds(lookup("ttft_ms", "ttftMs", "first_token_ms", "firstTokenMs", "time_to_first_token", "timeToFirstToken", "frt"), false)
 	streamEnded := trafficBool(lookup("stream_ended", "streamEnded", "stream_completed", "streamCompleted"), kind == domain.TrafficEventSuccess)
 	if !streamEnded && kind == domain.TrafficEventSuccess {
 		kind = domain.TrafficEventSoftFailure

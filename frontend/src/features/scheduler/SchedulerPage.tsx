@@ -429,7 +429,9 @@ function trafficStateVariant(state: string): 'default' | 'secondary' | 'destruct
 
 function trafficWindowLabel(window?: TrafficWindow) {
   if (!window || window.requests === 0) return '-'
-  return `${window.requests} 次 · ${Math.round(window.failure_rate * 100)}% · P95 ${window.p95_ttft_ms || 0}ms`
+  const successRate = Math.round((1 - window.failure_rate) * 100)
+  const p95 = window.p95_ttft_ms > 0 ? `${window.p95_ttft_ms}ms` : '-'
+  return `${window.requests} 次 · 成功 ${successRate}% · P95 ${p95}`
 }
 
 function AvailabilityControl() {

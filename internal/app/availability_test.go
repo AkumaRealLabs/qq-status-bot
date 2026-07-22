@@ -242,6 +242,74 @@ func TestAvailabilityReconcileClearsStaleAutoDisabledAfterRemoteEnable(t *testin
 	}
 }
 
+func TestDeleteCardRemovesAvailabilityRuntimeState(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "availability-delete.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	upstream, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "上游", Type: "newapi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", UpstreamID: upstream.ID, PoolEnabled: true, SchedulerChannelID: "9", SchedulerChannelName: "渠道9", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.SaveChannelAvailabilityCAS(t.Context(), domain.ChannelAvailability{
+		ChannelID: "9", ChannelName: "渠道9", CardID: card.ID, CardName: card.Name, UpstreamID: upstream.ID, UpstreamName: upstream.Name,
+		Managed: true, DesiredStatus: 1, ActualStatus: 1,
+	}, 0); err != nil || !ok {
+		t.Fatalf("seed availability ok=%v err=%v", ok, err)
+	}
+
+	if err := New(st).DeleteCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := st.ChannelAvailability(t.Context(), "9"); err != nil || found {
+		t.Fatalf("availability found=%v err=%v", found, err)
+	}
+}
+
+func TestAvailabilityRowsPrunesStaleCardState(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "availability-orphan.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	upstream, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "上游", Type: "newapi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "已换绑卡片", UpstreamID: upstream.ID, PoolEnabled: true, SchedulerChannelID: "10", SchedulerChannelName: "新渠道", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.SaveChannelAvailabilityCAS(t.Context(), domain.ChannelAvailability{
+		ChannelID: "9", ChannelName: "旧渠道", CardID: card.ID, CardName: card.Name, UpstreamID: upstream.ID, UpstreamName: upstream.Name,
+		Managed: false, DesiredStatus: 1, ActualStatus: 1,
+	}, 0); err != nil || !ok {
+		t.Fatalf("seed orphan ok=%v err=%v", ok, err)
+	}
+
+	rows, err := New(st).AvailabilityRows(t.Context(), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("rows=%+v", rows)
+	}
+	if _, found, err := st.ChannelAvailability(t.Context(), "9"); err != nil || found {
+		t.Fatalf("orphan found=%v err=%v", found, err)
+	}
+}
+
 func TestReconcileMissingChannelNotifiesOnlyOnTransition(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []any{}}})

@@ -223,7 +223,7 @@ func (s *SchedulerService) markAvailabilityBindingInvalid(ctx context.Context, c
 	return err
 }
 
-// ReleaseAvailabilityBinding 仅放弃控制权，绝不为解绑/退出号池自动打开旧渠道。
+// ReleaseAvailabilityBinding 放弃控制权并移除当前运行态，绝不为解绑/退出号池自动打开旧渠道。
 func (s *SchedulerService) ReleaseAvailabilityBinding(ctx context.Context, card domain.ModelCard, reason string) error {
 	if strings.TrimSpace(card.SchedulerChannelID) == "" {
 		return nil
@@ -239,6 +239,7 @@ func (s *SchedulerService) ReleaseAvailabilityBinding(ctx context.Context, card 
 	})
 	if err == nil {
 		s.recordAvailabilityLog(ctx, updated, "release", "skipped", reason, "binding_released")
+		err = s.app.Store.DeleteChannelAvailabilityBinding(ctx, card.SchedulerChannelID, card.ID)
 	}
 	return err
 }
@@ -550,6 +551,14 @@ func (s *SchedulerService) AvailabilityRows(ctx context.Context, upstreamID, sta
 	if err != nil {
 		return nil, err
 	}
+	cards, err := s.app.Cards.ListCards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cardsByID := make(map[string]domain.ModelCard, len(cards))
+	for _, card := range cards {
+		cardsByID[card.ID] = card
+	}
 	upstreams, err := s.app.Store.ListUpstreams(ctx)
 	if err != nil {
 		return nil, err
@@ -560,6 +569,15 @@ func (s *SchedulerService) AvailabilityRows(ctx context.Context, upstreamID, sta
 	}
 	out := make([]domain.AvailabilityView, 0, len(rows))
 	for _, row := range rows {
+		card, cardExists := cardsByID[row.CardID]
+		bindingCurrent := cardExists && card.Enabled && card.PoolEnabled && strings.TrimSpace(card.SchedulerChannelID) == row.ChannelID
+		if !bindingCurrent {
+			// 兼容旧版本删除、停用或换绑卡片后留下的运行态；历史调度日志仍然保留。
+			if err := s.app.Store.DeleteChannelAvailabilityBinding(ctx, row.ChannelID, row.CardID); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		upstream, ok := byID[row.UpstreamID]
 		if !ok {
 			continue
