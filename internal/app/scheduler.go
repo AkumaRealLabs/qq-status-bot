@@ -34,6 +34,8 @@ func (s *SchedulerService) SaveSchedulerConfig(ctx context.Context, cfg domain.S
 		return domain.SchedulerConfig{}, err
 	}
 	cfg = cfg.MergeUpdate(old)
+	// provider 只能经显式切换接口变更，避免旧配置表单绕过 AxonHub 预检。
+	cfg.Provider = old.Provider
 	if err := domain.ValidateSchedulerTiers(cfg.Tiers); err != nil {
 		return domain.SchedulerConfig{}, BadRequest(err)
 	}
@@ -130,8 +132,13 @@ func (s *SchedulerService) recordInactiveCostSnapshot(ctx context.Context, card 
 }
 
 func (s *SchedulerService) cardCostSnapshot(ctx context.Context, card domain.ModelCard) domain.SchedulerChannelCostSnapshot {
+	provider := domain.SchedulerProviderGGAPI
+	channelID, channelName := card.SchedulerChannelID, card.SchedulerChannelName
+	if cfg, err := s.app.Store.SchedulerConfig(ctx); err == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
+		provider, channelID, channelName = domain.SchedulerProviderAxonHub, card.AxonHubChannelID, card.AxonHubChannelName
+	}
 	snap := domain.SchedulerChannelCostSnapshot{
-		ChannelID: card.SchedulerChannelID, ChannelName: card.SchedulerChannelName,
+		Provider: provider, ChannelID: channelID, ChannelName: channelName,
 		CardID: card.ID, CardName: card.Name, MissingReason: "缺成本绑定", EffectiveAt: time.Now().UTC(),
 	}
 	if snap.ChannelID == "" {
@@ -177,6 +184,9 @@ func (s *SchedulerService) SchedulerChannels(ctx context.Context, keyword string
 	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.Provider == domain.SchedulerProviderAxonHub {
+		return s.AxonHubChannels(ctx, keyword)
 	}
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
 		return nil, ErrBadRequest("请先配置调度器连接")
@@ -255,6 +265,9 @@ func (s *SchedulerService) SchedulerGroups(ctx context.Context) ([]domain.Schedu
 	if err != nil {
 		return nil, err
 	}
+	if cfg.Provider == domain.SchedulerProviderAxonHub {
+		return []domain.SchedulerGroup{{Name: domain.AxonHubTagLow}, {Name: domain.AxonHubTagStable}}, nil
+	}
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
 		return nil, ErrBadRequest("请先配置调度器连接")
 	}
@@ -276,6 +289,9 @@ func (s *SchedulerService) fetchSchedulerGroups(ctx context.Context, cfg domain.
 }
 
 func (s *SchedulerService) SchedulerLogs(ctx context.Context, limit int) ([]domain.SchedulerLog, error) {
+	if cfg, err := s.app.Store.SchedulerConfig(ctx); err == nil {
+		return s.app.Store.SchedulerLogsForProvider(ctx, cfg.Provider, limit)
+	}
 	return s.app.Store.SchedulerLogs(ctx, limit)
 }
 
@@ -283,6 +299,12 @@ func (s *SchedulerService) ApplySchedulerGroups(ctx context.Context) (domain.Sch
 	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return domain.SchedulerApplyResult{}, err
+	}
+	if cfg.Provider == domain.SchedulerProviderAxonHub {
+		if err := s.ReconcileAxonHub(ctx); err != nil {
+			return domain.SchedulerApplyResult{}, err
+		}
+		return domain.SchedulerApplyResult{}, nil
 	}
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
 		return domain.SchedulerApplyResult{}, errSchedulerNotConfigured
@@ -449,6 +471,9 @@ func (s *SchedulerService) SetCardSchedulerChannelStatus(ctx context.Context, ca
 	if err != nil {
 		return domain.ModelCard{}, err
 	}
+	if cfg, cfgErr := s.app.Store.SchedulerConfig(ctx); cfgErr == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
+		return domain.ModelCard{}, ErrBadRequest("AxonHub 状态仅由余额硬保护控制")
+	}
 	if !card.PoolEnabled {
 		return domain.ModelCard{}, ErrBadRequest("card is monitor-only")
 	}
@@ -488,6 +513,9 @@ func (s *SchedulerService) availabilityManagedSchedulerCard(ctx context.Context,
 }
 
 func (s *SchedulerService) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {
+	if cfg, err := s.app.Store.SchedulerConfig(ctx); err == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
+		return nil
+	}
 	if success {
 		if cfg, cfgErr := s.app.Store.SchedulerConfig(ctx); cfgErr == nil && cfg.TrafficMode == domain.TrafficModeActive {
 			if control, found, controlErr := s.app.Store.TrafficControl(ctx, card.SchedulerChannelID); controlErr == nil && found && control.ActualStatus == 2 {

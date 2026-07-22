@@ -73,7 +73,10 @@ func (s *ProfitService) Profit(ctx context.Context, window string) (domain.Profi
 	if err != nil {
 		return domain.ProfitResponse{}, err
 	}
-	out := domain.ProfitResponse{Window: label, Complete: true, Note: "按消费日志时间命中当时生效的售价/成本快照；早于首个快照的日志用首个快照向前兜底。"}
+	if cfg.Provider == domain.SchedulerProviderAxonHub {
+		return domain.ProfitResponse{Available: false, Window: label, Complete: false, Note: "AxonHub 数据暂不可用：当前 beta5 没有适合 service account 的只读 Usage Log API。成本与售价快照仍会保存。"}, nil
+	}
+	out := domain.ProfitResponse{Available: true, Window: label, Complete: true, Note: "按消费日志时间命中当时生效的售价/成本快照；早于首个快照的日志用首个快照向前兜底。"}
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
 		return out, ErrBadRequest("请先配置调度器连接")
 	}

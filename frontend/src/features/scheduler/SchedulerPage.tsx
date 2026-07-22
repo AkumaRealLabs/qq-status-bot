@@ -15,6 +15,7 @@ import { alertError, secretPlaceholder, useFeedback } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
 import type { AvailabilityPolicy, AvailabilityRow, ModelCard, SchedulerApplyResult, SchedulerChannel, SchedulerConfig, SchedulerGroup, SchedulerLog, SchedulerTier, TrafficStatus, TrafficWindow, UpstreamRow } from '@/types'
 import { GGAPICollaborationConsole } from './GGAPIConsole'
+import { AxonHubConsole } from './AxonHubConsole'
 
 const none = '__none__'
 const defaultTiers: SchedulerTier[] = [
@@ -33,12 +34,12 @@ export function SchedulerPage() {
   const groups = useQuery({
     queryKey: ['scheduler', 'groups'],
     queryFn: () => api<SchedulerGroup[]>('/api/scheduler/groups'),
-    enabled: configured,
+    enabled: configured && cfg.data?.scheduler_provider !== 'axonhub',
   })
   const channels = useQuery({
     queryKey: ['scheduler', 'channels'],
     queryFn: () => api<SchedulerChannel[]>('/api/scheduler/channels'),
-    enabled: configured,
+    enabled: configured && cfg.data?.scheduler_provider !== 'axonhub',
   })
   const form = cfgDraft ?? cfg.data
   const saveConfig = useMutation({
@@ -96,7 +97,18 @@ export function SchedulerPage() {
     },
     onError: fb.fail,
   })
+  const switchToAxonHub = useMutation({
+    mutationFn: () => api<SchedulerConfig>('/api/scheduler/provider/switch', { method: 'POST', body: JSON.stringify({ provider: 'axonhub', control_mode: 'observe' }) }),
+    onSuccess: async (data) => {
+      await qc.setQueryData(['scheduler', 'config'], data)
+      await qc.invalidateQueries({ queryKey: ['scheduler'] })
+    },
+    onError: alertError,
+  })
   if (!form) return <ShellLoading />
+  if (form.scheduler_provider === 'axonhub') {
+    return <Page title="渠道管理"><AxonHubConsole /></Page>
+  }
   const rows = cards.data ?? []
   const poolRows = rows.filter((card) => card.pool_enabled ?? true)
   const list = channels.data ?? []
@@ -130,6 +142,9 @@ export function SchedulerPage() {
           <Button variant="outline" size="sm" onClick={refreshAll} disabled={refreshing}>
             <RefreshCcw className={cn('size-4', refreshing && 'animate-spin')} />
             刷新
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => switchToAxonHub.mutate()} disabled={switchToAxonHub.isPending}>
+            {switchToAxonHub.isPending ? <Loader2 className="size-4 animate-spin" /> : <SlidersHorizontal className="size-4" />}切换 AxonHub
           </Button>
           <SchedulerConfigDialog
             form={form}

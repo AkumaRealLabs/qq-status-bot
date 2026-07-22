@@ -25,6 +25,8 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 		SchedulerGroup       string `json:"scheduler_group"`
 		SchedulerChannelID   string `json:"scheduler_channel_id"`
 		SchedulerChannelName string `json:"scheduler_channel_name"`
+		AxonHubChannelID     string `json:"axonhub_channel_id"`
+		AxonHubChannelName   string `json:"axonhub_channel_name"`
 		Enabled              *bool  `json:"enabled"`
 		PublicEnabled        *bool  `json:"public_enabled"`
 	}
@@ -46,7 +48,7 @@ func (s *Server) createCard(w http.ResponseWriter, r *http.Request) {
 	card, err := s.App.SaveCard(r.Context(), "", domain.ModelCard{
 		Name: body.Name, BaseURL: body.BaseURL, APIKey: body.APIKey, UpstreamID: body.UpstreamID, KeyID: body.KeyID, Model: body.Model,
 		DisplayGroup: body.DisplayGroup, PoolEnabled: poolEnabled, PoolEnabledSet: true, ManualCostRatio: body.ManualCostRatio,
-		SchedulerGroup: body.SchedulerGroup, SchedulerChannelID: body.SchedulerChannelID, SchedulerChannelName: body.SchedulerChannelName, Enabled: enabled, PublicEnabled: publicEnabled,
+		SchedulerGroup: body.SchedulerGroup, SchedulerChannelID: body.SchedulerChannelID, SchedulerChannelName: body.SchedulerChannelName, AxonHubChannelID: body.AxonHubChannelID, AxonHubChannelName: body.AxonHubChannelName, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
 	writeJSONOrError(w, card, err)
 }
@@ -65,6 +67,8 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 		SchedulerGroup       *string `json:"scheduler_group"`
 		SchedulerChannelID   *string `json:"scheduler_channel_id"`
 		SchedulerChannelName *string `json:"scheduler_channel_name"`
+		AxonHubChannelID     *string `json:"axonhub_channel_id"`
+		AxonHubChannelName   *string `json:"axonhub_channel_name"`
 		Enabled              *bool   `json:"enabled"`
 		PublicEnabled        *bool   `json:"public_enabled"`
 	}
@@ -114,11 +118,18 @@ func (s *Server) updateCard(w http.ResponseWriter, r *http.Request) {
 	if body.SchedulerChannelName != nil {
 		schedulerChannelName = *body.SchedulerChannelName
 	}
+	axonHubChannelID, axonHubChannelName := old.AxonHubChannelID, old.AxonHubChannelName
+	if body.AxonHubChannelID != nil {
+		axonHubChannelID = *body.AxonHubChannelID
+	}
+	if body.AxonHubChannelName != nil {
+		axonHubChannelName = *body.AxonHubChannelName
+	}
 	// 空来源/密钥字段：SaveCard → ModelCard.MergeUpdate 保留库中值。
 	card, err := s.App.SaveCard(r.Context(), r.PathValue("id"), domain.ModelCard{
 		Name: name, BaseURL: baseURL, APIKey: apiKey, UpstreamID: upstreamID, KeyID: keyID, Model: model,
 		DisplayGroup: displayGroup, PoolEnabled: poolEnabled, PoolEnabledSet: true, ManualCostRatio: manualCostRatio,
-		SchedulerGroup: schedulerGroup, SchedulerChannelID: schedulerChannelID, SchedulerChannelName: schedulerChannelName, SchedulerAutoDisabled: schedulerAutoDisabled, Enabled: enabled, PublicEnabled: publicEnabled,
+		SchedulerGroup: schedulerGroup, SchedulerChannelID: schedulerChannelID, SchedulerChannelName: schedulerChannelName, AxonHubChannelID: axonHubChannelID, AxonHubChannelName: axonHubChannelName, SchedulerAutoDisabled: schedulerAutoDisabled, Enabled: enabled, PublicEnabled: publicEnabled,
 	})
 	writeJSONOrError(w, card, err)
 }

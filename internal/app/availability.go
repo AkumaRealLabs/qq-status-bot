@@ -38,6 +38,9 @@ func (s *SchedulerService) SaveAvailabilityPolicy(ctx context.Context, upstreamI
 
 // ReconcileAvailability 是每分钟的控制面循环：同步绑定、纠正渠道漂移并重放中断的动作意图。
 func (s *SchedulerService) ReconcileAvailability(ctx context.Context) error {
+	if cfg, err := s.app.Store.SchedulerConfig(ctx); err == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
+		return s.ReconcileAxonHub(ctx)
+	}
 	eligible, err := s.hasManagedAvailabilityCards(ctx)
 	if err != nil {
 		return err
@@ -532,6 +535,9 @@ func schedulerConfigured(cfg domain.SchedulerConfig) bool {
 }
 
 func (s *SchedulerService) RecordAvailabilityProbe(ctx context.Context, card domain.ModelCard, success, quotaExhausted bool, purpose string) error {
+	if cfg, err := s.app.Store.SchedulerConfig(ctx); err == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
+		return nil
+	}
 	if card.BaseURL != "" || card.UpstreamID == "" || card.SchedulerChannelID == "" || !card.PoolEnabled {
 		return nil
 	}
@@ -578,6 +584,9 @@ func (s *SchedulerService) RecordAvailabilityProbe(ctx context.Context, card dom
 }
 
 func (s *SchedulerService) AvailabilityRows(ctx context.Context, upstreamID, state string) ([]domain.AvailabilityView, error) {
+	if cfg, err := s.app.Store.SchedulerConfig(ctx); err == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
+		return []domain.AvailabilityView{}, nil
+	}
 	return s.availabilityRows(ctx, upstreamID, state, true)
 }
 

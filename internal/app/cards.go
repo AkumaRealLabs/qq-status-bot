@@ -39,6 +39,17 @@ func (s *ProbeService) SaveCard(ctx context.Context, id string, in domain.ModelC
 			}
 		}
 	}
+	if card.PoolEnabled && card.AxonHubChannelID != "" {
+		cards, err := s.app.Cards.ListCards(ctx)
+		if err != nil {
+			return domain.ModelCard{}, err
+		}
+		for _, item := range cards {
+			if item.PoolEnabled && item.ID != id && item.AxonHubChannelID == card.AxonHubChannelID {
+				return domain.ModelCard{}, ErrBadRequest("AxonHub 渠道已绑定到另一张卡片")
+			}
+		}
+	}
 	if id == "" {
 		out, err := s.app.Cards.CreateCard(ctx, card)
 		if err == nil {
@@ -60,7 +71,7 @@ func (s *ProbeService) SaveCard(ctx context.Context, id string, in domain.ModelC
 	card.SortOrder = old.SortOrder
 	card.CreatedAt = old.CreatedAt
 	out, err := s.app.Cards.UpdateCard(ctx, card)
-	changedBinding := old.UpstreamID != out.UpstreamID || old.KeyID != out.KeyID || old.SchedulerChannelID != out.SchedulerChannelID || old.PoolEnabled != out.PoolEnabled || old.ManualCostRatio != out.ManualCostRatio
+	changedBinding := old.UpstreamID != out.UpstreamID || old.KeyID != out.KeyID || old.SchedulerChannelID != out.SchedulerChannelID || old.AxonHubChannelID != out.AxonHubChannelID || old.PoolEnabled != out.PoolEnabled || old.ManualCostRatio != out.ManualCostRatio
 	if err == nil && old.SchedulerChannelID != "" && (old.SchedulerChannelID != out.SchedulerChannelID || !out.PoolEnabled || old.UpstreamID != out.UpstreamID) {
 		if releaseErr := s.app.Scheduler.ReleaseAvailabilityBinding(ctx, old, "卡片绑定已变更，AUM 不会自动恢复旧渠道"); releaseErr != nil {
 			return out.Public(), releaseErr
@@ -97,6 +108,8 @@ func (s *ProbeService) normalizeCard(ctx context.Context, in domain.ModelCard) (
 		SchedulerGroup:        strings.TrimSpace(in.SchedulerGroup),
 		SchedulerChannelID:    strings.TrimSpace(in.SchedulerChannelID),
 		SchedulerChannelName:  strings.TrimSpace(in.SchedulerChannelName),
+		AxonHubChannelID:      strings.TrimSpace(in.AxonHubChannelID),
+		AxonHubChannelName:    strings.TrimSpace(in.AxonHubChannelName),
 		SchedulerAutoDisabled: in.SchedulerAutoDisabled,
 		Enabled:               in.Enabled,
 		PublicEnabled:         in.PublicEnabled,
@@ -107,7 +120,7 @@ func (s *ProbeService) normalizeCard(ctx context.Context, in domain.ModelCard) (
 	}
 	custom := card.BaseURL != "" || card.APIKey != ""
 	if !card.PoolEnabled {
-		card.ManualCostRatio, card.SchedulerGroup, card.SchedulerChannelID, card.SchedulerChannelName = "", "", "", ""
+		card.ManualCostRatio, card.SchedulerGroup, card.SchedulerChannelID, card.SchedulerChannelName, card.AxonHubChannelID, card.AxonHubChannelName = "", "", "", "", "", ""
 		card.SchedulerAutoDisabled = false
 	} else if !custom {
 		card.ManualCostRatio = ""

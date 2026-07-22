@@ -122,6 +122,9 @@ func schedulerBindingChanged(old, next ModelCard) bool {
 	if strings.TrimSpace(next.SchedulerGroup) != strings.TrimSpace(old.SchedulerGroup) {
 		return true
 	}
+	if strings.TrimSpace(next.AxonHubChannelID) != strings.TrimSpace(old.AxonHubChannelID) {
+		return true
+	}
 	if !next.PoolEnabled && old.PoolEnabled {
 		return true
 	}
@@ -198,6 +201,11 @@ func (in Settings) MergeUpdate(old Settings) Settings {
 // MergeUpdate：密钥保留并规范化档位/URL/未分配分组字段。
 func (in SchedulerConfig) MergeUpdate(old SchedulerConfig) SchedulerConfig {
 	out := in
+	if strings.TrimSpace(in.Provider) == "" {
+		out.Provider = NormalizeSchedulerProvider(old.Provider)
+	} else {
+		out.Provider = NormalizeSchedulerProvider(in.Provider)
+	}
 	out.BaseURL = strings.TrimRight(strings.TrimSpace(in.BaseURL), "/")
 	out.UserID = strings.TrimSpace(in.UserID)
 	out.AccessToken = KeepSecret(in.AccessToken, old.AccessToken)
@@ -217,6 +225,18 @@ func (in SchedulerConfig) MergeUpdate(old SchedulerConfig) SchedulerConfig {
 		out.TrafficPollSecs = NormalizeTrafficPollSeconds(old.TrafficPollSecs)
 	} else {
 		out.TrafficPollSecs = NormalizeTrafficPollSeconds(in.TrafficPollSecs)
+	}
+	return out
+}
+
+func (in AxonHubConfig) MergeUpdate(old AxonHubConfig) AxonHubConfig {
+	out := in
+	out.BaseURL = strings.TrimRight(strings.TrimSpace(in.BaseURL), "/")
+	out.APIKey = KeepSecret(in.APIKey, old.APIKey)
+	if strings.TrimSpace(in.ControlMode) == "" {
+		out.ControlMode = NormalizeAxonHubControlMode(old.ControlMode)
+	} else {
+		out.ControlMode = NormalizeAxonHubControlMode(in.ControlMode)
 	}
 	return out
 }

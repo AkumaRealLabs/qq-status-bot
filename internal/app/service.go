@@ -36,6 +36,7 @@ const (
 	schedulerRechargeInterval  = 15 * time.Minute
 	schedulerCLIProxyInterval  = 30 * time.Minute
 	schedulerTrafficTimeout    = 90 * time.Second
+	schedulerAxonHubInterval   = 10 * time.Second
 )
 
 type Service struct {
@@ -165,6 +166,11 @@ func (s *Service) startTrafficScheduler(ctx context.Context) {
 			interval := 5 * time.Second
 			cfg, err := s.Store.SchedulerConfig(ctx)
 			if err == nil {
+				if cfg.Provider == domain.SchedulerProviderAxonHub {
+					runSchedulerTask(ctx, "AxonHub reconcile", schedulerGroupSyncBudget, s.Scheduler.ReconcileAxonHub)
+					timer.Reset(schedulerAxonHubInterval)
+					continue
+				}
 				interval = time.Duration(domain.NormalizeTrafficPollSeconds(cfg.TrafficPollSecs)) * time.Second
 				if cfg.TrafficMode != domain.TrafficModeOff {
 					runSchedulerTask(ctx, "traffic reconcile", schedulerTrafficTimeout, s.ReconcileTraffic)

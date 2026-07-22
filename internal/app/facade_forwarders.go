@@ -17,6 +17,34 @@ func (s *Service) SaveSchedulerConfig(ctx context.Context, cfg domain.SchedulerC
 	return s.Scheduler.SaveSchedulerConfig(ctx, cfg)
 }
 
+func (s *Service) AxonHubConfig(ctx context.Context) (domain.AxonHubConfig, error) {
+	return s.Scheduler.AxonHubConfig(ctx)
+}
+
+func (s *Service) SaveAxonHubConfig(ctx context.Context, cfg domain.AxonHubConfig) (domain.AxonHubConfig, error) {
+	return s.Scheduler.SaveAxonHubConfig(ctx, cfg)
+}
+
+func (s *Service) TestAxonHub(ctx context.Context) error {
+	return s.Scheduler.TestAxonHub(ctx)
+}
+
+func (s *Service) AxonHubPreflight(ctx context.Context) (domain.AxonHubPreflight, error) {
+	return s.Scheduler.AxonHubPreflight(ctx)
+}
+
+func (s *Service) SwitchSchedulerProvider(ctx context.Context, provider, controlMode string) (domain.SchedulerConfig, error) {
+	return s.Scheduler.SwitchProvider(ctx, provider, controlMode)
+}
+
+func (s *Service) AdoptBoundAxonHubChannels(ctx context.Context) (int, error) {
+	return s.Scheduler.AdoptBoundAxonHubChannels(ctx)
+}
+
+func (s *Service) AxonHubControlPlane(ctx context.Context) (domain.AxonHubControlPlane, error) {
+	return s.Scheduler.AxonHubControlPlane(ctx)
+}
+
 func (s *Service) SeedSchedulerSnapshots(ctx context.Context) error {
 	return s.Scheduler.SeedSchedulerSnapshots(ctx)
 }
@@ -83,6 +111,10 @@ func (s *Service) SchedulerControlPlane(ctx context.Context) (domain.SchedulerCo
 
 func (s *Service) AdoptSchedulerControlPlaneChannel(ctx context.Context, channelID string) (domain.SchedulerChannelLifecycle, error) {
 	return s.Scheduler.AdoptControlPlaneChannel(ctx, channelID)
+}
+
+func (s *Service) AdoptAxonHubControlPlaneChannel(ctx context.Context, channelID string) (domain.AxonHubChannelLifecycle, error) {
+	return s.Scheduler.AdoptAxonHubChannel(ctx, channelID)
 }
 
 func (s *Service) GGAPISettings(ctx context.Context) (domain.GGAPISettings, error) {

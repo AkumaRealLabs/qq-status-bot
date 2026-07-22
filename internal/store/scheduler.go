@@ -14,9 +14,10 @@ import (
 func (s *Store) SchedulerConfig(ctx context.Context) (domain.SchedulerConfig, error) {
 	var cfg domain.SchedulerConfig
 	var tiers string
-	err := s.row(ctx, `SELECT scheduler_base_url, scheduler_user_id, scheduler_access_token, scheduler_unassigned_group, scheduler_tiers,
+	err := s.row(ctx, `SELECT scheduler_provider, scheduler_base_url, scheduler_user_id, scheduler_access_token, scheduler_unassigned_group, scheduler_tiers,
 		scheduler_traffic_mode, scheduler_traffic_profile, scheduler_log_poll_seconds FROM settings WHERE id='default'`).
-		Scan(&cfg.BaseURL, &cfg.UserID, &cfg.AccessToken, &cfg.UnassignedGroup, &tiers, &cfg.TrafficMode, &cfg.TrafficProfile, &cfg.TrafficPollSecs)
+		Scan(&cfg.Provider, &cfg.BaseURL, &cfg.UserID, &cfg.AccessToken, &cfg.UnassignedGroup, &tiers, &cfg.TrafficMode, &cfg.TrafficProfile, &cfg.TrafficPollSecs)
+	cfg.Provider = domain.NormalizeSchedulerProvider(cfg.Provider)
 	cfg.Tiers = schedulerTiers(tiers)
 	cfg.TrafficMode = domain.NormalizeTrafficMode(cfg.TrafficMode)
 	cfg.TrafficProfile = domain.NormalizeTrafficProfile(cfg.TrafficProfile)
@@ -36,9 +37,9 @@ func (s *Store) UpdateSchedulerConfig(ctx context.Context, cfg domain.SchedulerC
 	if err != nil {
 		return cfg, err
 	}
-	_, err = s.exec(ctx, `UPDATE settings SET scheduler_base_url=?, scheduler_user_id=?, scheduler_access_token=?, scheduler_unassigned_group=?, scheduler_tiers=?,
+	_, err = s.exec(ctx, `UPDATE settings SET scheduler_provider=?, scheduler_base_url=?, scheduler_user_id=?, scheduler_access_token=?, scheduler_unassigned_group=?, scheduler_tiers=?,
 		scheduler_traffic_mode=?, scheduler_traffic_profile=?, scheduler_log_poll_seconds=? WHERE id='default'`,
-		cfg.BaseURL, cfg.UserID, cfg.AccessToken, cfg.UnassignedGroup, string(b), cfg.TrafficMode, cfg.TrafficProfile, cfg.TrafficPollSecs)
+		cfg.Provider, cfg.BaseURL, cfg.UserID, cfg.AccessToken, cfg.UnassignedGroup, string(b), cfg.TrafficMode, cfg.TrafficProfile, cfg.TrafficPollSecs)
 	return cfg, err
 }
 
@@ -55,16 +56,35 @@ func (s *Store) CreateSchedulerLog(ctx context.Context, log domain.SchedulerLog)
 	if log.CreatedAt.IsZero() {
 		log.CreatedAt = time.Now().UTC()
 	}
-	_, err := s.exec(ctx, `INSERT INTO scheduler_logs (id, card_id, card_name, channel_id, channel_name, action, status, message, reason, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, log.ID, log.CardID, log.CardName, log.ChannelID, log.ChannelName, log.Action, log.Status, log.Message, log.Reason, log.CreatedAt.Format(time.RFC3339Nano))
+	if log.Provider == "" {
+		log.Provider = domain.SchedulerProviderGGAPI
+	}
+	_, err := s.exec(ctx, `INSERT INTO scheduler_logs (id, card_id, card_name, channel_id, channel_name, action, status, message, reason, provider, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, log.ID, log.CardID, log.CardName, log.ChannelID, log.ChannelName, log.Action, log.Status, log.Message, log.Reason, log.Provider, log.CreatedAt.Format(time.RFC3339Nano))
 	return err
 }
 
 func (s *Store) SchedulerLogs(ctx context.Context, limit int) ([]domain.SchedulerLog, error) {
+	return s.schedulerLogs(ctx, "", limit)
+}
+
+func (s *Store) SchedulerLogsForProvider(ctx context.Context, provider string, limit int) ([]domain.SchedulerLog, error) {
+	return s.schedulerLogs(ctx, domain.NormalizeSchedulerProvider(provider), limit)
+}
+
+func (s *Store) schedulerLogs(ctx context.Context, provider string, limit int) ([]domain.SchedulerLog, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.query(ctx, `SELECT id, card_id, card_name, channel_id, channel_name, action, status, message, reason, created_at FROM scheduler_logs ORDER BY created_at DESC LIMIT ?`, limit)
+	query := `SELECT id, card_id, card_name, channel_id, channel_name, action, status, message, reason, provider, created_at FROM scheduler_logs`
+	args := []any{}
+	if provider != "" {
+		query += ` WHERE provider=?`
+		args = append(args, provider)
+	}
+	query += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +93,7 @@ func (s *Store) SchedulerLogs(ctx context.Context, limit int) ([]domain.Schedule
 	for rows.Next() {
 		var log domain.SchedulerLog
 		var created string
-		if err := rows.Scan(&log.ID, &log.CardID, &log.CardName, &log.ChannelID, &log.ChannelName, &log.Action, &log.Status, &log.Message, &log.Reason, &created); err != nil {
+		if err := rows.Scan(&log.ID, &log.CardID, &log.CardName, &log.ChannelID, &log.ChannelName, &log.Action, &log.Status, &log.Message, &log.Reason, &log.Provider, &created); err != nil {
 			return nil, err
 		}
 		log.CreatedAt = parseTime(created)
@@ -93,29 +113,40 @@ func (s *Store) SaveSchedulerChannelCostSnapshot(ctx context.Context, snap domai
 	if snap.EffectiveAt.IsZero() {
 		snap.EffectiveAt = time.Now().UTC()
 	}
-	if latest, ok, err := s.LatestSchedulerChannelCostSnapshot(ctx, snap.ChannelID); err != nil {
+	if snap.Provider == "" {
+		snap.Provider = domain.SchedulerProviderGGAPI
+	}
+	if latest, ok, err := s.latestSchedulerChannelCostSnapshotForProvider(ctx, snap.Provider, snap.ChannelID); err != nil {
 		return snap, err
 	} else if ok && sameChannelCostSnapshot(latest, snap) {
 		return latest, nil
 	}
 	_, err := s.exec(ctx, `INSERT INTO scheduler_channel_cost_snapshots
-		(id, channel_id, channel_name, card_id, card_name, source_type, upstream_id, upstream_name, key_id, key_name, cost_per_unit, active, missing_reason, effective_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, channel_id, channel_name, card_id, card_name, source_type, upstream_id, upstream_name, key_id, key_name, cost_per_unit, active, missing_reason, provider, effective_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		snap.ID, snap.ChannelID, snap.ChannelName, snap.CardID, snap.CardName, snap.SourceType, snap.UpstreamID, snap.UpstreamName,
-		snap.KeyID, snap.KeyName, snap.CostPerUnit, boolInt(snap.Active), snap.MissingReason, snap.EffectiveAt.UTC().Format(time.RFC3339Nano))
+		snap.KeyID, snap.KeyName, snap.CostPerUnit, boolInt(snap.Active), snap.MissingReason, snap.Provider, snap.EffectiveAt.UTC().Format(time.RFC3339Nano))
 	return snap, err
 }
 
 func (s *Store) LatestSchedulerChannelCostSnapshot(ctx context.Context, channelID string) (domain.SchedulerChannelCostSnapshot, bool, error) {
-	return s.schedulerChannelCostSnapshot(ctx, `channel_id=?`, channelID)
+	return s.latestSchedulerChannelCostSnapshotForProvider(ctx, domain.SchedulerProviderGGAPI, channelID)
+}
+
+func (s *Store) latestSchedulerChannelCostSnapshotForProvider(ctx context.Context, provider, channelID string) (domain.SchedulerChannelCostSnapshot, bool, error) {
+	return s.schedulerChannelCostSnapshot(ctx, `provider=? AND channel_id=?`, provider, channelID)
+}
+
+func (s *Store) LatestSchedulerChannelCostSnapshotForProvider(ctx context.Context, provider, channelID string) (domain.SchedulerChannelCostSnapshot, bool, error) {
+	return s.latestSchedulerChannelCostSnapshotForProvider(ctx, provider, channelID)
 }
 
 func (s *Store) SchedulerChannelCostSnapshotAt(ctx context.Context, channelID string, at time.Time) (domain.SchedulerChannelCostSnapshot, bool, error) {
-	return s.schedulerChannelCostSnapshot(ctx, `channel_id=? AND effective_at<=?`, channelID, at.UTC().Format(time.RFC3339Nano))
+	return s.schedulerChannelCostSnapshot(ctx, `provider=? AND channel_id=? AND effective_at<=?`, domain.SchedulerProviderGGAPI, channelID, at.UTC().Format(time.RFC3339Nano))
 }
 
 func (s *Store) FirstSchedulerChannelCostSnapshot(ctx context.Context, channelID string) (domain.SchedulerChannelCostSnapshot, bool, error) {
-	return s.schedulerChannelCostSnapshotOrder(ctx, `channel_id=?`, `effective_at ASC`, channelID)
+	return s.schedulerChannelCostSnapshotOrder(ctx, `provider=? AND channel_id=?`, `effective_at ASC`, domain.SchedulerProviderGGAPI, channelID)
 }
 
 func (s *Store) schedulerChannelCostSnapshot(ctx context.Context, where string, args ...any) (domain.SchedulerChannelCostSnapshot, bool, error) {
@@ -126,10 +157,10 @@ func (s *Store) schedulerChannelCostSnapshotOrder(ctx context.Context, where, or
 	var snap domain.SchedulerChannelCostSnapshot
 	var active int
 	var effective string
-	err := s.row(ctx, `SELECT id, channel_id, channel_name, card_id, card_name, source_type, upstream_id, upstream_name, key_id, key_name, cost_per_unit, active, missing_reason, effective_at
+	err := s.row(ctx, `SELECT id, channel_id, channel_name, card_id, card_name, source_type, upstream_id, upstream_name, key_id, key_name, cost_per_unit, active, missing_reason, provider, effective_at
 		FROM scheduler_channel_cost_snapshots WHERE `+where+` ORDER BY `+order+` LIMIT 1`, args...).
 		Scan(&snap.ID, &snap.ChannelID, &snap.ChannelName, &snap.CardID, &snap.CardName, &snap.SourceType, &snap.UpstreamID, &snap.UpstreamName,
-			&snap.KeyID, &snap.KeyName, &snap.CostPerUnit, &active, &snap.MissingReason, &effective)
+			&snap.KeyID, &snap.KeyName, &snap.CostPerUnit, &active, &snap.MissingReason, &snap.Provider, &effective)
 	if errors.Is(err, sql.ErrNoRows) {
 		return snap, false, nil
 	}
@@ -142,7 +173,7 @@ func sameChannelCostSnapshot(a, b domain.SchedulerChannelCostSnapshot) bool {
 	return a.ChannelName == b.ChannelName && a.CardID == b.CardID && a.CardName == b.CardName &&
 		a.SourceType == b.SourceType && a.UpstreamID == b.UpstreamID && a.UpstreamName == b.UpstreamName &&
 		a.KeyID == b.KeyID && a.KeyName == b.KeyName && a.CostPerUnit == b.CostPerUnit &&
-		a.Active == b.Active && a.MissingReason == b.MissingReason
+		a.Active == b.Active && a.MissingReason == b.MissingReason && a.Provider == b.Provider
 }
 
 func (s *Store) SaveSchedulerGroupSaleSnapshot(ctx context.Context, snap domain.SchedulerGroupSaleSnapshot) (domain.SchedulerGroupSaleSnapshot, error) {

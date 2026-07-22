@@ -119,3 +119,48 @@ func TestJoinGroups(t *testing.T) {
 		t.Fatalf("got=%q", got)
 	}
 }
+
+func TestAxonHubTiersAndTags(t *testing.T) {
+	if _, ok := AxonHubTierForCost(0.099); !ok {
+		t.Fatal("0.099 should be payg_low")
+	}
+	if _, ok := AxonHubTierForCost(0.0995); ok {
+		t.Fatal("gap between pools must not match")
+	}
+	stable, ok := AxonHubTierForCost(0.10)
+	if !ok || stable.Tag != AxonHubTagStable {
+		t.Fatalf("0.10 tier=%+v ok=%v", stable, ok)
+	}
+	if _, ok := AxonHubTierForCost(0.21); ok {
+		t.Fatal("out-of-range cost should not match")
+	}
+	got := AxonHubTargetTags([]string{"manual", AxonHubTagLow, AxonHubTagStable, "keep"}, AxonHubTagStable)
+	if !SameGroups(got, []string{"manual", "keep", AxonHubTagStable}) {
+		t.Fatalf("tags=%v", got)
+	}
+	cleared := AxonHubTargetTags([]string{"manual", AxonHubTagLow}, "")
+	if !SameGroups(cleared, []string{"manual"}) {
+		t.Fatalf("cleared=%v", cleared)
+	}
+}
+
+func TestAxonHubOrderingWeightsArePoolLocal(t *testing.T) {
+	weights := AxonHubOrderingWeights(map[string]AxonHubCostTarget{
+		"low-a":  {Cost: 0.01, Tag: AxonHubTagLow},
+		"low-b":  {Cost: 0.01, Tag: AxonHubTagLow},
+		"low-c":  {Cost: 0.02, Tag: AxonHubTagLow},
+		"stable": {Cost: 0.11, Tag: AxonHubTagStable},
+	})
+	if weights["low-a"] != 100 || weights["low-b"] != 100 || weights["low-c"] != 90 || weights["stable"] != 100 {
+		t.Fatalf("weights=%v", weights)
+	}
+	many := map[string]AxonHubCostTarget{}
+	for i := 0; i < 12; i++ {
+		many[string(rune('a'+i))] = AxonHubCostTarget{Cost: float64(i), Tag: AxonHubTagLow}
+	}
+	for _, weight := range AxonHubOrderingWeights(many) {
+		if weight < 10 {
+			t.Fatalf("weight below floor: %d", weight)
+		}
+	}
+}

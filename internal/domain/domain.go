@@ -83,6 +83,8 @@ type ModelCard struct {
 	SchedulerGroup          string     `json:"scheduler_group,omitempty"`
 	SchedulerChannelID      string     `json:"scheduler_channel_id,omitempty"`
 	SchedulerChannelName    string     `json:"scheduler_channel_name,omitempty"`
+	AxonHubChannelID        string     `json:"axonhub_channel_id,omitempty"`
+	AxonHubChannelName      string     `json:"axonhub_channel_name,omitempty"`
 	SchedulerAutoDisabled   bool       `json:"scheduler_auto_disabled"`
 	SchedulerAutoDisabledAt *time.Time `json:"scheduler_auto_disabled_at,omitempty"`
 	ProbeMuted              bool       `json:"probe_muted"`
@@ -208,6 +210,7 @@ type Settings struct {
 }
 
 type SchedulerConfig struct {
+	Provider        string          `json:"scheduler_provider"`
 	BaseURL         string          `json:"scheduler_base_url"`
 	UserID          string          `json:"scheduler_user_id"`
 	AccessToken     string          `json:"scheduler_access_token"`
@@ -319,15 +322,19 @@ func ValidateSchedulerUnassignedGroup(unassigned string, tiers []SchedulerTier) 
 }
 
 type SchedulerChannel struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Status   int      `json:"status"`
-	Priority int64    `json:"priority"`
-	Weight   uint     `json:"weight"`
-	Tag      string   `json:"tag,omitempty"`
-	Type     string   `json:"type,omitempty"`
-	Group    string   `json:"group,omitempty"`
-	Models   []string `json:"models,omitempty"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Status         int      `json:"status"`
+	Priority       int64    `json:"priority"`
+	Weight         uint     `json:"weight"`
+	Tag            string   `json:"tag,omitempty"`
+	Type           string   `json:"type,omitempty"`
+	Group          string   `json:"group,omitempty"`
+	Models         []string `json:"models,omitempty"`
+	RemoteStatus   string   `json:"remote_status,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
+	OrderingWeight int      `json:"ordering_weight,omitempty"`
+	Archived       bool     `json:"archived,omitempty"`
 }
 
 type SchedulerGroup struct {
@@ -346,6 +353,7 @@ type SchedulerLog struct {
 	Status      string    `json:"status"`
 	Message     string    `json:"message"`
 	Reason      string    `json:"reason,omitempty"`
+	Provider    string    `json:"provider"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -363,6 +371,7 @@ type SchedulerChannelCostSnapshot struct {
 	CostPerUnit   float64   `json:"cost_per_unit,omitempty"`
 	Active        bool      `json:"active"`
 	MissingReason string    `json:"missing_reason,omitempty"`
+	Provider      string    `json:"provider"`
 	EffectiveAt   time.Time `json:"effective_at"`
 }
 

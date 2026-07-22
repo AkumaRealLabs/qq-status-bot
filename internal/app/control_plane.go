@@ -24,6 +24,9 @@ func (s *SchedulerService) SeedControlPlaneBaseline(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Provider == domain.SchedulerProviderAxonHub {
+		return s.ReconcileAxonHub(ctx)
+	}
 	if !schedulerConfigured(cfg) {
 		return errSchedulerNotConfigured
 	}
@@ -132,6 +135,9 @@ func (s *SchedulerService) ReconcileControlPlane(ctx context.Context) error {
 	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return err
+	}
+	if cfg.Provider == domain.SchedulerProviderAxonHub {
+		return s.ReconcileAxonHub(ctx)
 	}
 	if !schedulerConfigured(cfg) {
 		return errSchedulerNotConfigured
@@ -392,7 +398,7 @@ func (s *SchedulerService) ControlPlane(ctx context.Context) (domain.SchedulerCo
 	if err != nil {
 		return domain.SchedulerControlPlane{}, err
 	}
-	logs, err := s.app.Store.SchedulerLogs(ctx, 50)
+	logs, err := s.app.Store.SchedulerLogsForProvider(ctx, domain.SchedulerProviderGGAPI, 50)
 	if err != nil {
 		return domain.SchedulerControlPlane{}, err
 	}

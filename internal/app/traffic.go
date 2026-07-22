@@ -37,6 +37,9 @@ func (s *SchedulerService) ReconcileTraffic(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Provider == domain.SchedulerProviderAxonHub {
+		return nil
+	}
 	if cfg.TrafficMode == domain.TrafficModeOff {
 		return nil
 	}
@@ -375,6 +378,9 @@ func (s *SchedulerService) TrafficStatus(ctx context.Context) (domain.TrafficSta
 	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return domain.TrafficStatus{}, err
+	}
+	if cfg.Provider == domain.SchedulerProviderAxonHub {
+		return domain.TrafficStatus{Mode: domain.TrafficModeOff, Profile: domain.TrafficProfileBalanced, Channels: []domain.TrafficChannelState{}}, nil
 	}
 	events, err := s.app.Store.TrafficEventsSince(ctx, time.Now().UTC().Add(-trafficStartupReplay))
 	if err != nil {
@@ -898,6 +904,9 @@ func (s *SchedulerService) AdoptTrafficBaseline(ctx context.Context, channelID s
 	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return domain.TrafficControlState{}, err
+	}
+	if cfg.Provider == domain.SchedulerProviderAxonHub {
+		return domain.TrafficControlState{}, ErrBadRequest("AxonHub 不使用 GGAPI 流量基线")
 	}
 	channel, found, err := s.schedulerChannel(ctx, cfg, channelID)
 	if err != nil {

@@ -66,6 +66,8 @@ export type ModelCard = {
   scheduler_group?: string
   scheduler_channel_id?: string
   scheduler_channel_name?: string
+  axonhub_channel_id?: string
+  axonhub_channel_name?: string
   scheduler_auto_disabled: boolean
   scheduler_auto_disabled_at?: string
   probe_muted: boolean
@@ -295,6 +297,7 @@ export type CardForm = {
 }
 
 export type SchedulerConfig = {
+  scheduler_provider: 'ggapi' | 'axonhub'
   scheduler_base_url: string
   scheduler_user_id: string
   scheduler_access_token: string
@@ -325,6 +328,73 @@ export type SchedulerChannel = {
   type?: string
   group?: string
   models?: string[]
+  remote_status?: 'enabled' | 'disabled' | 'archived' | string
+  tags?: string[]
+  ordering_weight?: number
+  archived?: boolean
+}
+
+export type AxonHubConfig = {
+  base_url: string
+  api_key?: string
+  api_key_set?: boolean
+  control_mode: 'off' | 'observe' | 'active'
+}
+
+export type AxonHubLifecycle = {
+  channel_id: string
+  channel_name?: string
+  remote_status: 'enabled' | 'disabled' | 'archived' | string
+  remote_tags: string[]
+  remote_managed_tag?: string
+  remote_weight: number
+  desired_tag?: string
+  desired_weight: number
+  owner: 'aum' | 'external' | 'observed' | string
+  external_takeover: boolean
+  aum_disabled: boolean
+  aum_disabled_at?: string
+  last_aum_status?: string
+  last_aum_tag?: string
+  last_aum_weight: number
+  last_aum_write_at?: string
+  last_source?: string
+  last_reason?: string
+  pending_action?: string
+  pending_status?: string
+  pending_tag?: string
+  pending_weight: number
+  retry_at?: string
+  retry_count: number
+  last_error?: string
+  updated_at?: string
+}
+
+export type AxonHubControlPlaneChannel = AxonHubLifecycle & {
+  card_id?: string
+  card_name?: string
+  model?: string
+  models?: string[]
+  cost?: number
+  cost_available: boolean
+  target_tags: string[]
+  archived: boolean
+  model_supported: boolean
+  balance_fresh: boolean
+  balance_remain?: number
+}
+
+export type AxonHubControlPlane = {
+  provider: 'axonhub'
+  control_mode: 'off' | 'observe' | 'active'
+  channels: AxonHubControlPlaneChannel[]
+  logs: SchedulerLog[]
+}
+
+export type AxonHubPreflight = {
+  ok: boolean
+  bound: number
+  checks: { name: string; ok: boolean; message: string }[]
 }
 
 export type SchedulerGroup = {
@@ -635,6 +705,7 @@ export type AuditLog = {
 }
 
 export type ProfitResponse = {
+	available: boolean
   window: string
   revenue: number
   cost: number

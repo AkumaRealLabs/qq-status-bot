@@ -175,6 +175,7 @@ type ProfitPoolRow struct {
 }
 
 type ProfitResponse struct {
+	Available      bool            `json:"available"`
 	Window         string          `json:"window"`
 	Revenue        float64         `json:"revenue"`
 	Cost           float64         `json:"cost"`

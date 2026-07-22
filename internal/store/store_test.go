@@ -49,6 +49,34 @@ func TestMigrateCreatesSchedulerSnapshotTables(t *testing.T) {
 	}
 }
 
+func TestMigrateCreatesAxonHubControlPlaneTables(t *testing.T) {
+	s := testStore(t)
+	for _, table := range []string{"scheduler_axonhub_channel_lifecycle"} {
+		cols, err := s.columns(t.Context(), table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cols["remote_tags"] || !cols["external_takeover"] || !cols["pending_action"] {
+			t.Fatalf("%s columns = %#v", table, cols)
+		}
+	}
+	for _, table := range []string{"settings", "model_cards", "scheduler_logs", "scheduler_channel_cost_snapshots"} {
+		cols, err := s.columns(t.Context(), table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if table == "settings" && (!cols["scheduler_provider"] || !cols["axonhub_base_url"] || !cols["axonhub_control_mode"]) {
+			t.Fatalf("settings columns = %#v", cols)
+		}
+		if table == "model_cards" && (!cols["axonhub_channel_id"] || !cols["axonhub_channel_name"]) {
+			t.Fatalf("model_cards columns = %#v", cols)
+		}
+		if (table == "scheduler_logs" || table == "scheduler_channel_cost_snapshots") && !cols["provider"] {
+			t.Fatalf("%s columns = %#v", table, cols)
+		}
+	}
+}
+
 func TestProbesForCardSinceNormalizesTimeZone(t *testing.T) {
 	s := testStore(t)
 	if _, err := s.SaveProbe(t.Context(), "u1", "c1", domain.ProbeModel, monitor.ProbeResult{Success: true}); err != nil {

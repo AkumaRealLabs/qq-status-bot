@@ -22,6 +22,46 @@ func (s *Server) updateSchedulerConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSONOrError(w, cfg, err)
 }
 
+func (s *Server) axonHubConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.App.AxonHubConfig(r.Context())
+	writeJSONOrError(w, cfg, err)
+}
+
+func (s *Server) updateAxonHubConfig(w http.ResponseWriter, r *http.Request) {
+	var cfg domain.AxonHubConfig
+	if !decode(w, r, &cfg) {
+		return
+	}
+	cfg, err := s.App.SaveAxonHubConfig(r.Context(), cfg)
+	writeJSONOrError(w, cfg, err)
+}
+
+func (s *Server) testAxonHub(w http.ResponseWriter, r *http.Request) {
+	writeNoContentOrError(w, s.App.TestAxonHub(r.Context()))
+}
+
+func (s *Server) axonHubPreflight(w http.ResponseWriter, r *http.Request) {
+	out, err := s.App.AxonHubPreflight(r.Context())
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) switchSchedulerProvider(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Provider    string `json:"provider"`
+		ControlMode string `json:"control_mode"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	out, err := s.App.SwitchSchedulerProvider(r.Context(), body.Provider, body.ControlMode)
+	writeJSONOrError(w, out, err)
+}
+
+func (s *Server) adoptBoundAxonHubChannels(w http.ResponseWriter, r *http.Request) {
+	n, err := s.App.AdoptBoundAxonHubChannels(r.Context())
+	writeJSONOrError(w, map[string]int{"adopted": n}, err)
+}
+
 func (s *Server) schedulerChannels(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.App.SchedulerChannels(r.Context(), r.URL.Query().Get("keyword"))
 	writeJSONOrError(w, rows, err)
@@ -109,11 +149,21 @@ func (s *Server) adoptSchedulerTrafficBaseline(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) schedulerControlPlane(w http.ResponseWriter, r *http.Request) {
+	if cfg, err := s.App.SchedulerConfig(r.Context()); err == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
+		out, controlErr := s.App.AxonHubControlPlane(r.Context())
+		writeJSONOrError(w, out, controlErr)
+		return
+	}
 	out, err := s.App.SchedulerControlPlane(r.Context())
 	writeJSONOrError(w, out, err)
 }
 
 func (s *Server) adoptSchedulerControlPlaneChannel(w http.ResponseWriter, r *http.Request) {
+	if cfg, err := s.App.SchedulerConfig(r.Context()); err == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
+		out, controlErr := s.App.AdoptAxonHubControlPlaneChannel(r.Context(), r.PathValue("channel_id"))
+		writeJSONOrError(w, out, controlErr)
+		return
+	}
 	out, err := s.App.AdoptSchedulerControlPlaneChannel(r.Context(), r.PathValue("channel_id"))
 	writeJSONOrError(w, out, err)
 }

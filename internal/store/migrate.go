@@ -22,11 +22,13 @@ func (s *Store) Migrate(ctx context.Context) error {
 			onebot_http_token TEXT NOT NULL DEFAULT '', onebot_webhook_token TEXT NOT NULL DEFAULT '', onebot_group_ids TEXT NOT NULL DEFAULT '[]',
 			site_name TEXT NOT NULL DEFAULT 'AI 上游监控', site_icon TEXT NOT NULL DEFAULT '',
 			epay_base_url TEXT NOT NULL DEFAULT '', epay_pid TEXT NOT NULL DEFAULT '', epay_key TEXT NOT NULL DEFAULT '',
+			scheduler_provider TEXT NOT NULL DEFAULT 'ggapi',
 			scheduler_base_url TEXT NOT NULL DEFAULT '', scheduler_user_id TEXT NOT NULL DEFAULT '', scheduler_access_token TEXT NOT NULL DEFAULT '',
 			scheduler_unassigned_group TEXT NOT NULL DEFAULT '',
 			scheduler_tiers TEXT NOT NULL DEFAULT '',
 			scheduler_traffic_mode TEXT NOT NULL DEFAULT 'off', scheduler_traffic_profile TEXT NOT NULL DEFAULT 'balanced',
 			scheduler_log_poll_seconds INTEGER NOT NULL DEFAULT 5,
+			axonhub_base_url TEXT NOT NULL DEFAULT '', axonhub_api_key TEXT NOT NULL DEFAULT '', axonhub_control_mode TEXT NOT NULL DEFAULT 'observe',
 			cliproxy_name TEXT NOT NULL DEFAULT 'CLIProxyAPI', cliproxy_base_url TEXT NOT NULL DEFAULT '',
 			cliproxy_management_key TEXT NOT NULL DEFAULT '', cliproxy_enabled INTEGER NOT NULL DEFAULT 1,
 			notification_rules TEXT NOT NULL DEFAULT ''
@@ -52,6 +54,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 			upstream_id TEXT NOT NULL DEFAULT '', key_id TEXT NOT NULL DEFAULT '', model TEXT NOT NULL,
 			display_group TEXT NOT NULL DEFAULT '', pool_enabled INTEGER NOT NULL DEFAULT 1, manual_cost_ratio TEXT NOT NULL DEFAULT '',
 			scheduler_group TEXT NOT NULL DEFAULT '', scheduler_channel_id TEXT NOT NULL DEFAULT '', scheduler_channel_name TEXT NOT NULL DEFAULT '',
+			axonhub_channel_id TEXT NOT NULL DEFAULT '', axonhub_channel_name TEXT NOT NULL DEFAULT '',
 			scheduler_auto_disabled INTEGER NOT NULL DEFAULT 0, scheduler_auto_disabled_at TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, public_enabled INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
 			failure_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 		)`,
@@ -100,7 +103,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS scheduler_logs (
 			id TEXT PRIMARY KEY, card_id TEXT NOT NULL DEFAULT '', card_name TEXT NOT NULL DEFAULT '',
 			channel_id TEXT NOT NULL DEFAULT '', channel_name TEXT NOT NULL DEFAULT '',
-			action TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+			action TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '',
+			provider TEXT NOT NULL DEFAULT 'ggapi', created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS channel_availability (
 			channel_id TEXT PRIMARY KEY, channel_name TEXT NOT NULL DEFAULT '', card_id TEXT NOT NULL DEFAULT '', card_name TEXT NOT NULL DEFAULT '',
@@ -118,7 +122,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 			upstream_id TEXT NOT NULL DEFAULT '', upstream_name TEXT NOT NULL DEFAULT '',
 			key_id TEXT NOT NULL DEFAULT '', key_name TEXT NOT NULL DEFAULT '',
 			cost_per_unit REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 0,
-			missing_reason TEXT NOT NULL DEFAULT '', effective_at TEXT NOT NULL
+			missing_reason TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT 'ggapi', effective_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS scheduler_group_sale_snapshots (
 			id TEXT PRIMARY KEY, group_name TEXT NOT NULL DEFAULT '', tag TEXT NOT NULL DEFAULT '',
@@ -170,6 +174,17 @@ func (s *Store) Migrate(ctx context.Context) error {
 			affinity_cleanup_retry_at TEXT NOT NULL DEFAULT '', affinity_cleanup_retries INTEGER NOT NULL DEFAULT 0,
 			affinity_cleanup_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS scheduler_axonhub_channel_lifecycle (
+			channel_id TEXT PRIMARY KEY, channel_name TEXT NOT NULL DEFAULT '', remote_status TEXT NOT NULL DEFAULT '',
+			remote_tags TEXT NOT NULL DEFAULT '[]', remote_managed_tag TEXT NOT NULL DEFAULT '', remote_weight INTEGER NOT NULL DEFAULT 0,
+			desired_tag TEXT NOT NULL DEFAULT '', desired_weight INTEGER NOT NULL DEFAULT 0, owner TEXT NOT NULL DEFAULT 'observed',
+			external_takeover INTEGER NOT NULL DEFAULT 0, aum_disabled INTEGER NOT NULL DEFAULT 0, aum_disabled_at TEXT NOT NULL DEFAULT '',
+			last_aum_status TEXT NOT NULL DEFAULT '', last_aum_tag TEXT NOT NULL DEFAULT '', last_aum_weight INTEGER NOT NULL DEFAULT 0,
+			last_aum_write_at TEXT NOT NULL DEFAULT '', last_source TEXT NOT NULL DEFAULT '', last_reason TEXT NOT NULL DEFAULT '',
+			pending_action TEXT NOT NULL DEFAULT '', pending_status TEXT NOT NULL DEFAULT '', pending_tag TEXT NOT NULL DEFAULT '',
+			pending_weight INTEGER NOT NULL DEFAULT 0, retry_at TEXT NOT NULL DEFAULT '', retry_count INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS revenue_cards (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, source_type TEXT NOT NULL, upstream_id TEXT NOT NULL DEFAULT '',
 			base_url TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', access_token TEXT NOT NULL DEFAULT '',
@@ -213,6 +228,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_10s_time ON scheduler_traffic_10s(window_start)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_1m_time ON scheduler_traffic_1m(window_start)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_channel_lifecycle_cleanup ON scheduler_channel_lifecycle(affinity_cleanup_pending, affinity_cleanup_retry_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_scheduler_axonhub_lifecycle_retry ON scheduler_axonhub_channel_lifecycle(pending_action, retry_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_revenue_cards_upstream ON revenue_cards(upstream_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_tg_messages_channel_time ON tg_messages(channel_id, published_at)`,
 	}
@@ -247,8 +263,16 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "settings", "epay_key", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	for _, col := range []string{"scheduler_base_url", "scheduler_user_id", "scheduler_access_token"} {
+	for _, col := range []string{"scheduler_base_url", "scheduler_user_id", "scheduler_access_token", "axonhub_base_url", "axonhub_api_key"} {
 		if err := s.addColumnIfMissing(ctx, "settings", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	for _, col := range []struct{ name, def string }{
+		{"scheduler_provider", "TEXT NOT NULL DEFAULT 'ggapi'"},
+		{"axonhub_control_mode", "TEXT NOT NULL DEFAULT 'observe'"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "settings", col.name, col.def); err != nil {
 			return err
 		}
 	}
@@ -346,6 +370,12 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "model_cards", "scheduler_channel_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := s.addColumnIfMissing(ctx, "model_cards", "axonhub_channel_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "model_cards", "axonhub_channel_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := s.addColumnIfMissing(ctx, "model_cards", "scheduler_auto_disabled", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -363,6 +393,12 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 	if err := s.addColumnIfMissing(ctx, "scheduler_logs", "reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "scheduler_logs", "provider", "TEXT NOT NULL DEFAULT 'ggapi'"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "scheduler_channel_cost_snapshots", "provider", "TEXT NOT NULL DEFAULT 'ggapi'"); err != nil {
 		return err
 	}
 	if err := s.addColumnIfMissing(ctx, "balance_recharge_logs", "raw_status", "TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -397,6 +433,18 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.exec(ctx, `UPDATE upstreams SET balance_guard_mode='observe' WHERE TRIM(balance_guard_mode)=''`); err != nil {
+		return err
+	}
+	if _, err := s.exec(ctx, `UPDATE settings SET scheduler_provider='ggapi' WHERE TRIM(scheduler_provider)=''`); err != nil {
+		return err
+	}
+	if _, err := s.exec(ctx, `UPDATE settings SET axonhub_control_mode='observe' WHERE TRIM(axonhub_control_mode)=''`); err != nil {
+		return err
+	}
+	if _, err := s.exec(ctx, `UPDATE scheduler_logs SET provider='ggapi' WHERE TRIM(provider)=''`); err != nil {
+		return err
+	}
+	if _, err := s.exec(ctx, `UPDATE scheduler_channel_cost_snapshots SET provider='ggapi' WHERE TRIM(provider)=''`); err != nil {
 		return err
 	}
 	// 兼容旧自动关闭：只接管状态，不自动远端恢复。

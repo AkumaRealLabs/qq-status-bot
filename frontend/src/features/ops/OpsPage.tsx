@@ -19,6 +19,7 @@ import type {
   OpsEvent,
   OpsEventGroup,
   ProfitResponse,
+	SchedulerConfig,
   SelfCheckResponse,
 } from '@/types'
 
@@ -337,7 +338,12 @@ function NotificationsTab() {
 
 function ProfitTab() {
   const [windowValue, setWindowValue] = useState('today')
-  const q = useQuery({ queryKey: ['ops', 'profit', windowValue], queryFn: () => api<ProfitResponse>(`/api/ops/profit?window=${windowValue}`) })
+  const scheduler = useQuery({ queryKey: ['scheduler', 'config'], queryFn: () => api<SchedulerConfig>('/api/scheduler/config') })
+  const axonHub = scheduler.data?.scheduler_provider === 'axonhub'
+  const q = useQuery({ queryKey: ['ops', 'profit', windowValue], queryFn: () => api<ProfitResponse>(`/api/ops/profit?window=${windowValue}`), enabled: !axonHub && !scheduler.isLoading })
+  if (axonHub) {
+    return <section className="grid min-w-0 gap-3"><div className="border border-warning/40 bg-warning/5 px-3 py-3 text-sm text-muted-foreground">AxonHub 数据暂不可用：当前 beta5 没有适合 service account 的只读 Usage Log API。</div></section>
+  }
   return (
     <section className="grid min-w-0 gap-3">
       <div className="flex flex-wrap items-center gap-2">
