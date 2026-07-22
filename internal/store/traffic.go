@@ -162,6 +162,11 @@ func (s *Store) SaveTrafficControl(ctx context.Context, row domain.TrafficContro
 	return err
 }
 
+func (s *Store) DeleteTrafficControl(ctx context.Context, channelID string) error {
+	_, err := s.exec(ctx, `DELETE FROM scheduler_traffic_control WHERE channel_id=?`, channelID)
+	return err
+}
+
 func (s *Store) TrafficControls(ctx context.Context) ([]domain.TrafficControlState, error) {
 	rows, err := s.query(ctx, `SELECT channel_id, base_priority, base_weight, desired_priority, desired_weight, actual_priority, actual_weight, desired_status, actual_status, state,
 		reason, failure_windows, recovery_stage, cooldown_until, last_probe_at, recovery_successes, stage_changed_at,

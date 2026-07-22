@@ -208,9 +208,34 @@ func (s *SchedulerService) fetchSchedulerChannels(ctx context.Context, cfg domai
 		out = append(out, page...)
 		if len(page) < 100 {
 			s.observeSchedulerChannels(ctx, out)
+			if strings.TrimSpace(keyword) == "" {
+				if err := s.pruneTrafficControls(ctx, out); err != nil {
+					return nil, err
+				}
+			}
 			return out, nil
 		}
 	}
+}
+
+func (s *SchedulerService) pruneTrafficControls(ctx context.Context, channels []domain.SchedulerChannel) error {
+	remote := make(map[string]struct{}, len(channels))
+	for _, channel := range channels {
+		remote[channel.ID] = struct{}{}
+	}
+	rows, err := s.app.Store.TrafficControls(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if _, exists := remote[row.ChannelID]; exists {
+			continue
+		}
+		if err := s.app.Store.DeleteTrafficControl(ctx, row.ChannelID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SchedulerService) SchedulerGroups(ctx context.Context) ([]domain.SchedulerGroup, error) {

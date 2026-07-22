@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -317,6 +318,121 @@ func TestParseTrafficEventReadsNewAPIFirstResponseTime(t *testing.T) {
 	}
 	if event.TTFTMS != 321 {
 		t.Fatalf("ttft=%d want=321", event.TTFTMS)
+	}
+}
+
+func TestTrafficMillisecondsRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   any
+		seconds bool
+		want    int
+	}{
+		{name: "milliseconds", value: 12.9, want: 12},
+		{name: "seconds", value: "1.25", seconds: true, want: 1250},
+		{name: "negative", value: -1, want: 0},
+		{name: "negative string", value: "-1", want: 0},
+		{name: "nan", value: math.NaN(), want: 0},
+		{name: "positive infinity", value: math.Inf(1), want: 0},
+		{name: "invalid string", value: "unknown", want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := trafficMilliseconds(tt.value, tt.seconds); got != tt.want {
+				t.Fatalf("trafficMilliseconds(%v, %v)=%d want=%d", tt.value, tt.seconds, got, tt.want)
+			}
+		})
+	}
+	event, ok := parseTrafficEvent("consume", 2, map[string]any{
+		"created_at": time.Now().UTC().Unix(), "channel": 9, "model_name": "gpt-test", "other": `{"frt":-1}`,
+	})
+	if !ok || event.TTFTMS != 0 {
+		t.Fatalf("event=%+v parsed=%v", event, ok)
+	}
+}
+
+func TestTrafficControlRefreshesActualFieldsWithoutRemoteWrite(t *testing.T) {
+	writes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/channel/" && r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "name": "渠道 9", "status": 1, "priority": 100, "weight": 80, "group": "gpt"}}}})
+			return
+		}
+		writes++
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	}))
+	defer server.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "actual.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveTrafficControl(t.Context(), domain.TrafficControlState{
+		ChannelID: "9", BasePriority: 100, BaseWeight: 80, DesiredPriority: 100, DesiredWeight: 80,
+		ActualPriority: -2000, ActualWeight: 0, DesiredStatus: 1, ActualStatus: 2, State: "healthy",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	svc.Client.HTTP = server.Client()
+	cfg := domain.SchedulerConfig{BaseURL: server.URL, UserID: "1", AccessToken: "token"}
+	views := []domain.TrafficChannelState{{ChannelID: "9", ChannelName: "渠道 9", Managed: true, State: "healthy", DesiredStatus: 1}}
+	if err := svc.Scheduler.applyTrafficControl(t.Context(), cfg, views, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	control, found, err := st.TrafficControl(t.Context(), "9")
+	if err != nil || !found {
+		t.Fatalf("control found=%v err=%v", found, err)
+	}
+	if writes != 0 || control.ActualStatus != 1 || control.ActualPriority != 100 || control.ActualWeight != 80 {
+		t.Fatalf("writes=%d control=%+v", writes, control)
+	}
+}
+
+func TestFetchSchedulerChannelsPrunesOnlyAfterSuccessfulFullRead(t *testing.T) {
+	fail := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "name": "渠道 9", "status": 1}}}})
+	}))
+	defer server.Close()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "prune.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, channelID := range []string{"9", "99"} {
+		if err := st.SaveTrafficControl(t.Context(), domain.TrafficControlState{ChannelID: channelID, State: "healthy"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := New(st)
+	svc.Client.HTTP = server.Client()
+	cfg := domain.SchedulerConfig{BaseURL: server.URL, UserID: "1", AccessToken: "token"}
+	if _, err := svc.Scheduler.fetchSchedulerChannels(t.Context(), cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := st.TrafficControl(t.Context(), "99"); err != nil || found {
+		t.Fatalf("stale control found=%v err=%v", found, err)
+	}
+	if err := st.SaveTrafficControl(t.Context(), domain.TrafficControlState{ChannelID: "88", State: "healthy"}); err != nil {
+		t.Fatal(err)
+	}
+	fail = true
+	if _, err := svc.Scheduler.fetchSchedulerChannels(t.Context(), cfg, ""); err == nil {
+		t.Fatal("failed remote read succeeded")
+	}
+	if _, found, err := st.TrafficControl(t.Context(), "88"); err != nil || !found {
+		t.Fatalf("control after failed read found=%v err=%v", found, err)
 	}
 }
 

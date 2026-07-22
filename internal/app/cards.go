@@ -191,17 +191,22 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 	if err != nil {
 		return err
 	}
+	managed := card.PoolEnabled && card.SchedulerChannelID != "" && (u.Type == "newapi" || u.Type == "sub2api")
+	purpose := "regular"
+	if managed {
+		purpose = s.availabilityProbePurpose(ctx, card)
+	}
 	if card.KeyID == "" {
 		msg := "未选择 Key"
-		if _, err := s.app.Store.SaveProbe(ctx, u.ID, card.ID, model, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
+		if _, err := s.app.Store.SaveProbeWithPurpose(ctx, u.ID, card.ID, model, purpose, monitor.ProbeResult{Status: monitor.StatusFailed, Error: msg}); err != nil {
 			return err
 		}
 		failures := card.FailureCount + 1
 		if err := s.app.Cards.UpdateCardProbeState(ctx, card.ID, msg, failures); err != nil {
 			return err
 		}
-		if s.availabilityManagedCard(ctx, card) {
-			return s.app.Scheduler.RecordAvailabilityProbe(ctx, card, false, false, "regular")
+		if managed {
+			return s.app.Scheduler.RecordAvailabilityProbe(ctx, card, false, false, purpose)
 		}
 		return s.app.applySchedulerAutomation(ctx, card, false, failures)
 	}
@@ -212,11 +217,11 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 	muteAt := s.app.probeMuteFailureThreshold(ctx)
 	probe := s.probeCard(ctx, u.BaseURL, key.Key, model)
 	if probeParentDeadlineExceeded(ctx) {
-		return s.persistCanceledCardProbe(ctx, card, u.ID, probe)
+		return s.persistCanceledCardProbe(ctx, card, u.ID, purpose, probe)
 	}
-	if _, err := s.app.Store.SaveProbe(ctx, u.ID, card.ID, model, probe); err != nil {
+	if _, err := s.app.Store.SaveProbeWithPurpose(ctx, u.ID, card.ID, model, purpose, probe); err != nil {
 		if probeParentDeadlineExceeded(ctx) {
-			return s.persistCanceledCardProbe(ctx, card, u.ID, probe)
+			return s.persistCanceledCardProbe(ctx, card, u.ID, purpose, probe)
 		}
 		return err
 	}
@@ -226,7 +231,7 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 	if monitor.IsInternalProbeError(probe.Error) {
 		return s.app.alert(ctx, u, "internal:"+card.ID, true, card.Name+" 本地探测错误: "+probe.Error)
 	}
-	if s.availabilityManagedCard(ctx, card) {
+	if managed {
 		probe = s.confirmAvailabilityProbeFailure(ctx, card, u.ID, u.BaseURL, key.Key, model, probe)
 	}
 	if monitor.IsInternalProbeError(probe.Error) {
@@ -242,8 +247,7 @@ func (s *ProbeService) CheckCard(ctx context.Context, cardID string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if s.availabilityManagedCard(ctx, card) {
-		purpose := s.availabilityProbePurpose(ctx, card)
+	if managed {
 		if err := s.app.Scheduler.RecordAvailabilityProbe(ctx, card, probe.Success, domain.IsQuotaProbeError(probe.Error), purpose); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
 			return err
 		}
@@ -320,11 +324,11 @@ func (s *ProbeService) checkCustomCard(ctx context.Context, card domain.ModelCar
 	}
 	probe := s.probeCard(ctx, card.BaseURL, card.APIKey, model)
 	if probeParentDeadlineExceeded(ctx) {
-		return s.persistCanceledCardProbe(ctx, card, "", probe)
+		return s.persistCanceledCardProbe(ctx, card, "", "regular", probe)
 	}
 	if _, err := s.app.Store.SaveProbe(ctx, "", card.ID, model, probe); err != nil {
 		if probeParentDeadlineExceeded(ctx) {
-			return s.persistCanceledCardProbe(ctx, card, "", probe)
+			return s.persistCanceledCardProbe(ctx, card, "", "regular", probe)
 		}
 		return err
 	}
@@ -394,10 +398,10 @@ func probeCardState(card domain.ModelCard, probe monitor.ProbeResult) (failures 
 }
 
 // 父检查已结束时仍需留下可追踪的探测结果，但不能再触发外部副作用。
-func (s *ProbeService) persistCanceledCardProbe(parent context.Context, card domain.ModelCard, upstreamID string, probe monitor.ProbeResult) error {
+func (s *ProbeService) persistCanceledCardProbe(parent context.Context, card domain.ModelCard, upstreamID, purpose string, probe monitor.ProbeResult) error {
 	persistCtx, cancel := canceledProbePersistenceContext(parent)
 	defer cancel()
-	if _, err := s.app.Store.SaveProbe(persistCtx, upstreamID, card.ID, domain.NormalizeProbeModel(card.Model), probe); err != nil {
+	if _, err := s.app.Store.SaveProbeWithPurpose(persistCtx, upstreamID, card.ID, domain.NormalizeProbeModel(card.Model), purpose, probe); err != nil {
 		return err
 	}
 	if err := s.persistCardProbeState(persistCtx, card, probe); err != nil {

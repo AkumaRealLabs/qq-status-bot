@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -312,22 +313,30 @@ func trafficMilliseconds(value any, seconds bool) int {
 	if seconds {
 		multiplier = 1000
 	}
+	var numeric float64
 	switch x := value.(type) {
 	case float64:
-		return int(x * multiplier)
+		numeric = x
 	case int:
-		return int(float64(x) * multiplier)
+		numeric = float64(x)
 	case int64:
-		return int(float64(x) * multiplier)
+		numeric = float64(x)
 	case json.Number:
-		f, _ := x.Float64()
-		return trafficMilliseconds(f, seconds)
+		numeric, _ = x.Float64()
 	case string:
-		f, _ := strconv.ParseFloat(strings.TrimSpace(x), 64)
-		return trafficMilliseconds(f, seconds)
+		numeric, _ = strconv.ParseFloat(strings.TrimSpace(x), 64)
 	default:
-		return schedulerInt(value)
+		numeric = float64(schedulerInt(value))
 	}
+	numeric *= multiplier
+	if numeric <= 0 || math.IsNaN(numeric) || math.IsInf(numeric, 0) {
+		return 0
+	}
+	maxInt := int(^uint(0) >> 1)
+	if numeric >= float64(maxInt) {
+		return maxInt
+	}
+	return int(numeric)
 }
 
 func trafficBool(value any, fallback bool) bool {
@@ -763,6 +772,8 @@ func (s *SchedulerService) applyTrafficControl(ctx context.Context, cfg domain.S
 		}
 		control.State, control.Reason, control.DesiredStatus, control.UpdatedAt = view.State, view.Reason, status, now
 		control.DesiredPriority, control.DesiredWeight = priority, weight
+		// Actual 始终反映本轮刚读取的远端值；即使无需写入，也不能保留旧快照。
+		control.ActualStatus, control.ActualPriority, control.ActualWeight = current.Status, current.Priority, current.Weight
 		stateChanged := previousState != control.State
 		if status == 2 && view.State == "soft_blocked" && control.CooldownUntil.IsZero() {
 			control.CooldownUntil = now.Add(time.Minute)

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -153,6 +154,57 @@ func TestAvailabilityDoesNotRestoreExternalAutoDisabledChannel(t *testing.T) {
 	}
 	if statusWrites != 0 {
 		t.Fatalf("status writes=%d", statusWrites)
+	}
+}
+
+func TestManagedRecoveryProbePersistsRecoveryPurpose(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "recovery-purpose.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	upstream, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "上游", Type: "newapi", BaseURL: "https://upstream.invalid", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveKeys(t.Context(), upstream.ID, []monitor.APIKey{{RemoteID: "key-1", Key: "sk-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := st.ListKeys(t.Context(), upstream.ID)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("keys=%+v err=%v", keys, err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{
+		Name: "卡片", UpstreamID: upstream.ID, KeyID: keys[0].ID, Model: domain.ProbeModel,
+		PoolEnabled: true, SchedulerChannelID: "9", SchedulerChannelName: "渠道 9", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabledAt := time.Now().UTC().Add(-time.Minute)
+	if ok, err := st.SaveChannelAvailabilityCAS(t.Context(), domain.ChannelAvailability{
+		ChannelID: "9", ChannelName: "渠道 9", CardID: card.ID, CardName: card.Name,
+		UpstreamID: upstream.ID, UpstreamName: upstream.Name, Managed: true,
+		DesiredStatus: 2, ActualStatus: 2, DisabledAt: &disabledAt,
+	}, 0); err != nil || !ok {
+		t.Fatalf("save availability ok=%v err=%v", ok, err)
+	}
+	svc := New(st)
+	svc.Prober = probeRunnerFunc(func(context.Context, string, string, string) monitor.ProbeResult {
+		return monitor.ProbeResult{Status: monitor.StatusOperational, Success: true, Input: "ping", Output: "pong"}
+	})
+	if err := svc.Probe.CheckCard(t.Context(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := st.RecentProbesForCard(t.Context(), card.ID, 1)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("runs=%+v err=%v", runs, err)
+	}
+	if runs[0].Purpose != "recovery" {
+		t.Fatalf("purpose=%q want=recovery", runs[0].Purpose)
 	}
 }
 
