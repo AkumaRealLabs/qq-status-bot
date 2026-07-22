@@ -578,9 +578,15 @@ func (s *SchedulerService) RecordAvailabilityProbe(ctx context.Context, card dom
 }
 
 func (s *SchedulerService) AvailabilityRows(ctx context.Context, upstreamID, state string) ([]domain.AvailabilityView, error) {
+	return s.availabilityRows(ctx, upstreamID, state, true)
+}
+
+func (s *SchedulerService) availabilityRows(ctx context.Context, upstreamID, state string, reconcile bool) ([]domain.AvailabilityView, error) {
 	// 管理端查看时先同步一次远端实际状态，并重放到期的 pending action。
-	if err := s.ReconcileAvailability(ctx); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
-		return nil, err
+	if reconcile {
+		if err := s.ReconcileAvailability(ctx); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
+			return nil, err
+		}
 	}
 	rows, err := s.app.Store.ChannelAvailabilities(ctx, upstreamID, "")
 	if err != nil {

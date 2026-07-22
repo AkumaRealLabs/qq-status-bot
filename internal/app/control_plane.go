@@ -378,15 +378,17 @@ func (s *SchedulerService) ControlPlane(ctx context.Context) (domain.SchedulerCo
 	if err != nil {
 		return domain.SchedulerControlPlane{}, err
 	}
-	traffic, err := s.TrafficStatus(ctx)
+	now := time.Now().UTC()
+	events, err := s.app.Store.TrafficEventsSince(ctx, now.Add(-trafficStartupReplay))
 	if err != nil {
 		return domain.SchedulerControlPlane{}, err
 	}
-	availability, err := s.AvailabilityRows(ctx, "", "")
+	traffic, err := s.trafficStatusFromSnapshot(ctx, cfg, events, now, channels, true)
 	if err != nil {
 		return domain.SchedulerControlPlane{}, err
 	}
-	events, err := s.app.Store.TrafficEventsSince(ctx, time.Now().UTC().Add(-trafficStartupReplay))
+	// 合并视图是只读快照；后台协调循环负责重放可用性动作。
+	availability, err := s.availabilityRows(ctx, "", "", false)
 	if err != nil {
 		return domain.SchedulerControlPlane{}, err
 	}

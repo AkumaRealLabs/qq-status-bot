@@ -389,6 +389,10 @@ func (s *SchedulerService) TrafficRows(ctx context.Context) ([]domain.TrafficCha
 }
 
 func (s *SchedulerService) trafficStatus(ctx context.Context, cfg domain.SchedulerConfig, events []domain.TrafficEvent, now time.Time) (domain.TrafficStatus, error) {
+	return s.trafficStatusFromSnapshot(ctx, cfg, events, now, nil, false)
+}
+
+func (s *SchedulerService) trafficStatusFromSnapshot(ctx context.Context, cfg domain.SchedulerConfig, events []domain.TrafficEvent, now time.Time, channels []domain.SchedulerChannel, channelsLoaded bool) (domain.TrafficStatus, error) {
 	out := domain.TrafficStatus{Mode: cfg.TrafficMode, Profile: cfg.TrafficProfile, Channels: []domain.TrafficChannelState{}}
 	cursors, err := s.app.Store.TrafficCursors(ctx)
 	if err != nil {
@@ -427,12 +431,15 @@ func (s *SchedulerService) trafficStatus(ctx context.Context, cfg domain.Schedul
 	if !schedulerConfigured(cfg) {
 		return out, nil
 	}
-	channels, err := s.fetchSchedulerChannels(ctx, cfg, "")
-	if err != nil {
-		if cfg.TrafficMode == domain.TrafficModeOff {
-			return out, nil
+	if !channelsLoaded {
+		var err error
+		channels, err = s.fetchSchedulerChannels(ctx, cfg, "")
+		if err != nil {
+			if cfg.TrafficMode == domain.TrafficModeOff {
+				return out, nil
+			}
+			return out, err
 		}
-		return out, err
 	}
 	cards, err := s.app.Cards.ListCards(ctx)
 	if err != nil {

@@ -98,11 +98,13 @@ func TestControlPlaneStatusThreeIsNeverWritten(t *testing.T) {
 }
 
 func TestControlPlaneOnlyManagesExplicitlyBoundChannels(t *testing.T) {
+	channelReads := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/channel/" || r.Method != http.MethodGet {
 			http.NotFound(w, r)
 			return
 		}
+		channelReads++
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
 			{"id": 16, "name": "生图渠道", "status": 1},
 			{"id": 17, "name": "GGAPI 自动关闭渠道", "status": 3},
@@ -134,6 +136,9 @@ func TestControlPlaneOnlyManagesExplicitlyBoundChannels(t *testing.T) {
 	}
 	if row := rows["18"]; !row.Managed || row.Owner != domain.ControlOwnerAUM {
 		t.Fatalf("bound row=%+v", row)
+	}
+	if channelReads != 1 {
+		t.Fatalf("control plane channel reads=%d want=1", channelReads)
 	}
 }
 
