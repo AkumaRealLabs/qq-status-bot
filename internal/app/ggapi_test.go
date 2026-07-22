@@ -124,6 +124,16 @@ func TestParseTrafficEventKeepsExplicitAffinityMiss(t *testing.T) {
 	}
 }
 
+func TestParseTrafficEventIgnoresConsumptionLogType(t *testing.T) {
+	event, ok := parseTrafficEvent("consumption", 2, map[string]any{
+		"type": 2, "created_at": timeNowUnix(), "channel_id": 25, "model_name": "gpt-5.6-sol", "is_stream": true, "use_time": 12,
+		"other": `{"admin_info":{"channel_affinity":{"rule_name":"codex cli trace","using_group":"payg_low"}}}`,
+	}, map[string]bool{"codex cli trace": true})
+	if !ok || event.Kind != domain.TrafficEventSuccess || event.ErrorType != "" || event.SessionScoped || !event.StreamEnded {
+		t.Fatalf("event=%+v ok=%v", event, ok)
+	}
+}
+
 func validGGAPISettingsForTest() domain.GGAPISettings {
 	return domain.GGAPISettings{
 		RetryTimes: 1, AutomaticRetryStatusCodes: "429,500-503", AutomaticDisableStatusCodes: "401",

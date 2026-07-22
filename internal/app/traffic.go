@@ -184,7 +184,11 @@ func parseTrafficEvent(source string, logType int, raw map[string]any, skipRuleS
 		return domain.TrafficEvent{}, false
 	}
 	status := schedulerInt(lookup("upstream_status_code", "upstreamStatusCode", "status_code", "statusCode", "http_status", "httpStatus"))
-	errorType := trafficErrorField(schedulerString(lookup("error_type", "errorType", "type")))
+	errorType := trafficErrorField(schedulerString(lookup("error_type", "errorType")))
+	if errorType == "" {
+		// GGAPI 顶层 type 是日志类型（2=消费、5=错误），不能当成上游错误类型。
+		errorType = trafficErrorField(schedulerString(firstScheduler(other, "type")))
+	}
 	errorCode := trafficErrorField(schedulerString(lookup("error_code", "errorCode", "code")))
 	errorText := schedulerString(lookup("error_message", "errorMessage", "message", "error"))
 	kind := domain.TrafficEventSuccess
