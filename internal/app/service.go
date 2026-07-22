@@ -68,8 +68,13 @@ type Service struct {
 
 // SchedulerService 负责调度配置、渠道/分组应用、成本快照与自动化。
 type SchedulerService struct {
-	app       *Service
-	controlMu sync.Mutex
+	app                    *Service
+	controlMu              sync.Mutex
+	axonHubAuthMu          sync.Mutex
+	axonHubToken           string
+	axonHubTokenExpiresAt  time.Time
+	axonHubTokenBaseURL    string
+	axonHubTokenAdminEmail string
 }
 
 // ProfitService 负责调度号池利润汇总。

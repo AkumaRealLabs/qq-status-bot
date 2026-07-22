@@ -15,6 +15,8 @@ import (
 
 type axonHubRemote struct {
 	mu           sync.Mutex
+	signIns      int
+	rejectNext   bool
 	status       string
 	tags         []string
 	weight       int
@@ -25,10 +27,33 @@ type axonHubRemote struct {
 func newAxonHubTestServer(t *testing.T, remote *axonHubRemote) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/auth/signin" {
+			var body struct {
+				Email    string `json:"email"`
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email != "admin@example.com" || body.Password != "password" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			remote.mu.Lock()
+			remote.signIns++
+			remote.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "control"})
+			return
+		}
 		if r.URL.Path != "/admin/graphql" || r.Header.Get("Authorization") != "Bearer control" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		remote.mu.Lock()
+		if remote.rejectNext {
+			remote.rejectNext = false
+			remote.mu.Unlock()
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		remote.mu.Unlock()
 		var request struct {
 			Query     string         `json:"query"`
 			Variables map[string]any `json:"variables"`
@@ -69,7 +94,7 @@ func newAxonHubTestServer(t *testing.T, remote *axonHubRemote) *httptest.Server 
 
 func configureAxonHub(t *testing.T, svc *Service, baseURL, mode string) {
 	t.Helper()
-	if _, err := svc.Store.UpdateAxonHubConfig(t.Context(), domain.AxonHubConfig{BaseURL: baseURL, APIKey: "control", ControlMode: mode}); err != nil {
+	if _, err := svc.Store.UpdateAxonHubConfig(t.Context(), domain.AxonHubConfig{BaseURL: baseURL, AdminEmail: "admin@example.com", AdminPassword: "password", ControlMode: mode}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Store.UpdateSchedulerProvider(t.Context(), domain.SchedulerProviderAxonHub); err != nil {
@@ -107,6 +132,30 @@ func TestAxonHubObserveAndExternalTakeoverNeverWrite(t *testing.T) {
 	}
 	if remote.fieldWrites != 0 || remote.statusWrites != 0 {
 		t.Fatalf("external takeover wrote fields=%d status=%d", remote.fieldWrites, remote.statusWrites)
+	}
+}
+
+func TestAxonHubReauthenticatesOnceOnUnauthorized(t *testing.T) {
+	remote := &axonHubRemote{status: domain.AxonHubStatusEnabled}
+	server := newAxonHubTestServer(t, remote)
+	defer server.Close()
+	svc := testBackgroundService(t)
+	configureAxonHub(t, svc, server.URL, domain.AxonHubControlObserve)
+	if err := svc.Scheduler.TestAxonHub(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	remote.mu.Lock()
+	before := remote.signIns
+	remote.rejectNext = true
+	remote.mu.Unlock()
+	if err := svc.Scheduler.TestAxonHub(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	remote.mu.Lock()
+	after := remote.signIns
+	remote.mu.Unlock()
+	if after != before+1 {
+		t.Fatalf("sign-ins=%d before=%d", after, before)
 	}
 }
 

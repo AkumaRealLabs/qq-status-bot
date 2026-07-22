@@ -3,6 +3,7 @@ package axonhub
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrUnauthorized = errors.New("AxonHub 管理员认证失败")
 
 type Channel struct {
 	ID             string
@@ -24,8 +27,64 @@ type Channel struct {
 
 type Client struct {
 	BaseURL string
-	APIKey  string
+	Token   string
 	HTTP    *http.Client
+}
+
+func (c Client) SignIn(ctx context.Context, email, password string) (string, time.Time, error) {
+	body, err := json.Marshal(map[string]string{"email": strings.TrimSpace(email), "password": password})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/admin/auth/signin", bytes.NewReader(body))
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return "", time.Time{}, safeError(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return "", time.Time{}, ErrUnauthorized
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", time.Time{}, fmt.Errorf("AxonHub 登录 HTTP %d", resp.StatusCode)
+	}
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil || strings.TrimSpace(payload.Token) == "" {
+		return "", time.Time{}, errors.New("AxonHub 登录响应格式错误")
+	}
+	return payload.Token, jwtExpiry(payload.Token), nil
+}
+
+func (c Client) httpClient() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	return &http.Client{Timeout: 15 * time.Second}
+}
+
+func jwtExpiry(token string) time.Time {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Now().Add(6 * time.Hour)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Now().Add(6 * time.Hour)
+	}
+	var claims struct {
+		ExpiresAt int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.ExpiresAt <= 0 {
+		return time.Now().Add(6 * time.Hour)
+	}
+	return time.Unix(claims.ExpiresAt, 0).UTC()
 }
 
 const channelFields = `id name type status orderingWeight tags allModelEntries { requestModel }`
@@ -99,17 +158,19 @@ func (c Client) graphql(ctx context.Context, query string, variables map[string]
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.APIKey))
-	hc := c.HTTP
-	if hc == nil {
-		hc = &http.Client{Timeout: 15 * time.Second}
+	if strings.TrimSpace(c.Token) == "" {
+		return ErrUnauthorized
 	}
-	resp, err := hc.Do(req)
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.Token))
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return safeError(err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("%w: HTTP %d", ErrUnauthorized, resp.StatusCode)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("AxonHub HTTP %d", resp.StatusCode)
 	}

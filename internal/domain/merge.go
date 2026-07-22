@@ -232,7 +232,8 @@ func (in SchedulerConfig) MergeUpdate(old SchedulerConfig) SchedulerConfig {
 func (in AxonHubConfig) MergeUpdate(old AxonHubConfig) AxonHubConfig {
 	out := in
 	out.BaseURL = strings.TrimRight(strings.TrimSpace(in.BaseURL), "/")
-	out.APIKey = KeepSecret(in.APIKey, old.APIKey)
+	out.AdminEmail = strings.TrimSpace(in.AdminEmail)
+	out.AdminPassword = KeepSecret(in.AdminPassword, old.AdminPassword)
 	if strings.TrimSpace(in.ControlMode) == "" {
 		out.ControlMode = NormalizeAxonHubControlMode(old.ControlMode)
 	} else {

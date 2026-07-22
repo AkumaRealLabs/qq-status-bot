@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"ai-upstream-monitor/internal/axonhub"
 	"ai-upstream-monitor/internal/domain"
@@ -24,11 +25,23 @@ type SchedulerBackend interface {
 }
 
 type axonHubBackend struct {
-	client axonhub.Client
+	service *SchedulerService
+	cfg     domain.AxonHubConfig
 }
 
 func (b axonHubBackend) Channels(ctx context.Context) ([]domain.SchedulerChannel, error) {
-	rows, err := b.client.Channels(ctx)
+	client, err := b.service.axonHubClient(ctx, b.cfg)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := client.Channels(ctx)
+	if errors.Is(err, axonhub.ErrUnauthorized) {
+		b.service.resetAxonHubSession()
+		client, err = b.service.axonHubClient(ctx, b.cfg)
+		if err == nil {
+			rows, err = client.Channels(ctx)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +63,18 @@ func (b axonHubBackend) Channels(ctx context.Context) ([]domain.SchedulerChannel
 }
 
 func (b axonHubBackend) UpdateFields(ctx context.Context, current domain.SchedulerChannel, tags []string, weight int) (domain.SchedulerChannel, error) {
-	row, err := b.client.UpdateFields(ctx, current.ID, tags, weight)
+	client, err := b.service.axonHubClient(ctx, b.cfg)
+	if err != nil {
+		return domain.SchedulerChannel{}, err
+	}
+	row, err := client.UpdateFields(ctx, current.ID, tags, weight)
+	if errors.Is(err, axonhub.ErrUnauthorized) {
+		b.service.resetAxonHubSession()
+		client, err = b.service.axonHubClient(ctx, b.cfg)
+		if err == nil {
+			row, err = client.UpdateFields(ctx, current.ID, tags, weight)
+		}
+	}
 	if err != nil {
 		return domain.SchedulerChannel{}, err
 	}
@@ -58,7 +82,18 @@ func (b axonHubBackend) UpdateFields(ctx context.Context, current domain.Schedul
 }
 
 func (b axonHubBackend) UpdateStatus(ctx context.Context, current domain.SchedulerChannel, status string) (domain.SchedulerChannel, error) {
-	row, err := b.client.UpdateStatus(ctx, current.ID, status)
+	client, err := b.service.axonHubClient(ctx, b.cfg)
+	if err != nil {
+		return domain.SchedulerChannel{}, err
+	}
+	row, err := client.UpdateStatus(ctx, current.ID, status)
+	if errors.Is(err, axonhub.ErrUnauthorized) {
+		b.service.resetAxonHubSession()
+		client, err = b.service.axonHubClient(ctx, b.cfg)
+		if err == nil {
+			row, err = client.UpdateStatus(ctx, current.ID, status)
+		}
+	}
 	if err != nil {
 		return domain.SchedulerChannel{}, err
 	}

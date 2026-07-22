@@ -51,6 +51,16 @@ func TestMigrateCreatesSchedulerSnapshotTables(t *testing.T) {
 
 func TestMigrateCreatesAxonHubControlPlaneTables(t *testing.T) {
 	s := testStore(t)
+	if _, err := s.exec(t.Context(), `UPDATE settings SET axonhub_api_key='stale' WHERE id='default'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var legacyKey string
+	if err := s.row(t.Context(), `SELECT axonhub_api_key FROM settings WHERE id='default'`).Scan(&legacyKey); err != nil || legacyKey != "" {
+		t.Fatalf("legacy key=%q err=%v", legacyKey, err)
+	}
 	for _, table := range []string{"scheduler_axonhub_channel_lifecycle"} {
 		cols, err := s.columns(t.Context(), table)
 		if err != nil {
@@ -65,7 +75,7 @@ func TestMigrateCreatesAxonHubControlPlaneTables(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if table == "settings" && (!cols["scheduler_provider"] || !cols["axonhub_base_url"] || !cols["axonhub_control_mode"]) {
+		if table == "settings" && (!cols["scheduler_provider"] || !cols["axonhub_base_url"] || !cols["axonhub_admin_email"] || !cols["axonhub_admin_password"] || !cols["axonhub_control_mode"]) {
 			t.Fatalf("settings columns = %#v", cols)
 		}
 		if table == "model_cards" && (!cols["axonhub_channel_id"] || !cols["axonhub_channel_name"]) {

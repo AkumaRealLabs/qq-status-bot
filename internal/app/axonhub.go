@@ -37,11 +37,13 @@ func (s *SchedulerService) SaveAxonHubConfig(ctx context.Context, cfg domain.Axo
 	if err != nil {
 		return out.Public(), err
 	}
+	s.resetAxonHubSession()
 	scheduler, schedulerErr := s.app.Store.SchedulerConfig(ctx)
 	if schedulerErr == nil && scheduler.Provider == domain.SchedulerProviderAxonHub && out.ControlMode == domain.AxonHubControlActive {
 		preflight, preflightErr := s.AxonHubPreflight(ctx)
 		if preflightErr != nil || !preflight.OK {
 			_, _ = s.app.Store.UpdateAxonHubConfig(ctx, old)
+			s.resetAxonHubSession()
 			if preflightErr != nil {
 				return old.Public(), preflightErr
 			}
@@ -56,10 +58,34 @@ func (s *SchedulerService) axonHubBackend(ctx context.Context) (SchedulerBackend
 	if err != nil {
 		return nil, cfg, err
 	}
-	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.APIKey) == "" {
+	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.AdminEmail) == "" || strings.TrimSpace(cfg.AdminPassword) == "" {
 		return nil, cfg, errAxonHubNotConfigured
 	}
-	return axonHubBackend{client: axonhub.Client{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, HTTP: s.app.Client.HTTP}}, cfg, nil
+	return axonHubBackend{service: s, cfg: cfg}, cfg, nil
+}
+
+func (s *SchedulerService) axonHubClient(ctx context.Context, cfg domain.AxonHubConfig) (axonhub.Client, error) {
+	s.axonHubAuthMu.Lock()
+	defer s.axonHubAuthMu.Unlock()
+	now := time.Now().UTC()
+	if s.axonHubToken != "" && s.axonHubTokenBaseURL == cfg.BaseURL && s.axonHubTokenAdminEmail == cfg.AdminEmail && s.axonHubTokenExpiresAt.After(now.Add(time.Minute)) {
+		return axonhub.Client{BaseURL: cfg.BaseURL, Token: s.axonHubToken, HTTP: s.app.Client.HTTP}, nil
+	}
+	client := axonhub.Client{BaseURL: cfg.BaseURL, HTTP: s.app.Client.HTTP}
+	token, expiresAt, err := client.SignIn(ctx, cfg.AdminEmail, cfg.AdminPassword)
+	if err != nil {
+		return axonhub.Client{}, err
+	}
+	s.axonHubToken, s.axonHubTokenExpiresAt = token, expiresAt
+	s.axonHubTokenBaseURL, s.axonHubTokenAdminEmail = cfg.BaseURL, cfg.AdminEmail
+	return axonhub.Client{BaseURL: cfg.BaseURL, Token: token, HTTP: s.app.Client.HTTP}, nil
+}
+
+func (s *SchedulerService) resetAxonHubSession() {
+	s.axonHubAuthMu.Lock()
+	defer s.axonHubAuthMu.Unlock()
+	s.axonHubToken, s.axonHubTokenBaseURL, s.axonHubTokenAdminEmail = "", "", ""
+	s.axonHubTokenExpiresAt = time.Time{}
 }
 
 func (s *SchedulerService) TestAxonHub(ctx context.Context) error {

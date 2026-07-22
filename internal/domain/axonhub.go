@@ -24,16 +24,17 @@ const (
 )
 
 type AxonHubConfig struct {
-	BaseURL     string `json:"base_url"`
-	APIKey      string `json:"api_key,omitempty"`
-	APIKeySet   bool   `json:"api_key_set,omitempty"`
-	ControlMode string `json:"control_mode"`
+	BaseURL          string `json:"base_url"`
+	AdminEmail       string `json:"admin_email"`
+	AdminPassword    string `json:"admin_password,omitempty"`
+	AdminPasswordSet bool   `json:"admin_password_set,omitempty"`
+	ControlMode      string `json:"control_mode"`
 }
 
 func (c AxonHubConfig) Public() AxonHubConfig {
 	out := c
-	out.APIKeySet = secretSet(c.APIKey)
-	out.APIKey = ""
+	out.AdminPasswordSet = secretSet(c.AdminPassword)
+	out.AdminPassword = ""
 	return out
 }
 

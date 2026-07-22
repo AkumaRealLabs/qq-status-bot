@@ -20,7 +20,7 @@ export function AxonHubConsole() {
   const [draft, setDraft] = useState<AxonHubConfig>()
   const config = useQuery({ queryKey: ['scheduler', 'axonhub', 'config'], queryFn: () => api<AxonHubConfig>('/api/scheduler/axonhub/config') })
   const cards = useQuery({ queryKey: ['cards'], queryFn: () => api<ModelCard[]>('/api/cards') })
-  const configured = Boolean(config.data?.base_url && config.data.api_key_set)
+  const configured = Boolean(config.data?.base_url && config.data?.admin_email && config.data.admin_password_set)
   const channels = useQuery({ queryKey: ['scheduler', 'channels'], queryFn: () => api<SchedulerChannel[]>('/api/scheduler/channels'), enabled: configured })
   const control = useQuery({
     queryKey: ['scheduler', 'axonhub', 'control-plane'],
@@ -132,7 +132,7 @@ export function AxonHubConsole() {
 }
 
 function AxonHubConfigDialog({ draft, onChange, onSave, saving }: { draft?: AxonHubConfig; onChange: (next: AxonHubConfig) => void; onSave: () => void; saving: boolean }) {
-  return <Dialog><DialogTrigger asChild><Button variant="outline" size="sm"><SlidersHorizontal className="size-4" />配置</Button></DialogTrigger><DialogContent><DialogTitle>AxonHub 配置</DialogTitle>{!draft ? <EmptyPanel text="加载中..." /> : <div className="grid gap-4"><Field label="Base URL"><Input value={draft.base_url} onChange={(e) => onChange({ ...draft, base_url: e.target.value })} /></Field><Field label="控制密钥"><Input type="password" value={draft.api_key || ''} placeholder={secretPlaceholder(draft.api_key_set)} onChange={(e) => onChange({ ...draft, api_key: e.target.value })} /></Field><Field label="控制模式"><Select value={draft.control_mode} onValueChange={(value: AxonHubConfig['control_mode']) => onChange({ ...draft, control_mode: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="off">关闭</SelectItem><SelectItem value="observe">观察</SelectItem><SelectItem value="active">主动控制</SelectItem></SelectContent></Select></Field><Button onClick={onSave} disabled={saving}>{saving ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}保存</Button></div>}</DialogContent></Dialog>
+	return <Dialog><DialogTrigger asChild><Button variant="outline" size="sm"><SlidersHorizontal className="size-4" />配置</Button></DialogTrigger><DialogContent><DialogTitle>AxonHub 配置</DialogTitle>{!draft ? <EmptyPanel text="加载中..." /> : <div className="grid gap-4"><Field label="Base URL"><Input value={draft.base_url} onChange={(e) => onChange({ ...draft, base_url: e.target.value })} /></Field><Field label="管理员邮箱"><Input type="email" value={draft.admin_email} onChange={(e) => onChange({ ...draft, admin_email: e.target.value })} /></Field><Field label="管理员密码"><Input type="password" value={draft.admin_password || ''} placeholder={secretPlaceholder(draft.admin_password_set)} onChange={(e) => onChange({ ...draft, admin_password: e.target.value })} /></Field><Field label="控制模式"><Select value={draft.control_mode} onValueChange={(value: AxonHubConfig['control_mode']) => onChange({ ...draft, control_mode: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="off">关闭</SelectItem><SelectItem value="observe">观察</SelectItem><SelectItem value="active">主动控制</SelectItem></SelectContent></Select></Field><Button onClick={onSave} disabled={saving}>{saving ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}保存</Button></div>}</DialogContent></Dialog>
 }
 
 function PreflightPanel({ value }: { value: AxonHubPreflight }) {

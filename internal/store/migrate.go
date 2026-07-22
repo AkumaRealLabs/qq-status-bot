@@ -28,7 +28,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 			scheduler_tiers TEXT NOT NULL DEFAULT '',
 			scheduler_traffic_mode TEXT NOT NULL DEFAULT 'off', scheduler_traffic_profile TEXT NOT NULL DEFAULT 'balanced',
 			scheduler_log_poll_seconds INTEGER NOT NULL DEFAULT 5,
-			axonhub_base_url TEXT NOT NULL DEFAULT '', axonhub_api_key TEXT NOT NULL DEFAULT '', axonhub_control_mode TEXT NOT NULL DEFAULT 'observe',
+			axonhub_base_url TEXT NOT NULL DEFAULT '', axonhub_api_key TEXT NOT NULL DEFAULT '', axonhub_admin_email TEXT NOT NULL DEFAULT '', axonhub_admin_password TEXT NOT NULL DEFAULT '', axonhub_control_mode TEXT NOT NULL DEFAULT 'observe',
 			cliproxy_name TEXT NOT NULL DEFAULT 'CLIProxyAPI', cliproxy_base_url TEXT NOT NULL DEFAULT '',
 			cliproxy_management_key TEXT NOT NULL DEFAULT '', cliproxy_enabled INTEGER NOT NULL DEFAULT 1,
 			notification_rules TEXT NOT NULL DEFAULT ''
@@ -263,7 +263,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "settings", "epay_key", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	for _, col := range []string{"scheduler_base_url", "scheduler_user_id", "scheduler_access_token", "axonhub_base_url", "axonhub_api_key"} {
+	for _, col := range []string{"scheduler_base_url", "scheduler_user_id", "scheduler_access_token", "axonhub_base_url", "axonhub_api_key", "axonhub_admin_email", "axonhub_admin_password"} {
 		if err := s.addColumnIfMissing(ctx, "settings", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
@@ -275,6 +275,10 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err := s.addColumnIfMissing(ctx, "settings", col.name, col.def); err != nil {
 			return err
 		}
+	}
+	// AxonHub 管理 GraphQL 改由管理员 JWT 调用，废弃的 service account 密钥不再保留在 AUM 数据库中。
+	if _, err := s.exec(ctx, `UPDATE settings SET axonhub_api_key='' WHERE axonhub_api_key<>''`); err != nil {
+		return err
 	}
 	if err := s.addColumnIfMissing(ctx, "settings", "scheduler_tiers", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err

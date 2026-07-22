@@ -336,8 +336,9 @@ export type SchedulerChannel = {
 
 export type AxonHubConfig = {
   base_url: string
-  api_key?: string
-  api_key_set?: boolean
+  admin_email: string
+  admin_password?: string
+  admin_password_set?: boolean
   control_mode: 'off' | 'observe' | 'active'
 }
 
