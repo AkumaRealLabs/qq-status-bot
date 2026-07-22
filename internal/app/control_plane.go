@@ -417,10 +417,18 @@ func (s *SchedulerService) ControlPlane(ctx context.Context) (domain.SchedulerCo
 		if value, ok := availabilityByID[channel.ID]; ok {
 			copy := value
 			row.Availability = &copy
+			row.Managed = row.Managed || value.Managed
 		}
 		if value, ok := trafficByID[channel.ID]; ok {
 			copy := value
 			row.Traffic = &copy
+			row.Managed = row.Managed || value.Managed
+		}
+		if !row.Managed && channel.Status != 3 && life.LastAUMWriteAt.IsZero() && !life.AUMDisabled {
+			row.Owner = domain.ControlOwnerObserved
+			row.ExternalTakeover = false
+			row.CloseSource = ""
+			row.CloseReason = "未纳入 AUM 管理，仅观察远端状态"
 		}
 		for _, event := range events {
 			if event.ChannelID != channel.ID || (!life.TrafficSince.IsZero() && event.OccurredAt.Before(life.TrafficSince)) {

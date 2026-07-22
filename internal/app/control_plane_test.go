@@ -97,6 +97,46 @@ func TestControlPlaneStatusThreeIsNeverWritten(t *testing.T) {
 	}
 }
 
+func TestControlPlaneOnlyManagesExplicitlyBoundChannels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/channel/" || r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
+			{"id": 16, "name": "生图渠道", "status": 1},
+			{"id": 17, "name": "GGAPI 自动关闭渠道", "status": 3},
+			{"id": 18, "name": "已绑定渠道", "status": 1},
+		}}})
+	}))
+	defer server.Close()
+
+	svc, st := newControlPlaneTestService(t, server)
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{
+		Name: "已绑定卡片", BaseURL: "https://upstream.invalid", APIKey: "secret", Model: "m",
+		PoolEnabled: true, SchedulerChannelID: "18", SchedulerChannelName: "已绑定渠道", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := svc.Scheduler.ControlPlane(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := make(map[string]domain.SchedulerControlPlaneChannel, len(view.Channels))
+	for _, row := range view.Channels {
+		rows[row.ChannelID] = row
+	}
+	if row := rows["16"]; row.Managed || row.Owner != domain.ControlOwnerObserved || row.ExternalTakeover || row.CloseReason != "未纳入 AUM 管理，仅观察远端状态" {
+		t.Fatalf("unbound row=%+v", row)
+	}
+	if row := rows["17"]; row.Managed || row.Owner != domain.ControlOwnerGGAPI {
+		t.Fatalf("status 3 row=%+v", row)
+	}
+	if row := rows["18"]; !row.Managed || row.Owner != domain.ControlOwnerAUM {
+		t.Fatalf("bound row=%+v", row)
+	}
+}
+
 func TestControlPlaneConcurrentCloseWritesOnce(t *testing.T) {
 	remoteStatus := 1
 	statusWrites, cacheClears := 0, 0

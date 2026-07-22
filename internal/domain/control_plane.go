@@ -6,6 +6,7 @@ const (
 	ControlOwnerAUM      = "aum"
 	ControlOwnerGGAPI    = "ggapi"
 	ControlOwnerExternal = "external"
+	ControlOwnerObserved = "observed"
 
 	ControlSourceManual       = "manual"
 	ControlSourceBalance      = "balance"
@@ -41,6 +42,7 @@ type SchedulerChannelLifecycle struct {
 type SchedulerControlPlaneChannel struct {
 	ChannelID              string               `json:"channel_id"`
 	ChannelName            string               `json:"channel_name,omitempty"`
+	Managed                bool                 `json:"managed"`
 	RemoteStatus           int                  `json:"remote_status"`
 	RemotePriority         int64                `json:"remote_priority"`
 	RemoteWeight           uint                 `json:"remote_weight"`

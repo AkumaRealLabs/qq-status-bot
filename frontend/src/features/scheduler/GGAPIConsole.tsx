@@ -46,6 +46,7 @@ export function GGAPICollaborationConsole({ configured }: { configured: boolean 
   })
   const data = control.data
   const rows = data?.channels ?? []
+  const managed = rows.filter((row) => row.managed).length
   const external = rows.filter((row) => row.external_takeover).length
   const closed = rows.filter((row) => row.remote_status !== 1).length
   const cleanup = rows.filter((row) => row.affinity_cleanup_pending).length
@@ -73,7 +74,7 @@ export function GGAPICollaborationConsole({ configured }: { configured: boolean 
       {configured && <>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <Metric label="遥测延迟" value={data ? `${data.traffic.lag_seconds}s` : '-'} accent={data?.traffic.frozen ? 'danger' : 'success'} />
-          <Metric label="受控渠道" value={rows.length} />
+          <Metric label="受控渠道" value={managed} />
           <Metric label="远端关闭" value={closed} accent={closed ? 'danger' : undefined} />
           <Metric label="外部接管" value={external} accent={external ? 'danger' : undefined} />
           <Metric label="亲和请求失败（5 分钟）" value={sessionFailures} />
@@ -101,9 +102,9 @@ export function GGAPICollaborationConsole({ configured }: { configured: boolean 
                   <Cell><div>{row.new_traffic_requests} 请求</div><div className="text-xs text-muted-foreground">起点 {fmtTime(row.traffic_since)}</div></Cell>
                   <Cell>{traffic?.window_1m ? <div><span>{Math.round(traffic.window_1m.failure_rate * 100)}%</span><span className="ml-2 text-xs text-muted-foreground">P95 {traffic.window_1m.p95_ttft_ms || '-'}ms</span></div> : '-'}</Cell>
                   <Cell>{row.remote_priority} / {row.remote_weight}</Cell>
-                  <Cell>{row.affinity_cleanup_pending ? <div><Badge variant="destructive">待重试</Badge><div className="mt-1 max-w-48 truncate text-xs text-muted-foreground" title={row.affinity_cleanup_error}>{fmtTime(row.affinity_cleanup_retry_at)}</div></div> : <Badge variant="outline">已完成</Badge>}</Cell>
+                  <Cell>{!row.managed ? '-' : row.affinity_cleanup_pending ? <div><Badge variant="destructive">待重试</Badge><div className="mt-1 max-w-48 truncate text-xs text-muted-foreground" title={row.affinity_cleanup_error}>{fmtTime(row.affinity_cleanup_retry_at)}</div></div> : <Badge variant="outline">已完成</Badge>}</Cell>
                   <Cell><div className="flex justify-end gap-1">
-                    {row.external_takeover && <IconButton title="重新接管" icon={RotateCcw} onClick={() => adopt.mutate(row.channel_id)} disabled={adopt.isPending} />}
+                    {row.managed && row.external_takeover && <IconButton title="重新接管" icon={RotateCcw} onClick={() => adopt.mutate(row.channel_id)} disabled={adopt.isPending} />}
                     {availability?.card_id && (manualOff
                       ? <IconButton title="解除手动关闭" icon={CirclePlay} onClick={() => availabilityAction.mutate({ cardID: availability.card_id, action: 'release_hold' })} disabled={availabilityAction.isPending || row.external_takeover} />
                       : <IconButton title="手动关闭" icon={CirclePause} onClick={() => availabilityAction.mutate({ cardID: availability.card_id, action: 'hold_off' })} disabled={availabilityAction.isPending || row.external_takeover || row.remote_status === 3} />)}
@@ -291,7 +292,7 @@ function AvailabilityPolicyDialog({ target, onClose }: { target?: SchedulerContr
 function Header({ children, align }: { children: ReactNode; align?: 'right' }) { return <th className={cn('px-3 py-2 font-medium', align === 'right' && 'text-right')}>{children}</th> }
 function Cell({ children }: { children: ReactNode }) { return <td className="px-3 py-2 align-middle">{children}</td> }
 function IconButton({ title, icon: Icon, onClick, disabled }: { title: string; icon: LucideIcon; onClick: () => void; disabled?: boolean }) { return <Button variant="ghost" size="icon" title={title} onClick={onClick} disabled={disabled}><Icon className="size-4" /><span className="sr-only">{title}</span></Button> }
-function OwnerBadge({ row }: { row: SchedulerControlPlaneChannel }) { const label = row.owner === 'ggapi' ? 'GGAPI' : row.owner === 'external' ? '外部接管' : 'AUM'; return <Badge variant={row.external_takeover ? 'destructive' : row.owner === 'ggapi' ? 'secondary' : 'outline'}>{label}</Badge> }
+function OwnerBadge({ row }: { row: SchedulerControlPlaneChannel }) { const label = row.owner === 'ggapi' ? 'GGAPI' : row.owner === 'external' ? '外部接管' : row.owner === 'observed' ? '仅观察' : 'AUM'; return <Badge variant={row.external_takeover ? 'destructive' : row.owner === 'ggapi' ? 'secondary' : 'outline'}>{label}</Badge> }
 function statusText(status: number) { return status === 1 ? '启用' : status === 2 ? '手动关闭' : status === 3 ? '自动关闭' : `状态 ${status}` }
 function statusVariant(status: number): 'success' | 'destructive' | 'secondary' { return status === 1 ? 'success' : status === 2 ? 'destructive' : 'secondary' }
 function trafficModeText(mode?: string) { return mode === 'active' ? '主动控制' : mode === 'observe' ? '仅观察' : '流量控制关闭' }

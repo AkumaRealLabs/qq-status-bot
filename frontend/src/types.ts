@@ -402,10 +402,11 @@ export type TrafficStatus = {
 export type SchedulerControlPlaneChannel = {
   channel_id: string
   channel_name?: string
+  managed: boolean
   remote_status: number
   remote_priority: number
   remote_weight: number
-  owner: 'aum' | 'ggapi' | 'external'
+  owner: 'aum' | 'ggapi' | 'external' | 'observed'
   external_takeover: boolean
   aum_disabled: boolean
   close_source?: string
