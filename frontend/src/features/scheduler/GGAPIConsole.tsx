@@ -101,7 +101,7 @@ export function GGAPICollaborationConsole({ configured }: { configured: boolean 
                   <Cell><OwnerBadge row={row} /></Cell>
                   <Cell><div className="max-w-64 truncate text-xs" title={row.close_reason || availabilityReason(row)}>{row.close_reason || availabilityReason(row)}</div></Cell>
                   <Cell><div>{row.new_traffic_requests} 请求</div><div className="text-xs text-muted-foreground">起点 {fmtTime(row.traffic_since)}</div></Cell>
-                  <Cell>{quality && quality.requests > 0 ? <div><span>{Math.round(quality.failure_rate * 100)}%</span><span className="ml-2 text-xs text-muted-foreground">P95 {quality.p95_ttft_ms > 0 ? `${quality.p95_ttft_ms}ms` : '-'}</span></div> : '-'}</Cell>
+                  <Cell>{quality && quality.requests > 0 ? <div><span>成功 {Math.round((1 - quality.failure_rate) * 100)}%</span><span className="ml-2 text-xs text-muted-foreground">P95 {quality.p95_ttft_ms > 0 ? `${quality.p95_ttft_ms}ms` : '-'}</span></div> : '-'}</Cell>
                   <Cell>{row.remote_priority} / {row.remote_weight}</Cell>
                   <Cell>{!row.managed ? '-' : row.affinity_cleanup_pending ? <div><Badge variant="destructive">待重试</Badge><div className="mt-1 max-w-48 truncate text-xs text-muted-foreground" title={row.affinity_cleanup_error}>{fmtTime(row.affinity_cleanup_retry_at)}</div></div> : <Badge variant="outline">已完成</Badge>}</Cell>
                   <Cell><div className="flex justify-end gap-1">
