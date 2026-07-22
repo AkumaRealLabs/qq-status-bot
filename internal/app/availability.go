@@ -125,6 +125,10 @@ func (s *SchedulerService) reconcileAvailabilityWithChannels(ctx context.Context
 		if err != nil {
 			return err
 		}
+		row, err = s.syncAvailabilityRecoveryState(ctx, row)
+		if err != nil {
+			return err
+		}
 		if runway.Warning {
 			s.recordRunwayWarning(ctx, upstream, row, runway)
 		}
@@ -147,6 +151,34 @@ func (s *SchedulerService) reconcileAvailabilityWithChannels(ctx context.Context
 		}
 	}
 	return nil
+}
+
+// syncAvailabilityRecoveryState 清理远端已恢复但本地仍残留的自动关渠状态。
+// 远端可能被人工启用，或在控制面恢复后先于本地卡片状态完成变更。
+func (s *SchedulerService) syncAvailabilityRecoveryState(ctx context.Context, row domain.ChannelAvailability) (domain.ChannelAvailability, error) {
+	if row.ActualStatus != 1 || row.DesiredStatus != 1 || row.PendingAction != "" {
+		return row, nil
+	}
+	updated, _, err := s.mutateAvailabilityIfChanged(ctx, row, func(next *domain.ChannelAvailability) bool {
+		changed := next.DisabledAt != nil || next.RecoverySuccess != 0
+		if !changed {
+			return false
+		}
+		next.DisabledAt = nil
+		next.RecoverySuccess = 0
+		return true
+	})
+	if err != nil {
+		return domain.ChannelAvailability{}, err
+	}
+	if updated.CardID != "" {
+		if card, cardErr := s.app.Cards.Card(ctx, updated.CardID); cardErr == nil && card.SchedulerAutoDisabled {
+			if err := s.app.Cards.UpdateCardSchedulerAutoDisabled(ctx, updated.CardID, false); err != nil {
+				return domain.ChannelAvailability{}, err
+			}
+		}
+	}
+	return updated, nil
 }
 
 func managedAvailabilityCard(card domain.ModelCard, upstream domain.Upstream) bool {

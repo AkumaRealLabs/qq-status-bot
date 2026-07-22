@@ -191,6 +191,57 @@ func TestAvailabilityCacheClearFailureKeepsPendingAndRetries(t *testing.T) {
 	}
 }
 
+func TestAvailabilityReconcileClearsStaleAutoDisabledAfterRemoteEnable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/channel/" || r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "name": "渠道9", "status": 1}}}})
+	}))
+	defer server.Close()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "availability-sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	upstream, err := st.CreateUpstream(t.Context(), domain.Upstream{Name: "上游", Type: "newapi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", UpstreamID: upstream.ID, PoolEnabled: true, SchedulerChannelID: "9", SchedulerChannelName: "渠道9", SchedulerAutoDisabled: true, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-time.Hour)
+	if ok, err := st.SaveChannelAvailabilityCAS(t.Context(), domain.ChannelAvailability{
+		ChannelID: "9", ChannelName: "渠道9", CardID: card.ID, CardName: card.Name, UpstreamID: upstream.ID, UpstreamName: upstream.Name,
+		Managed: true, DesiredStatus: 1, ActualStatus: 2, DisabledAt: &old, RecoverySuccess: 5,
+	}, 0); err != nil || !ok {
+		t.Fatalf("seed availability ok=%v err=%v", ok, err)
+	}
+	svc := New(st)
+	svc.Client = monitor.Client{HTTP: server.Client()}
+	if _, err := svc.SaveSchedulerConfig(t.Context(), domain.SchedulerConfig{BaseURL: server.URL, UserID: "1", AccessToken: "token", UnassignedGroup: "unassigned"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileAvailability(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := st.ChannelAvailability(t.Context(), "9")
+	if err != nil || !found || row.ActualStatus != 1 || row.DesiredStatus != 1 || row.DisabledAt != nil || row.RecoverySuccess != 0 {
+		t.Fatalf("row=%+v found=%v err=%v", row, found, err)
+	}
+	updated, err := st.Card(t.Context(), card.ID)
+	if err != nil || updated.SchedulerAutoDisabled {
+		t.Fatalf("card=%+v err=%v", updated, err)
+	}
+}
+
 func TestReconcileMissingChannelNotifiesOnlyOnTransition(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []any{}}})

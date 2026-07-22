@@ -243,3 +243,26 @@ func TestParseTrafficEventRetrySuccessIsSoftFailure(t *testing.T) {
 		t.Fatalf("event=%+v", event)
 	}
 }
+
+func TestTrafficChannelViewDoesNotReuseAvailabilityCloseState(t *testing.T) {
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "traffic-control.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := st.SaveTrafficControl(t.Context(), domain.TrafficControlState{
+		ChannelID: "9", BasePriority: 100, BaseWeight: 100, DesiredPriority: 100, DesiredWeight: 100,
+		ActualPriority: 100, ActualWeight: 0, DesiredStatus: 2, ActualStatus: 2, State: "healthy", UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	view := svc.Scheduler.trafficChannelView(t.Context(), domain.SchedulerChannel{ID: "9", Name: "渠道9", Status: 2, Priority: 100, Weight: 0}, nil, nil, true, now)
+	if view.State != "healthy" || view.DesiredStatus != 1 || view.ActualStatus != 2 {
+		t.Fatalf("view=%+v", view)
+	}
+}

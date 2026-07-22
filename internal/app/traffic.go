@@ -417,7 +417,9 @@ func (s *SchedulerService) trafficChannelView(ctx context.Context, channel domai
 	if !found {
 		control = domain.TrafficControlState{ChannelID: channel.ID, BasePriority: channel.Priority, BaseWeight: channel.Weight, DesiredPriority: channel.Priority, DesiredWeight: channel.Weight, ActualPriority: channel.Priority, ActualWeight: channel.Weight, DesiredStatus: channel.Status, ActualStatus: channel.Status, State: "healthy"}
 	}
-	row := domain.TrafficChannelState{ChannelID: channel.ID, ChannelName: channel.Name, Managed: managed, State: "healthy", DesiredStatus: control.DesiredStatus,
+	// desired_status=2 可能只是上一轮可用性策略关闭渠道留下的控制态；
+	// 当前是否应关闭由本轮流量决策和可用性覆盖共同决定，不能沿用旧值阻塞恢复。
+	row := domain.TrafficChannelState{ChannelID: channel.ID, ChannelName: channel.Name, Managed: managed, State: "healthy", DesiredStatus: 1,
 		ActualStatus: channel.Status, BasePriority: control.BasePriority, ActualPriority: channel.Priority, BaseWeight: control.BaseWeight, ActualWeight: channel.Weight, HealthScore: 100, UpdatedAt: control.UpdatedAt}
 	if row.DesiredStatus == 0 {
 		row.DesiredStatus = 1
