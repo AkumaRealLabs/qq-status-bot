@@ -223,12 +223,24 @@ func (s *SchedulerService) pruneTrafficControls(ctx context.Context, channels []
 	for _, channel := range channels {
 		remote[channel.ID] = struct{}{}
 	}
+	cards, err := s.app.Cards.ListCards(ctx)
+	if err != nil {
+		return err
+	}
+	managed := make(map[string]struct{}, len(cards))
+	for _, card := range cards {
+		if card.Enabled && card.PoolEnabled && strings.TrimSpace(card.SchedulerChannelID) != "" {
+			managed[card.SchedulerChannelID] = struct{}{}
+		}
+	}
 	rows, err := s.app.Store.TrafficControls(ctx)
 	if err != nil {
 		return err
 	}
 	for _, row := range rows {
-		if _, exists := remote[row.ChannelID]; exists {
+		_, remoteExists := remote[row.ChannelID]
+		_, managedExists := managed[row.ChannelID]
+		if remoteExists && managedExists {
 			continue
 		}
 		if err := s.app.Store.DeleteTrafficControl(ctx, row.ChannelID); err != nil {

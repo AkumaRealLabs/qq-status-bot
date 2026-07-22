@@ -370,6 +370,12 @@ func TestTrafficControlRefreshesActualFieldsWithoutRemoteWrite(t *testing.T) {
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{
+		Name: "卡片", BaseURL: "https://upstream.invalid", APIKey: "secret", Model: "m",
+		PoolEnabled: true, SchedulerChannelID: "9", SchedulerChannelName: "渠道 9", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.SaveTrafficControl(t.Context(), domain.TrafficControlState{
 		ChannelID: "9", BasePriority: 100, BaseWeight: 80, DesiredPriority: 100, DesiredWeight: 80,
 		ActualPriority: -2000, ActualWeight: 0, DesiredStatus: 1, ActualStatus: 2, State: "healthy",
@@ -399,7 +405,10 @@ func TestFetchSchedulerChannelsPrunesOnlyAfterSuccessfulFullRead(t *testing.T) {
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{{"id": 9, "name": "渠道 9", "status": 1}}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"items": []map[string]any{
+			{"id": 9, "name": "渠道 9", "status": 1},
+			{"id": 17, "name": "已解绑渠道", "status": 1},
+		}}})
 	}))
 	defer server.Close()
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "prune.sqlite"))
@@ -410,7 +419,13 @@ func TestFetchSchedulerChannelsPrunesOnlyAfterSuccessfulFullRead(t *testing.T) {
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	for _, channelID := range []string{"9", "99"} {
+	if _, err := st.CreateCard(t.Context(), domain.ModelCard{
+		Name: "卡片", BaseURL: "https://upstream.invalid", APIKey: "secret", Model: "m",
+		PoolEnabled: true, SchedulerChannelID: "9", SchedulerChannelName: "渠道 9", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, channelID := range []string{"9", "17", "99"} {
 		if err := st.SaveTrafficControl(t.Context(), domain.TrafficControlState{ChannelID: channelID, State: "healthy"}); err != nil {
 			t.Fatal(err)
 		}
@@ -423,6 +438,12 @@ func TestFetchSchedulerChannelsPrunesOnlyAfterSuccessfulFullRead(t *testing.T) {
 	}
 	if _, found, err := st.TrafficControl(t.Context(), "99"); err != nil || found {
 		t.Fatalf("stale control found=%v err=%v", found, err)
+	}
+	if _, found, err := st.TrafficControl(t.Context(), "17"); err != nil || found {
+		t.Fatalf("unbound control found=%v err=%v", found, err)
+	}
+	if _, found, err := st.TrafficControl(t.Context(), "9"); err != nil || !found {
+		t.Fatalf("managed control found=%v err=%v", found, err)
 	}
 	if err := st.SaveTrafficControl(t.Context(), domain.TrafficControlState{ChannelID: "88", State: "healthy"}); err != nil {
 		t.Fatal(err)
