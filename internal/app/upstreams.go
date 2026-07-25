@@ -30,9 +30,6 @@ func (s *Service) SaveUpstream(ctx context.Context, id string, in domain.Upstrea
 	in = in.MergeUpdate(old)
 	out, err := s.Store.UpdateUpstream(ctx, in)
 	if err == nil && domain.BalanceRate(old) != domain.BalanceRate(out) {
-		if err := s.recordCurrentCostSnapshots(ctx); err != nil {
-			return out.Public(), err
-		}
 		s.syncSchedulerGroupsBestEffort(ctx)
 	}
 	return out.Public(), err
@@ -52,9 +49,6 @@ func (s *Service) SyncKeys(ctx context.Context, upstreamID string) error {
 		return err
 	}
 	if err := s.Store.SaveKeys(ctx, u.ID, result.Keys); err != nil {
-		return err
-	}
-	if err := s.recordCurrentCostSnapshots(ctx); err != nil {
 		return err
 	}
 	s.syncSchedulerGroupsBestEffort(ctx)

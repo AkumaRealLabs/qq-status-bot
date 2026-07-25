@@ -84,11 +84,6 @@ func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 	writeNoContentOrError(w, s.App.TestNotification(r.Context()))
 }
 
-func (s *Server) opsProfit(w http.ResponseWriter, r *http.Request) {
-	out, err := s.App.Profit(r.Context(), r.URL.Query().Get("window"))
-	writeJSONOrError(w, out, err)
-}
-
 func (s *Server) opsSelfCheck(w http.ResponseWriter, r *http.Request) {
 	out, err := s.App.SelfCheck(r.Context())
 	writeJSONOrError(w, out, err)

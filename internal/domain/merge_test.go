@@ -90,15 +90,10 @@ func TestNormalizeAndValidateOneBotSettings(t *testing.T) {
 	}
 }
 
-func TestSchedulerAndCLIProxyMergeUpdate(t *testing.T) {
+func TestSchedulerMergeUpdate(t *testing.T) {
 	oldS := SchedulerConfig{BaseURL: "https://s", UserID: "1", AccessToken: "tok", UnassignedGroup: "old"}
 	gotS := SchedulerConfig{BaseURL: " https://s2/ ", UserID: " 2 ", AccessToken: "", UnassignedGroup: " unassigned "}.MergeUpdate(oldS)
 	if gotS.BaseURL != "https://s2" || gotS.UserID != "2" || gotS.AccessToken != "tok" || gotS.UnassignedGroup != "unassigned" {
 		t.Fatalf("scheduler = %+v", gotS)
-	}
-	oldC := CLIProxyConfig{Name: "CPA", BaseURL: "https://c", ManagementKey: "mk"}
-	gotC := CLIProxyConfig{Name: "", BaseURL: " https://c2/ ", ManagementKey: ""}.MergeUpdate(oldC)
-	if gotC.Name != DefaultCLIProxyName || gotC.BaseURL != "https://c2" || gotC.ManagementKey != "mk" {
-		t.Fatalf("cliproxy = %+v", gotC)
 	}
 }

@@ -255,7 +255,7 @@ export function FeedbackBanner({
   return <InlineMessage message={message} tone={feedbackTone(message, { error, success })} className={className} />
 }
 
-/** 带边框可滚动表格壳，运维/号池/收入共用。 */
+/** 带边框可滚动表格壳，运维与收入页面共用。 */
 export function DataTable({
   minWidthClass,
   head,

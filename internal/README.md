@@ -19,7 +19,7 @@
 
 ## 演进路径
 
-演进原则：先充实 domain（cost/merge/profit）→ 再拆 app 子服务 → 按难测边界补 ports。
+演进原则：先充实 domain（cost/merge）→ 再拆 app 子服务 → 按难测边界补 ports。
 
 ### Domain 纯规则面（已落地）
 
@@ -27,7 +27,6 @@
 |------|----------|------|
 | 成本绑定 | `cost_binding.go` | 成本来源规范化、缺失原因 |
 | 合并 / 密钥保留 | `merge.go`、`secrets.go` | 聚合上的 `MergeUpdate` |
-| 利润计算 | `profit.go` | `UsageUnits`、`LineProfit`、成本辅助 |
 | 通知映射 | `notify.go` | `ShouldNotify`、`AlertEventType` |
 | 收入卡片规则 | `revenue.go` | 来源类型规范化 / 校验 |
 | 调度分组匹配 | `scheduler_groups.go` | `GroupsForPrice`、`TargetGroups`、`SplitGroups` |
@@ -38,10 +37,7 @@
 
 | 门面 | 字段 | 职责 |
 |------|------|------|
-| `SchedulerService` | `Service.Scheduler` | 成本绑定、渠道成本分组/优先级或标签/权重同步、成本快照 |
-| `ProfitService` | `Service.ProfitSvc` | 基于调度日志的号池利润汇总 |
-| `CLIProxyService` | `Service.CLIProxy` | CLIProxyAPI 配置、鉴权文件、配额重置/快照 |
-| `TGService` | `Service.TG` | Telegram 会话、频道、消息同步/媒体缓存 |
+| `SchedulerService` | `Service.Scheduler` | 成本绑定、渠道成本分组/优先级或标签/权重同步 |
 
 对外方法仍挂在 `*Service` 上，经 `facade_forwarders.go` 薄转发（避免改 HTTP handler）。
 
@@ -54,7 +50,6 @@
 - 运维事件 mark/ack（单条 + 批量）
 - 审计写入、公开站点设置
 - 导入/导出数据（`app.ExportData` DTO — httpapi 不必为它 import store）
-- TG 频道/消息 list/get/delete
 
 **httpapi 已不再访问 `App.Store`。** 鉴权边界仍可在 `AuthenticatedRequest` 使用 `*store.Store` 查会话。
 
@@ -80,3 +75,4 @@
 - `monitor` 仅负责上游余额、Key、订单与充值 API；不执行外部进程。
 - 调度同步不得写渠道状态。GGAPI 仅写 `group/priority`，AxonHub 仅写托管标签与 `orderingWeight`。
 - 旧表只存在于一次性兼容迁移 SQL；迁移标记为 `retire-monitoring-v1`，完成后不再创建。
+- 利润快照、Telegram 用户会话/频道消息和 CLIProxy 号池管理已退役；Telegram Bot 通知仍通过 `Notifier` 保留。

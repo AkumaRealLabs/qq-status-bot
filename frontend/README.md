@@ -8,10 +8,10 @@
 |------|------|------|
 | `/` | 重定向 | 跳转 `/admin/balances` |
 | `/admin/balances` | `AdminApp` | 默认后台入口 |
-| `/admin/costs` | `AdminApp` | 成本绑定、连接配置、售价档位与同步日志 |
+| `/admin/costs` | `AdminApp` | 成本绑定、连接配置、成本档位与同步日志 |
 | `/admin/*` | `AdminApp` | 其他管理页面（登录后） |
 
-旧 `/status`、`/admin/status` 跳转余额页，旧 `/admin/scheduler` 跳转成本管理页。前端不再构建公开状态或健康控制 chunk。
+旧 `/status`、`/admin/status` 跳转余额页，旧 `/admin/scheduler` 跳转成本管理页。已删除或未知的后台路径回落到余额页；前端不再构建公开状态、健康控制、利润、Telegram 消息或号池管理 chunk。
 
 共享能力集中在：
 

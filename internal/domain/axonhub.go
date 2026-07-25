@@ -54,8 +54,8 @@ func NormalizeAxonHubControlMode(mode string) string {
 
 func DefaultAxonHubTiers() []SchedulerTier {
 	return []SchedulerTier{
-		{Tag: AxonHubTagLow, Group: AxonHubTagLow, PriceMin: 0, PriceMax: 0.099, SalePrice: 0.10},
-		{Tag: AxonHubTagStable, Group: AxonHubTagStable, PriceMin: 0.10, PriceMax: 0.20, SalePrice: 0.25},
+		{Tag: AxonHubTagLow, Group: AxonHubTagLow, PriceMin: 0, PriceMax: 0.099},
+		{Tag: AxonHubTagStable, Group: AxonHubTagStable, PriceMin: 0.10, PriceMax: 0.20},
 	}
 }
 

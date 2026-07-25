@@ -10,7 +10,7 @@
 
 ## 项目是什么
 
-自用运维台：监控 new-api / sub2api 上游余额与模型探测，联动调度器分组、利润、Telegram、CLIProxy 号池、易支付收入。
+自用运维台：监控 new-api / sub2api 上游余额，联动 GGAPI / AxonHub 成本字段、Telegram Bot 告警、通知规则与易支付收入。
 
 - 后端：Go 单二进制，`frontend/dist` 由 `//go:embed` 嵌入。
 - 前端：React + TypeScript + Vite + Tailwind；pnpm。
@@ -32,7 +32,7 @@
 
 1. **httpapi 只调 `s.App.*`**，不要重新引入 Store 旁路。鉴权边界可在 `AuthenticatedRequest` 用 `*store.Store` 查会话。
 2. **密钥/空字段**：编辑时留空 = 不修改；合并走 domain `MergeUpdate` / `KeepSecret`，app 编排后落库。
-3. **facade**：`Scheduler` / `ProfitSvc` / `Probe` / `CLIProxy` / `TG`；对外仍挂在 `*Service`，经 `facade_forwarders.go` 转发，避免无谓改 handler。
+3. **facade**：`Scheduler` / `OneBot`；对外仍挂在 `*Service`，经 `facade_forwarders.go` 转发，避免无谓改 handler。
 4. **ports**（`Cards` / `Notify` / `Prober`）：只在难测边界扩展；不要一次铺满六边形。
 5. **导出 DTO**：对 httpapi 使用 `app.ExportData`，不要让 handler 为备份类型 import `store`。
 6. **默认不改** REST 路径与 JSON 字段名；不拆微服务、不换库、不重写 PocketBase 迁移，除非用户明确要求。

@@ -63,9 +63,6 @@ func (s *Service) RefreshBalances(ctx context.Context) (domain.BalanceRefreshRes
 			out.Failed++
 		}
 	}
-	if err := s.Scheduler.recordCurrentCostSnapshots(ctx); err != nil {
-		return out, err
-	}
 	s.syncSchedulerGroupsBestEffort(ctx)
 	return out, nil
 }
@@ -76,9 +73,6 @@ func (s *Service) RefreshUpstreamBalance(ctx context.Context, upstreamID string)
 		return err
 	}
 	if err := s.refreshUpstreamBalance(ctx, upstream); err != nil {
-		return err
-	}
-	if err := s.Scheduler.recordCurrentCostSnapshots(ctx); err != nil {
 		return err
 	}
 	s.syncSchedulerGroupsBestEffort(ctx)

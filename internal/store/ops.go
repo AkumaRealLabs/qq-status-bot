@@ -285,32 +285,6 @@ func (s *Store) RevenueSnapshotsSince(ctx context.Context, since time.Time) ([]d
 	return out, rows.Err()
 }
 
-func (s *Store) SaveCLIProxyQuotaSnapshot(ctx context.Context, snap domain.CLIProxyQuotaSnapshot) error {
-	if snap.ID == "" {
-		snap.ID = NewID()
-	}
-	if snap.CheckedAt.IsZero() {
-		snap.CheckedAt = time.Now().UTC()
-	}
-	_, err := s.exec(ctx, `INSERT INTO cliproxy_quota_snapshots (id, account_name, auth_index, checked_at, ok, plan_type, summary, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, snap.ID, snap.AccountName, snap.AuthIndex, snap.CheckedAt.Format(time.RFC3339Nano), boolInt(snap.OK), snap.PlanType, snap.Summary, snap.Error)
-	return err
-}
-
-func (s *Store) LatestCLIProxyQuotaSnapshot(ctx context.Context, accountName string) (domain.CLIProxyQuotaSnapshot, error) {
-	var snap domain.CLIProxyQuotaSnapshot
-	var checked string
-	var ok int
-	err := s.row(ctx, `SELECT id, account_name, auth_index, checked_at, ok, plan_type, summary, error
-		FROM cliproxy_quota_snapshots WHERE account_name=? ORDER BY checked_at DESC LIMIT 1`, accountName).
-		Scan(&snap.ID, &snap.AccountName, &snap.AuthIndex, &checked, &ok, &snap.PlanType, &snap.Summary, &snap.Error)
-	if err == nil {
-		snap.CheckedAt = parseTime(checked)
-		snap.OK = boolFromInt(ok)
-	}
-	return snap, err
-}
-
 func (s *Store) BalanceSnapshotsSince(ctx context.Context, upstreamID string, since time.Time) ([]domain.BalanceSnapshot, error) {
 	where := []string{timeWhere(s.Driver, "checked_at")}
 	args := []any{since.UTC().Format(time.RFC3339Nano)}

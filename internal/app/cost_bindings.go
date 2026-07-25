@@ -80,46 +80,18 @@ func (s *SchedulerService) SaveCostBinding(ctx context.Context, id string, in do
 		}
 		in.ID, in.CreatedAt = old.ID, old.CreatedAt
 		out, err = s.app.Store.UpdateCostBinding(ctx, in)
-		if err == nil {
-			s.recordInactiveBindingSnapshot(ctx, old, out)
-		}
 	}
 	if err != nil {
 		return out, err
 	}
 	out = costBindingProjection(out)
-	if err := s.recordCostBindingSnapshot(ctx, out); err != nil {
-		return out, err
-	}
 	return out, nil
 }
 
-func (s *SchedulerService) recordInactiveBindingSnapshot(ctx context.Context, old, next domain.SchedulerCostBinding) {
-	cfg, err := s.app.Store.SchedulerConfig(ctx)
-	if err != nil {
-		return
-	}
-	oldChannel, nextChannel := old.SchedulerChannelID, next.SchedulerChannelID
-	oldName := old.SchedulerChannelName
-	if cfg.Provider == domain.SchedulerProviderAxonHub {
-		oldChannel, nextChannel, oldName = old.AxonHubChannelID, next.AxonHubChannelID, old.AxonHubChannelName
-	}
-	if oldChannel == "" || (oldChannel == nextChannel && next.Enabled) {
-		return
-	}
-	_, _ = s.app.Store.SaveSchedulerChannelCostSnapshot(ctx, domain.SchedulerChannelCostSnapshot{
-		Provider: cfg.Provider, ChannelID: oldChannel, ChannelName: oldName, CardID: old.ID, CardName: old.Name,
-		Active: false, MissingReason: "成本绑定已变更", EffectiveAt: time.Now().UTC(),
-	})
-}
-
 func (s *SchedulerService) DeleteCostBinding(ctx context.Context, id string) error {
-	old, err := s.app.Store.CostBinding(ctx, id)
+	_, err := s.app.Store.CostBinding(ctx, id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
-	}
-	if err == nil {
-		s.recordInactiveBindingSnapshot(ctx, old, domain.SchedulerCostBinding{})
 	}
 	return s.app.Store.DeleteCostBinding(ctx, id)
 }

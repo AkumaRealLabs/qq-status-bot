@@ -1,6 +1,6 @@
 # AI Upstream Monitor
 
-自用运维台：管理 `new-api` / `sub2api` 上游余额与成本，联动 GGAPI / AxonHub 成本字段、利润核算、Telegram 消息、CLIProxy 号池与易支付收入。服务状态与模型可用性由 Uptime Kuma 负责。
+自用运维台：管理 `new-api` / `sub2api` 上游余额与成本，联动 GGAPI / AxonHub 成本字段、Telegram Bot 告警、通知规则与易支付收入。服务状态与模型可用性由 Uptime Kuma 负责。
 
 ## 快速启动
 
@@ -22,17 +22,13 @@ docker compose up -d --build
 | `BROWSER_DEBUG_URL` | `http://127.0.0.1:19222` | 浏览器 CDP 调试地址 |
 | `BROWSER_PROXY_URL` | 空 | noVNC 反代上游 |
 | `BROWSER_VNC_URL` | 空 | 前端打开的 VNC 页面 |
-| `TG_MEDIA_DIR` | `/app/data/tg_media` | Telegram 媒体缓存目录 |
 | `TZ` | 系统时区 | 收入「今日」边界等使用 |
 
 ## 功能概览
 
 - **余额监控**：上游额度、低余额告警、在线充值/兑换
-- **成本管理**：上游 Key / 手动成本倍率、GGAPI / AxonHub 渠道绑定、售价档位、手动与自动成本同步
+- **成本管理**：上游 Key / 手动成本倍率、GGAPI / AxonHub 渠道绑定、成本档位、手动与自动成本同步
 - **今日收入**：易支付 / new-api / sub2api 订单
-- **利润核算**：保留成本/售价历史快照，按 GGAPI 消费日志计算已确认毛利
-- **号池**：CLIProxyAPI Codex 账号与配额（忽略 xAI）
-- **最新消息**：Telegram 频道同步
 - **事件 / 审计 / 通知规则 / 系统自检**
 
 ## 运维说明
@@ -40,8 +36,8 @@ docker compose up -d --build
 ### 数据与备份
 
 - 业务库：`./data/monitor.sqlite`（SQLite 默认开启 WAL）
-- 后台「设置 → 导出敏感备份」会包含密钥、OneBot Token 与 TG 会话，按机密文件保管
-- 定时任务每小时清理过期时序数据（余额快照 30 天、审计 90 天、成本与售价快照 180 天等）
+- 后台「设置 → 导出敏感备份」会包含上游密钥、Telegram Bot Token 与 OneBot Token，按机密文件保管
+- 定时任务每小时清理过期时序数据（余额快照 30 天、审计 90 天等）
 
 ### 安全
 
@@ -63,7 +59,7 @@ docker compose up -d --build
 - 每轮余额与 Key 刷新完成后执行一次成本同步，也可在「成本管理」手动触发。
 - GGAPI 只写渠道 `group` 与 `priority`；AxonHub 只写 AUM 托管标签与 `orderingWeight`。任何同步路径都不修改渠道启停状态。
 - AUM 保存最近一次成本字段基线。检测到管理员或其他系统修改后会暂停自动覆盖，需在成本绑定上明确“重新接管”。
-- 生产升级前必须备份 SQLite / Postgres 数据库或导出敏感备份。迁移会删除旧卡片、探测历史、可用性和流量控制表，但保留历史成本/售价快照。
+- 生产升级前必须备份 SQLite / Postgres 数据库或导出敏感备份。迁移会不可逆删除旧利润快照、Telegram 用户会话/频道消息、CLIProxy 配置与配额快照；升级后可删除旧 `/app/data/tg_media` 媒体和头像缓存。
 
 ### 前端入口
 

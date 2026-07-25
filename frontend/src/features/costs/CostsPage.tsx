@@ -27,8 +27,8 @@ import type {
 
 const none = '__none__'
 const defaultTiers: SchedulerTier[] = [
-  { tag: 'gpt_low', group: 'gpt_low', price_min: 0, price_max: 0.1, sale_price: 0.1 },
-  { tag: 'gpt_stable', group: 'gpt_stable', price_min: 0, price_max: 0.25, sale_price: 0.25 },
+  { tag: 'gpt_low', group: 'gpt_low', price_min: 0, price_max: 0.1 },
+  { tag: 'gpt_stable', group: 'gpt_stable', price_min: 0, price_max: 0.25 },
 ]
 
 const emptyBinding: CostBindingForm = {
@@ -95,7 +95,7 @@ export function CostsPage() {
   return (
     <Page
       title="成本管理"
-      description="成本来源、渠道绑定、售价档位与成本字段同步"
+      description="成本来源、渠道绑定、成本档位与字段同步"
       actions={
         <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
           <Button variant="outline" size="sm" onClick={refreshAll} disabled={refreshing}>
@@ -353,7 +353,7 @@ function CostSettings({ config, axonConfig, ggapiConfigured, axonConfigured }: {
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
         <Card className="bg-card">
-          <CardHeader><CardTitle>GGAPI 与售价档位</CardTitle><CardDescription>连接、调度分组、成本区间和利润核算售价</CardDescription></CardHeader>
+          <CardHeader><CardTitle>GGAPI 与成本档位</CardTitle><CardDescription>连接、目标分组和成本区间</CardDescription></CardHeader>
           <CardContent className="grid gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Base URL"><Input value={configDraft.scheduler_base_url} onChange={(event) => setConfigDraft({ ...configDraft, scheduler_base_url: event.target.value })} /></Field>
@@ -362,20 +362,20 @@ function CostSettings({ config, axonConfig, ggapiConfigured, axonConfigured }: {
             <Field label="访问 Token"><Input type="password" value={configDraft.scheduler_access_token ?? ''} placeholder={secretPlaceholder(configDraft.scheduler_access_token_set)} onChange={(event) => setConfigDraft({ ...configDraft, scheduler_access_token: event.target.value })} /></Field>
             <Field label="未分配分组"><Input value={configDraft.scheduler_unassigned_group} onChange={(event) => setConfigDraft({ ...configDraft, scheduler_unassigned_group: event.target.value })} /></Field>
             <div className="grid gap-2">
-              <div className="text-sm font-medium text-foreground">调度层级与售价</div>
+              <div className="text-sm font-medium text-foreground">调度档位</div>
               {tiers.map((tier, index) => (
-                <div key={index} className="grid gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0 sm:grid-cols-5">
+                <div key={index} className="grid gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0 sm:grid-cols-[1fr_1fr_1fr_1fr_auto]">
                   <Input aria-label="层级名称" placeholder="层级" value={tier.tag} onChange={(event) => updateTier(index, { tag: event.target.value })} />
                   <Input aria-label="调度器分组" placeholder="分组" value={tier.group} onChange={(event) => updateTier(index, { group: event.target.value })} />
                   <Input aria-label="最低成本" type="number" min="0" step="0.001" value={tier.price_min} onChange={(event) => updateTier(index, { price_min: Number(event.target.value) })} />
                   <Input aria-label="最高成本" type="number" min="0" step="0.001" value={tier.price_max} onChange={(event) => updateTier(index, { price_max: Number(event.target.value) })} />
-                  <div className="flex gap-1"><Input aria-label="售价" type="number" min="0" step="0.001" value={tier.sale_price} onChange={(event) => updateTier(index, { sale_price: Number(event.target.value) })} /><Button variant="ghost" size="icon" title="删除层级" onClick={() => setConfigDraft({ ...configDraft, scheduler_tiers: tiers.filter((_, i) => i !== index) })}><Trash2 className="size-4" /><span className="sr-only">删除层级</span></Button></div>
+                  <Button variant="ghost" size="icon" title="删除层级" onClick={() => setConfigDraft({ ...configDraft, scheduler_tiers: tiers.filter((_, i) => i !== index) })}><Trash2 className="size-4" /><span className="sr-only">删除层级</span></Button>
                 </div>
               ))}
-              <Button variant="outline" size="sm" className="justify-self-start" onClick={() => setConfigDraft({ ...configDraft, scheduler_tiers: [...tiers, { tag: `tier_${tiers.length + 1}`, group: '', price_min: 0, price_max: 0, sale_price: 0 }] })}><Plus className="size-4" />新增层级</Button>
+              <Button variant="outline" size="sm" className="justify-self-start" onClick={() => setConfigDraft({ ...configDraft, scheduler_tiers: [...tiers, { tag: `tier_${tiers.length + 1}`, group: '', price_min: 0, price_max: 0 }] })}><Plus className="size-4" />新增层级</Button>
             </div>
             <FeedbackBanner message={cfgFeedback.message} error={saveConfig.isError} />
-            <SaveButton onClick={() => saveConfig.mutate()} pending={saveConfig.isPending} message={cfgFeedback.message} label="保存 GGAPI 与售价配置" />
+            <SaveButton onClick={() => saveConfig.mutate()} pending={saveConfig.isPending} message={cfgFeedback.message} label="保存 GGAPI 配置" />
           </CardContent>
         </Card>
 

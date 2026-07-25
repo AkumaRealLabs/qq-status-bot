@@ -111,27 +111,3 @@ func exportToStore(in ExportData) store.ExportData {
 	}
 	return out
 }
-
-func (s *Service) ListTGChannels(ctx context.Context) ([]domain.TGChannel, error) {
-	return s.Store.ListTGChannels(ctx)
-}
-
-func (s *Service) GetTGChannel(ctx context.Context, id string) (domain.TGChannel, error) {
-	return s.Store.TGChannel(ctx, id)
-}
-
-func (s *Service) DeleteTGChannel(ctx context.Context, id string) error {
-	return s.Store.DeleteTGChannel(ctx, id)
-}
-
-func (s *Service) ListTGMessages(ctx context.Context, channelID string, limit int) ([]domain.TGMessage, error) {
-	return s.Store.TGMessages(ctx, channelID, limit)
-}
-
-func (s *Service) DeleteAllTGMessages(ctx context.Context) error {
-	return s.Store.DeleteAllTGMessages(ctx)
-}
-
-func (s *Service) DeleteTGMessage(ctx context.Context, id string) error {
-	return s.Store.DeleteTGMessage(ctx, id)
-}

@@ -154,9 +154,6 @@ func (s *SchedulerService) SwitchProvider(ctx context.Context, provider, _ strin
 	if err := s.app.Store.UpdateSchedulerProvider(ctx, provider); err != nil {
 		return domain.SchedulerConfig{}, err
 	}
-	if err := s.recordCurrentCostSnapshots(ctx); err != nil {
-		return domain.SchedulerConfig{}, err
-	}
 	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	return cfg.Public(), err
 }

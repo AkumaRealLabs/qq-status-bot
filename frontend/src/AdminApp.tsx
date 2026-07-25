@@ -4,17 +4,14 @@ import {
   Activity,
   BarChart3,
   Bell,
-  CircleDollarSign,
-  Database,
-  FileText,
-  KeyRound,
-  Loader2,
-  LogOut,
-  MessageSquare,
-  Settings,
-  ShieldCheck,
-  TrendingUp,
-  WalletCards,
+	CircleDollarSign,
+	Database,
+	FileText,
+	Loader2,
+	LogOut,
+	Settings,
+	ShieldCheck,
+	WalletCards,
 } from 'lucide-react'
 import { BrandIcon, MobileTabs, NavItem, ShellLoading } from '@/components/layout'
 import { Button } from '@/components/ui/button'
@@ -26,15 +23,10 @@ import type { NavTab, SettingsData, SiteSettings, TabID } from '@/types'
 
 const BalancesPage = lazy(() => import('@/features/balances/BalancesPage').then((m) => ({ default: m.BalancesPage })))
 const CostsPage = lazy(() => import('@/features/costs/CostsPage').then((m) => ({ default: m.CostsPage })))
-const MessagesPage = lazy(() => import('@/features/messages/MessagesPage').then((m) => ({ default: m.MessagesPage })))
 const AuditPage = lazy(() => import('@/features/ops/OpsPage').then((m) => ({ default: m.AuditPage })))
 const EventsPage = lazy(() => import('@/features/ops/OpsPage').then((m) => ({ default: m.EventsPage })))
 const NotificationsPage = lazy(() => import('@/features/ops/OpsPage').then((m) => ({ default: m.NotificationsPage })))
-const ProfitPage = lazy(() => import('@/features/ops/OpsPage').then((m) => ({ default: m.ProfitPage })))
 const SelfCheckPage = lazy(() => import('@/features/ops/OpsPage').then((m) => ({ default: m.SelfCheckPage })))
-const CLIProxyPoolPage = lazy(() =>
-  import('@/features/pools/CLIProxyPoolPage').then((m) => ({ default: m.CLIProxyPoolPage })),
-)
 const RevenuePage = lazy(() => import('@/features/revenue/RevenuePage').then((m) => ({ default: m.RevenuePage })))
 const SettingsPage = lazy(() => import('@/features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const UpstreamsPage = lazy(() =>
@@ -45,10 +37,7 @@ const tabs: NavTab[] = [
   { id: 'balances', label: '余额监控', short: '余额', icon: WalletCards },
   { id: 'costs', label: '成本管理', short: '成本', icon: CircleDollarSign },
   { id: 'revenue', label: '今日收入', short: '收入', icon: BarChart3 },
-  { id: 'profit', label: '调度池利润', short: '利润', icon: TrendingUp },
-  { id: 'messages', label: '最新消息', short: '消息', icon: MessageSquare },
   { id: 'upstreams', label: '上游管理', short: '上游', icon: Database },
-  { id: 'pools', label: '号池管理', short: '号池', icon: KeyRound },
   { id: 'events', label: '事件中心', short: '事件', icon: Activity },
   { id: 'audit', label: '审计日志', short: '审计', icon: FileText },
   { id: 'notifications', label: '通知规则', short: '通知', icon: Bell },
@@ -60,10 +49,7 @@ const tabPaths: Record<TabID, string> = {
   balances: '/admin/balances',
   costs: '/admin/costs',
   revenue: '/admin/revenue',
-  profit: '/admin/profit',
-  messages: '/admin/messages',
   upstreams: '/admin/upstreams',
-  pools: '/admin/pools',
   events: '/admin/events',
   audit: '/admin/audit',
   notifications: '/admin/notifications',
@@ -76,6 +62,8 @@ function normalizePath(pathname: string) {
   if (pathname === '/scheduler' || pathname === '/admin/scheduler') return '/admin/costs'
   if (pathname === '/admin/merchant-balance') return '/admin/revenue'
   if (pathname === '/admin/ops' || pathname === '/ops') return '/admin/events'
+  if (pathname === '/messages' || pathname === '/pools' || pathname === '/profit') return '/admin/balances'
+  if (pathname.startsWith('/admin/') && !Object.values(tabPaths).includes(pathname)) return '/admin/balances'
   return pathname
 }
 
@@ -203,10 +191,7 @@ export default function AdminApp() {
             {tab === 'balances' && <BalancesPage />}
             {tab === 'costs' && <CostsPage />}
             {tab === 'revenue' && <RevenuePage />}
-            {tab === 'profit' && <ProfitPage />}
-            {tab === 'messages' && <MessagesPage />}
             {tab === 'upstreams' && <UpstreamsPage />}
-            {tab === 'pools' && <CLIProxyPoolPage />}
             {tab === 'events' && <EventsPage />}
             {tab === 'audit' && <AuditPage />}
             {tab === 'notifications' && <NotificationsPage />}

@@ -25,15 +25,9 @@ var exportTables = []string{
 	"ops_events",
 	"audit_logs",
 	"revenue_snapshots",
-	"cliproxy_quota_snapshots",
 	"balance_recharge_logs",
 	"scheduler_logs",
-	"scheduler_channel_cost_snapshots",
-	"scheduler_group_sale_snapshots",
 	"revenue_cards",
-	"tg_session",
-	"tg_channels",
-	"tg_messages",
 }
 
 func (s *Store) ExportData(ctx context.Context) (ExportData, error) {
@@ -122,6 +116,9 @@ func (s *Store) ImportData(ctx context.Context, in ExportData) error {
 				return err
 			}
 		}
+	}
+	if err := s.normalizeRetiredSettingsTx(ctx, tx); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, s.rebind(`INSERT INTO settings (id, check_interval_minutes, site_name) VALUES ('default', 5, 'AI 上游监控') ON CONFLICT(id) DO NOTHING`)); err != nil {
 		return err

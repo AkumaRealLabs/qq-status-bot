@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell, Check, ChevronDown, ChevronRight, Loader2, RefreshCcw, ShieldCheck } from 'lucide-react'
-import { DataTable, EmptyPanel, Field, FormError, FeedbackBanner, Metric, SaveButton } from '@/components/common'
+import { DataTable, EmptyPanel, Field, FormError, FeedbackBanner, SaveButton } from '@/components/common'
 import { Page, ShellLoading } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api'
-import { fmtTime, num } from '@/lib/format'
+import { fmtTime } from '@/lib/format'
 import { useFeedback } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
 import type {
@@ -18,8 +18,6 @@ import type {
   NotificationRules,
   OpsEvent,
   OpsEventGroup,
-  ProfitResponse,
-	SchedulerConfig,
   SelfCheckResponse,
 } from '@/types'
 
@@ -29,7 +27,6 @@ const eventLabels: Record<string, string> = {
   balance_query_failed: '额度查询失败',
   cost_sync_failed: '成本同步失败',
   balance_runway_low: '余额预计耗尽',
-  cliproxy_error: '号池异常',
 }
 
 export function EventsPage() {
@@ -44,12 +41,8 @@ export function NotificationsPage() {
   return <Page title="通知规则" description="配置告警事件和 Telegram 测试"><NotificationsTab /></Page>
 }
 
-export function ProfitPage() {
-  return <Page title="调度池利润" description="按调度器/NewAPI 消费日志计算已确认毛利"><ProfitTab /></Page>
-}
-
 export function SelfCheckPage() {
-  return <Page title="系统自检" description="轻量检查应用、数据库、浏览器和号池管理连通性"><SelfCheckTab /></Page>
+  return <Page title="系统自检" description="轻量检查应用、数据库和浏览器连通性"><SelfCheckTab /></Page>
 }
 
 function EventsTab() {
@@ -315,114 +308,6 @@ function NotificationsTab() {
       </Card>
     </section>
   )
-}
-
-function ProfitTab() {
-  const [windowValue, setWindowValue] = useState('today')
-  const scheduler = useQuery({ queryKey: ['scheduler', 'config'], queryFn: () => api<SchedulerConfig>('/api/scheduler/config') })
-  const axonHub = scheduler.data?.scheduler_provider === 'axonhub'
-  const q = useQuery({ queryKey: ['ops', 'profit', windowValue], queryFn: () => api<ProfitResponse>(`/api/ops/profit?window=${windowValue}`), enabled: !axonHub && !scheduler.isLoading })
-  if (axonHub) {
-    return <section className="grid min-w-0 gap-3"><div className="border border-warning/40 bg-warning/5 px-3 py-3 text-sm text-muted-foreground">AxonHub 数据暂不可用：当前 beta5 没有适合 service account 的只读 Usage Log API。</div></section>
-  }
-  return (
-    <section className="grid min-w-0 gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        {q.isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-        <Select value={windowValue} onValueChange={setWindowValue}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="today">today</SelectItem><SelectItem value="24h">24h</SelectItem><SelectItem value="7d">7d</SelectItem></SelectContent></Select>
-      </div>
-      <FormError error={q.error} />
-      <div className="grid gap-3 md:grid-cols-4">
-        <Metric label="已确认收入" value={num(q.data?.revenue)} accent="success" />
-        <Metric label="已确认成本" value={num(q.data?.cost)} accent={q.data?.cost ? 'danger' : undefined} />
-        <Metric label="已确认利润" value={num(q.data?.profit)} accent={(q.data?.profit ?? 0) >= 0 ? 'success' : 'danger'} />
-        <Metric label="未匹配收入" value={num(q.data?.missing_revenue)} accent={q.data?.missing_revenue ? 'danger' : undefined} />
-      </div>
-      <div className="text-sm text-muted-foreground">{q.data?.note}</div>
-      {q.isLoading && <EmptyPanel text="加载中..." />}
-      {!q.isLoading && (q.data?.pools?.length ?? 0) === 0 && <EmptyPanel text="暂无消费日志" />}
-      {(q.data?.pools ?? []).map((pool) => (
-        <Card key={pool.group} className="bg-card">
-          <CardHeader>
-            <CardTitle className="flex flex-wrap items-center gap-2">
-              <span>{pool.tag || pool.group}</span>
-              <Badge variant={pool.complete ? 'success' : 'amber'}>{pool.complete ? '完整' : '缺成本绑定'}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3">
-            <div className="grid gap-2 text-sm sm:grid-cols-3 lg:grid-cols-6">
-              <ProfitMini label="售价" value={num(pool.sale_price)} />
-              <ProfitMini label="原始刀数" value={num(pool.usage)} />
-              <ProfitMini label="收入" value={num(pool.revenue)} />
-              <ProfitMini label="成本" value={num(pool.cost)} />
-              <ProfitMini label="利润" value={num(pool.profit)} />
-              <ProfitMini label="未匹配收入" value={num(pool.missing_revenue)} />
-            </div>
-            <DataTable
-              minWidthClass="min-w-[980px]"
-              head={
-                <tr>
-                  <th className="px-3 py-2">渠道</th>
-                  <th className="px-3 py-2">绑定卡片</th>
-                  <th className="px-3 py-2">上游 Key</th>
-                  <th className="px-3 py-2">成本/刀</th>
-                  <th className="px-3 py-2">用量</th>
-                  <th className="px-3 py-2">收入</th>
-                  <th className="px-3 py-2">成本</th>
-                  <th className="px-3 py-2">利润</th>
-                  <th className="px-3 py-2">状态</th>
-                </tr>
-              }
-            >
-              {pool.channels.map((row) => (
-                <tr key={row.channel_id || row.channel_name} className={cn('border-t border-border align-top', !row.complete && 'bg-destructive/5')}>
-                  <td className="px-3 py-2">{row.channel_name || row.channel_id || '-'}</td>
-                  <td className="px-3 py-2">{row.card_name || '-'}</td>
-                  <td className="px-3 py-2">{[row.upstream_name, row.key_name].filter(Boolean).join(' / ') || '-'}</td>
-                  <td className="px-3 py-2">
-                    {row.complete ? (
-                      <div>
-                        <div>{num(row.cost_per_unit)}</div>
-                        <div className="text-xs text-muted-foreground">{costSourceLabel(row.cost_source)} · {effectiveLabel(row.cost_effective_from)}</div>
-                      </div>
-                    ) : '-'}
-                  </td>
-                  <td className="px-3 py-2">{num(row.usage)}</td>
-                  <td className="px-3 py-2">
-                    <div>{num(row.revenue)}</div>
-                    {row.sale_effective_from && <div className="text-xs text-muted-foreground">售价 {effectiveLabel(row.sale_effective_from)}</div>}
-                  </td>
-                  <td className="px-3 py-2">{row.complete ? num(row.cost) : '-'}</td>
-                  <td className="px-3 py-2">{row.complete ? num(row.profit) : '-'}</td>
-                  <td className="px-3 py-2">{row.complete ? <Badge variant="success">已确认</Badge> : <Badge variant="amber">{row.missing_reason || '缺成本绑定'}</Badge>}</td>
-                </tr>
-              ))}
-            </DataTable>
-          </CardContent>
-        </Card>
-      ))}
-    </section>
-  )
-}
-
-function ProfitMini({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border border-border bg-background px-3 py-2">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 font-medium">{value}</div>
-    </div>
-  )
-}
-
-function costSourceLabel(value?: string) {
-  if (value === 'manual_cost_ratio') return '手动成本'
-  if (value === 'upstream_key') return '上游 Key'
-  if (value === 'mixed') return '多段来源'
-  return value || '-'
-}
-
-function effectiveLabel(value?: string) {
-  return value === 'mixed' ? '多段' : fmtTime(value)
 }
 
 function SelfCheckTab() {

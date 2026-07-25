@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -40,6 +41,34 @@ type SchedulerCostBinding struct {
 	Enabled                 bool      `json:"enabled"`
 	CreatedAt               time.Time `json:"created_at"`
 	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+// CostPerUnitFromManual 解析手动成本倍率字符串。
+func CostPerUnitFromManual(ratio string) (float64, string) {
+	v, err := strconv.ParseFloat(strings.TrimSpace(ratio), 64)
+	if err != nil || v <= 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, "缺手动成本"
+	}
+	return v, ""
+}
+
+// CostPerUnitFromUpstreamKey 按 Key 分组倍率和余额费率计算单位成本。
+func CostPerUnitFromUpstreamKey(groupRatio string, balanceRate float64) (float64, string) {
+	ratio, err := strconv.ParseFloat(strings.TrimSpace(groupRatio), 64)
+	if err != nil || ratio <= 0 || balanceRate <= 0 {
+		return 0, "缺成本倍率"
+	}
+	return ratio * balanceRate, ""
+}
+
+// EffectiveRatio 将 groupRatio * balanceRate 格式化为展示值。
+func EffectiveRatio(groupRatio string, balanceRate float64) string {
+	ratio, err := strconv.ParseFloat(strings.TrimSpace(groupRatio), 64)
+	if err != nil {
+		return groupRatio
+	}
+	out := fmt.Sprintf("%.6f", ratio*balanceRate)
+	return strings.TrimRight(strings.TrimRight(out, "0"), ".")
 }
 
 func NormalizeCostBinding(in SchedulerCostBinding) SchedulerCostBinding {

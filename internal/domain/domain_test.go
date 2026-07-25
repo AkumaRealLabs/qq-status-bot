@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,6 +19,20 @@ func TestConvertedBalanceValues(t *testing.T) {
 	}
 }
 
+func TestSchedulerTierIgnoresLegacySalePrice(t *testing.T) {
+	var tier SchedulerTier
+	if err := json.Unmarshal([]byte(`{"tag":"low","group":"gpt_low","price_min":0,"price_max":0.1,"sale_price":0.2}`), &tier); err != nil {
+		t.Fatal(err)
+	}
+	out, err := json.Marshal(tier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "sale_price") {
+		t.Fatalf("响应仍包含旧字段: %s", out)
+	}
+}
+
 func TestCardName(t *testing.T) {
 	got := CardName(Upstream{Name: "A"}, &APIKey{Name: "main"})
 	if got != "A · main" {
@@ -29,9 +45,6 @@ func TestNormalizeSchedulerTiersKeepsCustomRows(t *testing.T) {
 	if got := NormalizeSchedulerTiers(custom); len(got) != 1 || got[0].Tag != "cheap" {
 		t.Fatalf("custom tiers = %+v", got)
 	}
-	if got := NormalizeSchedulerTiers([]SchedulerTier{{Tag: "稳定池", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.15}}); got[0].SalePrice != 0.25 {
-		t.Fatalf("old scheduler tier sale price = %+v", got)
-	}
 	if got := NormalizeSchedulerTiers([]SchedulerTier{}); len(got) != 0 {
 		t.Fatalf("empty tiers = %+v", got)
 	}
@@ -40,6 +53,15 @@ func TestNormalizeSchedulerTiersKeepsCustomRows(t *testing.T) {
 		{Tag: "b", Group: "gpt_low", PriceMin: 0, PriceMax: 1},
 	}); err == nil {
 		t.Fatal("duplicate scheduler group passed")
+	}
+}
+
+func TestFirstNonEmpty(t *testing.T) {
+	if got := FirstNonEmpty("", "  ", "x"); got != "x" {
+		t.Fatalf("got %q", got)
+	}
+	if got := FirstNonEmpty(); got != "" {
+		t.Fatalf("got %q", got)
 	}
 }
 

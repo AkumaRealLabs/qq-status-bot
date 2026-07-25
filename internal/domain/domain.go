@@ -135,11 +135,10 @@ type SchedulerConfig struct {
 }
 
 type SchedulerTier struct {
-	Tag       string  `json:"tag"`
-	Group     string  `json:"group"`
-	PriceMin  float64 `json:"price_min"`
-	PriceMax  float64 `json:"price_max"`
-	SalePrice float64 `json:"sale_price"`
+	Tag      string  `json:"tag"`
+	Group    string  `json:"group"`
+	PriceMin float64 `json:"price_min"`
+	PriceMax float64 `json:"price_max"`
 }
 
 type SchedulerApplyResult struct {
@@ -150,8 +149,8 @@ type SchedulerApplyResult struct {
 
 func DefaultSchedulerTiers() []SchedulerTier {
 	return []SchedulerTier{
-		{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1, SalePrice: 0.1},
-		{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.25, SalePrice: 0.25},
+		{Tag: "gpt_low", Group: "gpt_low", PriceMin: 0, PriceMax: 0.1},
+		{Tag: "gpt_stable", Group: "gpt_stable", PriceMin: 0, PriceMax: 0.25},
 	}
 }
 
@@ -162,29 +161,13 @@ func NormalizeSchedulerTiers(in []SchedulerTier) []SchedulerTier {
 	out := make([]SchedulerTier, 0, len(in))
 	for _, tier := range in {
 		out = append(out, SchedulerTier{
-			Tag:       strings.TrimSpace(tier.Tag),
-			Group:     strings.TrimSpace(tier.Group),
-			PriceMin:  tier.PriceMin,
-			PriceMax:  tier.PriceMax,
-			SalePrice: schedulerSalePrice(tier),
+			Tag:      strings.TrimSpace(tier.Tag),
+			Group:    strings.TrimSpace(tier.Group),
+			PriceMin: tier.PriceMin,
+			PriceMax: tier.PriceMax,
 		})
 	}
 	return out
-}
-
-func schedulerSalePrice(tier SchedulerTier) float64 {
-	if tier.SalePrice > 0 {
-		return tier.SalePrice
-	}
-	keys := []string{strings.ToLower(strings.TrimSpace(tier.Tag)), strings.ToLower(strings.TrimSpace(tier.Group))}
-	for _, def := range DefaultSchedulerTiers() {
-		for _, key := range keys {
-			if key == def.Tag || key == def.Group {
-				return def.SalePrice
-			}
-		}
-	}
-	return tier.PriceMax
 }
 
 func ValidateSchedulerTiers(tiers []SchedulerTier) error {
@@ -208,9 +191,6 @@ func ValidateSchedulerTiers(tiers []SchedulerTier) error {
 		groups[tier.Group] = true
 		if tier.PriceMin < 0 || tier.PriceMax < 0 || tier.PriceMax < tier.PriceMin {
 			return errors.New("调度器价格区间无效")
-		}
-		if tier.SalePrice <= 0 {
-			return errors.New("调度器售价必须大于 0")
 		}
 	}
 	return nil
@@ -269,33 +249,6 @@ type SchedulerLog struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-type SchedulerChannelCostSnapshot struct {
-	ID            string    `json:"id"`
-	ChannelID     string    `json:"channel_id"`
-	ChannelName   string    `json:"channel_name,omitempty"`
-	CardID        string    `json:"card_id,omitempty"`
-	CardName      string    `json:"card_name,omitempty"`
-	SourceType    string    `json:"source_type,omitempty"`
-	UpstreamID    string    `json:"upstream_id,omitempty"`
-	UpstreamName  string    `json:"upstream_name,omitempty"`
-	KeyID         string    `json:"key_id,omitempty"`
-	KeyName       string    `json:"key_name,omitempty"`
-	CostPerUnit   float64   `json:"cost_per_unit,omitempty"`
-	Active        bool      `json:"active"`
-	MissingReason string    `json:"missing_reason,omitempty"`
-	Provider      string    `json:"provider"`
-	EffectiveAt   time.Time `json:"effective_at"`
-}
-
-type SchedulerGroupSaleSnapshot struct {
-	ID          string    `json:"id"`
-	Group       string    `json:"group"`
-	Tag         string    `json:"tag,omitempty"`
-	SalePrice   float64   `json:"sale_price,omitempty"`
-	Active      bool      `json:"active"`
-	EffectiveAt time.Time `json:"effective_at"`
-}
-
 type RevenueCard struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
@@ -322,53 +275,6 @@ type RevenueRow struct {
 	Revenue   float64   `json:"revenue"`
 	CheckedAt time.Time `json:"checked_at"`
 	Error     string    `json:"error,omitempty"`
-}
-
-type TGSession struct {
-	ID             string    `json:"id"`
-	APIID          int       `json:"api_id"`
-	APIHash        string    `json:"api_hash,omitempty"`
-	Phone          string    `json:"phone"`
-	CodeHash       string    `json:"-"`
-	SessionBlob    []byte    `json:"-"`
-	Authorized     bool      `json:"authorized"`
-	PasswordNeeded bool      `json:"password_needed"`
-	LastError      string    `json:"last_error,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-type TGChannel struct {
-	ID           string    `json:"id"`
-	DisplayName  string    `json:"display_name"`
-	Identifier   string    `json:"identifier"`
-	Username     string    `json:"username,omitempty"`
-	PeerID       int64     `json:"peer_id"`
-	AccessHash   int64     `json:"access_hash,omitempty"`
-	AvatarURL    string    `json:"avatar_url,omitempty"`
-	Enabled      bool      `json:"enabled"`
-	MessageLimit int       `json:"message_limit"`
-	PinnedOnly   bool      `json:"pinned_only"`
-	LastSyncAt   time.Time `json:"last_sync_at"`
-	LastError    string    `json:"last_error,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-}
-
-type TGMessage struct {
-	ID          string    `json:"id"`
-	ChannelID   string    `json:"channel_id"`
-	ChannelName string    `json:"channel_name,omitempty"`
-	RemoteID    int       `json:"remote_id"`
-	PublishedAt time.Time `json:"published_at"`
-	Text        string    `json:"text"`
-	MediaType   string    `json:"media_type,omitempty"`
-	MediaPath   string    `json:"media_path,omitempty"`
-	MediaURL    string    `json:"media_url,omitempty"`
-	MediaCached bool      `json:"media_cached"`
-	Link        string    `json:"link,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type User struct {

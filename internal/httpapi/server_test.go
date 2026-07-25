@@ -133,11 +133,40 @@ func TestRetiredMonitorRoutesReturnNotFound(t *testing.T) {
 	}
 }
 
+func TestRetiredProfitMessageAndPoolRoutesReturnNotFound(t *testing.T) {
+	_, ts := newHTTPTestServer(t)
+	for _, path := range []string{
+		"/api/ops/profit", "/api/tg/session/status", "/api/tg/channels", "/api/tg/messages",
+		"/api/pools/cliproxy/config", "/api/pools/cliproxy/accounts",
+	} {
+		resp, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s status=%d", path, resp.StatusCode)
+		}
+	}
+	for _, path := range []string{
+		"/api/cost-bindings", "/api/ops/notifications", "/api/ops/self-check", "/api/settings/export",
+	} {
+		resp, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("现有路由 %s status=%d", path, resp.StatusCode)
+		}
+	}
+}
+
 func TestDefaultAndLegacyStatusPathsRedirectToBalances(t *testing.T) {
 	_, ts := newHTTPTestServer(t)
 	client := ts.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	for _, path := range []string{"/", "/admin", "/status", "/admin/status"} {
+	for _, path := range []string{"/", "/admin", "/status", "/admin/status", "/admin/profit", "/admin/messages", "/admin/pools"} {
 		resp, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)

@@ -65,11 +65,18 @@ func KeepText(in, old string) string {
 	return strings.TrimSpace(in)
 }
 
+// FirstNonEmpty 返回第一个非空白字符串。
+func FirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // DefaultSiteName：site_name 为空时的默认站点名。
 const DefaultSiteName = "AI 上游监控"
-
-// DefaultCLIProxyName：cliproxy 名称为空时的默认名。
-const DefaultCLIProxyName = "CLIProxyAPI"
 
 // MergeUpdate：空密钥保留，并保留旧实体的运行时/身份字段。
 func (in Upstream) MergeUpdate(old Upstream) Upstream {
@@ -157,17 +164,5 @@ func (in AxonHubConfig) MergeUpdate(old AxonHubConfig) AxonHubConfig {
 	} else {
 		out.ControlMode = NormalizeAxonHubControlMode(in.ControlMode)
 	}
-	return out
-}
-
-// MergeUpdate：密钥保留及名称/URL 默认值。
-func (in CLIProxyConfig) MergeUpdate(old CLIProxyConfig) CLIProxyConfig {
-	out := in
-	out.Name = strings.TrimSpace(in.Name)
-	if out.Name == "" {
-		out.Name = DefaultCLIProxyName
-	}
-	out.BaseURL = strings.TrimRight(strings.TrimSpace(in.BaseURL), "/")
-	out.ManagementKey = KeepSecret(in.ManagementKey, old.ManagementKey)
 	return out
 }

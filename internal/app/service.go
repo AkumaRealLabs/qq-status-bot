@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 	_ "time/tzdata"
@@ -21,26 +20,20 @@ const (
 
 	schedulerTickInterval      = time.Minute
 	schedulerGroupSyncBudget   = 45 * time.Second
-	schedulerTGTimeout         = 2 * time.Minute
 	schedulerRetentionTimeout  = time.Minute
 	schedulerRevenueTimeout    = 3 * time.Minute
 	schedulerRechargeTimeout   = 4 * time.Minute
-	schedulerCLIProxyTimeout   = 4 * time.Minute
 	schedulerRetentionInterval = time.Hour
 	schedulerRevenueInterval   = 15 * time.Minute
 	schedulerRechargeInterval  = 15 * time.Minute
-	schedulerCLIProxyInterval  = 30 * time.Minute
 )
 
 type Service struct {
 	Store          *store.Store
 	Client         monitor.Client
-	TGMediaDir     string
 	mu             sync.Mutex
 	running        bool
 	lastBalanceRun time.Time
-	tgRunning      bool
-	tgLastRun      time.Time
 
 	// 最小 ports（Phase 3）。默认接到 Store / Telegram / monitor.Client。
 	Notify       Notifier
@@ -48,13 +41,10 @@ type Service struct {
 
 	// 限界上下文门面（同包）。对外 API 仍经 Service 方法转发。
 	Scheduler *SchedulerService
-	ProfitSvc *ProfitService
-	CLIProxy  *CLIProxyService
-	TG        *TGService
 	OneBot    *OneBotService
 }
 
-// SchedulerService 负责调度配置、渠道/分组应用、成本快照与自动化。
+// SchedulerService 负责调度配置、渠道/分组应用与成本同步。
 type SchedulerService struct {
 	app                    *Service
 	controlMu              sync.Mutex
@@ -65,43 +55,18 @@ type SchedulerService struct {
 	axonHubTokenAdminEmail string
 }
 
-// ProfitService 负责调度号池利润汇总。
-type ProfitService struct {
-	app *Service
-}
-
-// CLIProxyService 负责 CLIProxyAPI 管理与配额快照。
-type CLIProxyService struct {
-	app *Service
-}
-
-// TGService 负责 Telegram 会话、频道与消息同步。
-type TGService struct {
-	app *Service
-}
-
 func New(st *store.Store) *Service {
-	mediaDir := os.Getenv("TG_MEDIA_DIR")
-	if mediaDir == "" {
-		mediaDir = "/app/data/tg_media"
-	}
 	s := &Service{
-		Store: st, Client: monitor.Client{HTTP: &http.Client{Timeout: 45 * time.Second}}, TGMediaDir: mediaDir,
+		Store: st, Client: monitor.Client{HTTP: &http.Client{Timeout: 45 * time.Second}},
 		OneBotClient: &onebot.Client{HTTP: &http.Client{Timeout: 10 * time.Second}},
 	}
 	s.Notify = &telegramNotifier{send: s.sendTelegram}
 	s.Scheduler = &SchedulerService{app: s}
-	s.ProfitSvc = &ProfitService{app: s}
-	s.CLIProxy = &CLIProxyService{app: s}
-	s.TG = &TGService{app: s}
 	s.OneBot = &OneBotService{app: s}
 	return s
 }
 
 func (s *Service) StartScheduler(ctx context.Context) {
-	if err := s.SeedSchedulerSnapshots(ctx); err != nil {
-		log.Printf("scheduler: seed snapshots: %v", err)
-	}
 	// 启动时跑一次数据保留清理，让长期闲置主机立刻腾出空间。
 	retentionCtx, cancel := context.WithTimeout(ctx, schedulerRetentionTimeout)
 	stats, err := s.Store.CleanupExpiredData(retentionCtx)
@@ -134,7 +99,6 @@ type schedulerState struct {
 	lastRetention time.Time
 	lastRevenue   time.Time
 	lastRecharge  time.Time
-	lastCLIProxy  time.Time
 }
 
 func (s *Service) runSchedulerTick(ctx context.Context, now time.Time, state *schedulerState) {
@@ -147,8 +111,6 @@ func (s *Service) runSchedulerTick(ctx context.Context, now time.Time, state *sc
 		s.lastBalanceRun = now
 		s.mu.Unlock()
 	}
-	runSchedulerTask(ctx, "TG refresh", schedulerTGTimeout, s.RefreshTGMessagesDue)
-
 	if schedulerTaskDue(state.lastRetention, now, schedulerRetentionInterval) {
 		runSchedulerTask(ctx, "retention cleanup", schedulerRetentionTimeout, func(taskCtx context.Context) error {
 			stats, err := s.Store.CleanupExpiredData(taskCtx)
@@ -169,17 +131,6 @@ func (s *Service) runSchedulerTick(ctx context.Context, now time.Time, state *sc
 	if schedulerTaskDue(state.lastRecharge, now, schedulerRechargeInterval) {
 		runSchedulerTask(ctx, "pending recharge refresh", schedulerRechargeTimeout, s.RefreshPendingBalanceRechargeLogs)
 		state.lastRecharge = now
-	}
-	if schedulerTaskDue(state.lastCLIProxy, now, schedulerCLIProxyInterval) {
-		attempted := false
-		runSchedulerTask(ctx, "CLIProxy quota refresh", schedulerCLIProxyTimeout, func(taskCtx context.Context) error {
-			var err error
-			attempted, err = s.CLIProxy.refreshCLIProxyQuotas(taskCtx)
-			return err
-		})
-		if attempted {
-			state.lastCLIProxy = now
-		}
 	}
 }
 

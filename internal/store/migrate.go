@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -36,8 +37,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 			scheduler_unassigned_group TEXT NOT NULL DEFAULT '',
 			scheduler_tiers TEXT NOT NULL DEFAULT '',
 			axonhub_base_url TEXT NOT NULL DEFAULT '', axonhub_admin_email TEXT NOT NULL DEFAULT '', axonhub_admin_password TEXT NOT NULL DEFAULT '', axonhub_control_mode TEXT NOT NULL DEFAULT 'off',
-			cliproxy_name TEXT NOT NULL DEFAULT 'CLIProxyAPI', cliproxy_base_url TEXT NOT NULL DEFAULT '',
-			cliproxy_management_key TEXT NOT NULL DEFAULT '', cliproxy_enabled INTEGER NOT NULL DEFAULT 1,
 			notification_rules TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS upstreams (
@@ -108,11 +107,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 			source_type TEXT NOT NULL DEFAULT '', checked_at TEXT NOT NULL, revenue REAL NOT NULL DEFAULT 0,
 			error TEXT NOT NULL DEFAULT ''
 		)`,
-		`CREATE TABLE IF NOT EXISTS cliproxy_quota_snapshots (
-			id TEXT PRIMARY KEY, account_name TEXT NOT NULL DEFAULT '', auth_index TEXT NOT NULL DEFAULT '',
-			checked_at TEXT NOT NULL, ok INTEGER NOT NULL DEFAULT 0, plan_type TEXT NOT NULL DEFAULT '',
-			summary TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT ''
-		)`,
 		`CREATE TABLE IF NOT EXISTS balance_recharge_logs (
 			id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, method TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0,
 			payment_type TEXT NOT NULL DEFAULT '', remote_order_id TEXT NOT NULL DEFAULT '',
@@ -133,18 +127,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 			pending_action TEXT NOT NULL DEFAULT '', pending_status INTEGER NOT NULL DEFAULT 0,
 			retry_at TEXT NOT NULL DEFAULT '', retry_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
 			version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_channel_cost_snapshots (
-			id TEXT PRIMARY KEY, channel_id TEXT NOT NULL DEFAULT '', channel_name TEXT NOT NULL DEFAULT '',
-			card_id TEXT NOT NULL DEFAULT '', card_name TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT '',
-			upstream_id TEXT NOT NULL DEFAULT '', upstream_name TEXT NOT NULL DEFAULT '',
-			key_id TEXT NOT NULL DEFAULT '', key_name TEXT NOT NULL DEFAULT '',
-			cost_per_unit REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 0,
-			missing_reason TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT 'ggapi', effective_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_group_sale_snapshots (
-			id TEXT PRIMARY KEY, group_name TEXT NOT NULL DEFAULT '', tag TEXT NOT NULL DEFAULT '',
-			sale_price REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 0, effective_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS scheduler_traffic_events (
 			id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, source TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL,
@@ -212,22 +194,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 			admin_api_key TEXT NOT NULL DEFAULT '', epay_pid TEXT NOT NULL DEFAULT '', epay_key TEXT NOT NULL DEFAULT '',
 			enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS tg_session (
-			id TEXT PRIMARY KEY, api_id INTEGER NOT NULL DEFAULT 0, api_hash TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
-			code_hash TEXT NOT NULL DEFAULT '', session_blob BYTEA, authorized INTEGER NOT NULL DEFAULT 0, password_needed INTEGER NOT NULL DEFAULT 0,
-			last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS tg_channels (
-				id TEXT PRIMARY KEY, display_name TEXT NOT NULL, identifier TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '',
-				peer_id INTEGER NOT NULL DEFAULT 0, access_hash INTEGER NOT NULL DEFAULT 0, avatar_url TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
-				message_limit INTEGER NOT NULL DEFAULT 10, pinned_only INTEGER NOT NULL DEFAULT 0, last_sync_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '',
-				created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(peer_id)
-			)`,
-		`CREATE TABLE IF NOT EXISTS tg_messages (
-			id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, remote_id INTEGER NOT NULL, published_at TEXT NOT NULL, text TEXT NOT NULL DEFAULT '',
-			media_type TEXT NOT NULL DEFAULT '', media_path TEXT NOT NULL DEFAULT '', media_url TEXT NOT NULL DEFAULT '', media_cached INTEGER NOT NULL DEFAULT 0,
-			link TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(channel_id, remote_id)
-		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_upstream ON api_keys(upstream_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_cards_upstream ON model_cards(upstream_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_cost_bindings_upstream ON scheduler_cost_bindings(upstream_id)`,
@@ -237,14 +203,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_ops_events_time ON ops_events(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_time ON audit_logs(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_revenue_snapshots_time ON revenue_snapshots(checked_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_cliproxy_quota_snapshots_time ON cliproxy_quota_snapshots(checked_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_recharge_upstream_time ON balance_recharge_logs(upstream_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_recharge_pending ON balance_recharge_logs(method, status, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_logs_time ON scheduler_logs(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_channel_availability_upstream ON channel_availability(upstream_id, managed)`,
 		`CREATE INDEX IF NOT EXISTS idx_channel_availability_retry ON channel_availability(pending_action, retry_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_scheduler_cost_snapshots_lookup ON scheduler_channel_cost_snapshots(channel_id, effective_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_scheduler_sale_snapshots_lookup ON scheduler_group_sale_snapshots(group_name, effective_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_events_time ON scheduler_traffic_events(occurred_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_events_channel_model ON scheduler_traffic_events(channel_id, model, occurred_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_10s_time ON scheduler_traffic_10s(window_start)`,
@@ -252,7 +215,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_channel_lifecycle_cleanup ON scheduler_channel_lifecycle(affinity_cleanup_pending, affinity_cleanup_retry_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_axonhub_lifecycle_retry ON scheduler_axonhub_channel_lifecycle(pending_action, retry_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_revenue_cards_upstream ON revenue_cards(upstream_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_tg_messages_channel_time ON tg_messages(channel_id, published_at)`,
 	}
 	if monitoringRetired {
 		stmts = withoutRetiredMonitoringStatements(stmts)
@@ -347,10 +309,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 	for _, col := range []struct{ name, def string }{
-		{"cliproxy_name", "TEXT NOT NULL DEFAULT 'CLIProxyAPI'"},
-		{"cliproxy_base_url", "TEXT NOT NULL DEFAULT ''"},
-		{"cliproxy_management_key", "TEXT NOT NULL DEFAULT ''"},
-		{"cliproxy_enabled", "INTEGER NOT NULL DEFAULT 1"},
 		{"notification_rules", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.addColumnIfMissing(ctx, "settings", col.name, col.def); err != nil {
@@ -375,9 +333,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "scheduler_logs", "provider", "TEXT NOT NULL DEFAULT 'ggapi'"); err != nil {
 		return err
 	}
-	if err := s.addColumnIfMissing(ctx, "scheduler_channel_cost_snapshots", "provider", "TEXT NOT NULL DEFAULT 'ggapi'"); err != nil {
-		return err
-	}
 	if err := s.addColumnIfMissing(ctx, "balance_recharge_logs", "raw_status", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -393,12 +348,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := s.addColumnIfMissing(ctx, "tg_channels", "pinned_only", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-	if err := s.addColumnIfMissing(ctx, "tg_channels", "avatar_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
 	if _, err := s.exec(ctx, `INSERT INTO settings (id, check_interval_minutes) VALUES ('default', 5) ON CONFLICT(id) DO NOTHING`); err != nil {
 		return err
 	}
@@ -409,9 +358,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.exec(ctx, `UPDATE scheduler_logs SET provider='ggapi' WHERE TRIM(provider)=''`); err != nil {
-		return err
-	}
-	if _, err := s.exec(ctx, `UPDATE scheduler_channel_cost_snapshots SET provider='ggapi' WHERE TRIM(provider)=''`); err != nil {
 		return err
 	}
 	if !monitoringRetired {
@@ -437,10 +383,14 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.retireMonitoringSchema(ctx); err != nil {
 		return err
 	}
+	if err := s.retireProfitMessagesAndPools(ctx); err != nil {
+		return err
+	}
 	return s.ensureDefaultRevenueCard(ctx)
 }
 
 const retireMonitoringMigration = "retire-monitoring-v1"
+const retireProfitMessagesAndPoolsMigration = "retire-profit-messages-pools-v1"
 
 func (s *Store) migrationDoneIfTableExists(ctx context.Context, source string) (bool, error) {
 	var one int
@@ -633,6 +583,122 @@ func dropColumnInTx(ctx context.Context, tx *sql.Tx, driver, table, column strin
 	}
 	_, err := tx.ExecContext(ctx, `ALTER TABLE `+quoteIdent(table)+` DROP COLUMN `+quoteIdent(column))
 	return err
+}
+
+// retireProfitMessagesAndPools 在同一事务内不可逆删除已退休功能的数据结构。
+func (s *Store) retireProfitMessagesAndPools(ctx context.Context) error {
+	done, err := s.MigrationDone(ctx, retireProfitMessagesAndPoolsMigration)
+	if err != nil || done {
+		return err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	for _, table := range []string{
+		"scheduler_channel_cost_snapshots", "scheduler_group_sale_snapshots",
+		"tg_session", "tg_channels", "tg_messages", "cliproxy_quota_snapshots",
+	} {
+		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS `+quoteIdent(table)); err != nil {
+			return err
+		}
+	}
+	for _, column := range []string{"cliproxy_name", "cliproxy_base_url", "cliproxy_management_key", "cliproxy_enabled"} {
+		if err := dropColumnInTx(ctx, tx, s.Driver, "settings", column); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ops_events WHERE type='cliproxy_error'`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM alert_events WHERE type='cliproxy_error'`); err != nil {
+		return err
+	}
+	if err := s.normalizeRetiredSettingsTx(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, s.rebind(`INSERT INTO migration_records (source, migrated_at) VALUES (?, ?) ON CONFLICT(source) DO NOTHING`), retireProfitMessagesAndPoolsMigration, nowText()); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func (s *Store) normalizeRetiredSettingsTx(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, scheduler_tiers, notification_rules FROM settings`)
+	if err != nil {
+		return err
+	}
+	type row struct{ id, tiers, rules string }
+	var settings []row
+	for rows.Next() {
+		var item row
+		if err := rows.Scan(&item.id, &item.tiers, &item.rules); err != nil {
+			rows.Close()
+			return err
+		}
+		settings = append(settings, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range settings {
+		tiers := removeJSONKeyFromArray(item.tiers, "sale_price")
+		rules := removeNestedJSONKey(item.rules, "event_types", "cliproxy_error")
+		if _, err := tx.ExecContext(ctx, s.rebind(`UPDATE settings SET scheduler_tiers=?, notification_rules=? WHERE id=?`), tiers, rules, item.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeJSONKeyFromArray(raw, key string) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	var rows []map[string]any
+	if json.Unmarshal([]byte(raw), &rows) != nil {
+		return raw
+	}
+	for _, row := range rows {
+		delete(row, key)
+	}
+	out, err := json.Marshal(rows)
+	if err != nil {
+		return raw
+	}
+	return string(out)
+}
+
+func removeNestedJSONKey(raw, parent, key string) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	var value map[string]any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return raw
+	}
+	if nested, ok := value[parent].(map[string]any); ok {
+		delete(nested, key)
+	}
+	out, err := json.Marshal(value)
+	if err != nil {
+		return raw
+	}
+	return string(out)
 }
 
 func (s *Store) ensureDefaultRevenueCard(ctx context.Context) error {

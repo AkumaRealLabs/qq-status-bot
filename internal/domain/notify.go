@@ -64,8 +64,6 @@ func AlertOpsActions(eventType string) []string {
 		return []string{"check_upstream"}
 	case "balance_runway_low":
 		return []string{"check_upstream"}
-	case "cliproxy_error":
-		return []string{"refresh_cliproxy_accounts"}
 	default:
 		return nil
 	}

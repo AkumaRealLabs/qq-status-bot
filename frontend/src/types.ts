@@ -130,7 +130,7 @@ export type OneBotStatus = {
 
 export type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>
 
-export type TabID = 'balances' | 'costs' | 'revenue' | 'profit' | 'messages' | 'upstreams' | 'pools' | 'events' | 'audit' | 'notifications' | 'self-check' | 'settings'
+export type TabID = 'balances' | 'costs' | 'revenue' | 'upstreams' | 'events' | 'audit' | 'notifications' | 'self-check' | 'settings'
 
 export type NavTab = { id: TabID; label: string; short: string; icon: ElementType }
 
@@ -179,51 +179,6 @@ export type RevenueCardForm = {
   enabled: boolean
 }
 
-export type TGSessionStatus = {
-  configured: boolean
-  authorized: boolean
-  phone?: string
-  api_id?: number
-  password_needed: boolean
-  last_error?: string
-}
-
-export type TGChannel = {
-  id: string
-  display_name: string
-  identifier: string
-  username?: string
-  peer_id: number
-  access_hash?: number
-  avatar_url?: string
-  enabled: boolean
-  message_limit: number
-  pinned_only: boolean
-  last_sync_at?: string
-  last_error?: string
-}
-
-export type TGMessage = {
-  id: string
-  channel_id: string
-  channel_name?: string
-  remote_id: number
-  published_at: string
-  text: string
-  media_type?: string
-  media_url?: string
-  media_cached: boolean
-  link?: string
-}
-
-export type TGLoginForm = {
-  api_id: string
-  api_hash: string
-  phone: string
-  code: string
-  password: string
-}
-
 export type SchedulerConfig = {
   scheduler_provider: 'ggapi' | 'axonhub'
   scheduler_base_url: string
@@ -240,7 +195,6 @@ export type SchedulerTier = {
   group: string
   price_min: number
   price_max: number
-  sale_price: number
 }
 
 export type SchedulerChannel = {
@@ -341,53 +295,6 @@ export type CostBindingForm = Pick<
   | 'enabled'
 >
 
-export type CLIProxyConfig = {
-  name: string
-  base_url: string
-  management_key?: string
-  management_key_set: boolean
-  enabled: boolean
-}
-
-export type CLIProxyAccount = {
-  name: string
-  provider?: string
-  type?: string
-  status?: string
-  status_message?: string
-  email?: string
-  account_type?: string
-  account?: string
-  source?: string
-  auth_index?: string
-  size?: number
-  modtime?: string
-  created_at?: string
-  updated_at?: string
-  last_refresh?: string
-  success: number
-  failed: number
-  recent_requests?: unknown
-  runtime_only?: boolean
-  disabled?: boolean
-  unavailable?: boolean
-}
-
-export type CLIProxyQuotaWindow = {
-  id: string
-  label: string
-  used_percent?: number
-  remaining_percent?: number
-  reset_at?: string
-}
-
-export type CLIProxyQuota = {
-  plan_type?: string
-  subscription_active_until?: string
-  rate_limit_reset_credits_available?: number
-  windows: CLIProxyQuotaWindow[]
-}
-
 export type NotificationRules = {
   enabled: boolean
   event_types: Record<string, boolean>
@@ -429,53 +336,6 @@ export type AuditLog = {
   summary: string
   fields?: string[]
   created_at: string
-}
-
-export type ProfitResponse = {
-	available: boolean
-  window: string
-  revenue: number
-  cost: number
-  profit: number
-  missing_revenue: number
-  complete: boolean
-  pools: ProfitPoolRow[]
-  upstream_cost: { upstream_id: string; name: string; cost: number }[]
-  note: string
-}
-
-export type ProfitPoolRow = {
-  group: string
-  tag: string
-  sale_price: number
-  usage: number
-  revenue: number
-  cost: number
-  profit: number
-  missing_revenue: number
-  complete: boolean
-  channels: ProfitChannelRow[]
-}
-
-export type ProfitChannelRow = {
-  channel_id: string
-  channel_name: string
-  card_id?: string
-  card_name?: string
-  upstream_id?: string
-  upstream_name?: string
-  key_id?: string
-  key_name?: string
-  cost_per_unit?: number
-  cost_source?: string
-  cost_effective_from?: string
-  sale_effective_from?: string
-  usage: number
-  revenue: number
-  cost: number
-  profit: number
-  complete: boolean
-  missing_reason?: string
 }
 
 export type SelfCheckResponse = {

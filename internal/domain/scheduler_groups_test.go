@@ -101,7 +101,7 @@ func TestAssignedTargetGroupsUsesUnassigned(t *testing.T) {
 }
 
 func TestValidateSchedulerUnassignedGroup(t *testing.T) {
-	tiers := []SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 0.1, SalePrice: 0.1}}
+	tiers := []SchedulerTier{{Tag: "low", Group: "gpt_low", PriceMax: 0.1}}
 	if err := ValidateSchedulerUnassignedGroup("", tiers); err == nil {
 		t.Fatal("empty should fail")
 	}
