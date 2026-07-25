@@ -36,7 +36,7 @@ func (s *Server) deleteUpstream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) checkUpstream(w http.ResponseWriter, r *http.Request) {
-	writeNoContentOrError(w, s.App.CheckUpstream(r.Context(), r.PathValue("id")))
+	writeNoContentOrError(w, s.App.RefreshUpstreamBalance(r.Context(), r.PathValue("id")))
 }
 
 func (s *Server) syncKeys(w http.ResponseWriter, r *http.Request) {

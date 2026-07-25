@@ -9,39 +9,18 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type Client struct {
-	HTTP      *http.Client
-	Browser   BrowserHTTPClient
-	ProbeMode string
-	CodexPath string
+	HTTP    *http.Client
+	Browser BrowserHTTPClient
 }
 
 type BrowserHTTPClient interface {
 	Do(ctx context.Context, method, rawURL string, body []byte, headers map[string]string) (status int, responseBody []byte, err error)
 }
-
-const (
-	ProbeModeHTTP = "http"
-	ProbeModeCLI  = "cli"
-
-	StatusOperational = "operational"
-	StatusDegraded    = "degraded"
-	StatusFailed      = "failed"
-	StatusError       = "error"
-
-	codexAPIKeyEnv = "AUM_CODEX_API_KEY"
-	probeInput     = "ping"
-)
-
-var degradedAfter = 6 * time.Second
 
 type upstreamGroup struct {
 	ID          string
@@ -50,7 +29,7 @@ type upstreamGroup struct {
 	Ratio       string
 }
 
-func (c Client) Check(ctx context.Context, u *Upstream, probeModel, selectedKey string) (CheckResult, error) {
+func (c Client) Check(ctx context.Context, u *Upstream) (CheckResult, error) {
 	var out CheckResult
 	var err error
 
@@ -88,10 +67,6 @@ func (c Client) Check(ctx context.Context, u *Upstream, probeModel, selectedKey 
 	if err != nil {
 		return out, err
 	}
-	if selectedKey == "" || probeModel == "" {
-		return out, nil
-	}
-	out.Probe = c.Probe(ctx, u.BaseURL, selectedKey, probeModel)
 	return out, nil
 }
 
@@ -202,9 +177,9 @@ func (c Client) sub2apiForceAuth(ctx context.Context, u *Upstream) error {
 	}
 	if strings.TrimSpace(u.Email) == "" || u.Password == "" {
 		if hadToken {
-			return AuthError{Err: errors.New("sub2api Token 已失效且无法自动刷新，请重新通过“浏览器登录”完成登录并采集 Token")}
+			return AuthError{Err: errors.New("sub2api Token 已失效且未配置邮箱密码；请重新配置邮箱密码自动登录，或通过“CF 浏览器登录”完成验证并采集 Token")}
 		}
-		return AuthError{Err: errors.New("sub2api 未配置可用登录凭据，请先通过“浏览器登录”完成登录并采集 Token")}
+		return AuthError{Err: errors.New("sub2api 未配置可用登录凭据；请配置邮箱密码自动登录，或通过“CF 浏览器登录”完成验证并采集 Token")}
 	}
 
 	var raw map[string]any
@@ -213,12 +188,27 @@ func (c Client) sub2apiForceAuth(ctx context.Context, u *Upstream) error {
 		"password": u.Password,
 	}, nil, &raw)
 	if err != nil {
+		if requiresSub2APIBrowserLogin(err) {
+			return AuthError{Err: fmt.Errorf("sub2api 邮箱密码登录遇到 CF 验证或浏览器绑定，请使用“CF 浏览器登录”完成验证并采集 Token: %w", err)}
+		}
 		return AuthError{Err: err}
 	}
 	if !applySub2Tokens(u, raw) {
 		return AuthError{Err: errors.New("sub2api login did not return access token")}
 	}
 	return nil
+}
+
+func requiresSub2APIBrowserLogin(err error) bool {
+	var statusErr httpStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	lower := strings.ToLower(statusErr.Message)
+	return strings.Contains(lower, "cloudflare") || strings.Contains(lower, "cf-error-details") ||
+		strings.Contains(lower, "error code: 1010") || strings.Contains(lower, "cf_chl_") ||
+		strings.Contains(lower, "challenge-platform") || strings.Contains(lower, "just a moment") ||
+		strings.Contains(lower, "session_binding_mismatch") || strings.Contains(lower, "session network fingerprint changed")
 }
 
 func (c Client) sub2apiBalance(ctx context.Context, u *Upstream) (Balance, error) {
@@ -291,240 +281,6 @@ func (c Client) sub2apiGroups(ctx context.Context, u *Upstream) map[string]upstr
 	return groups
 }
 
-func (c Client) Probe(ctx context.Context, baseURL, key, model string) ProbeResult {
-	if strings.EqualFold(c.ProbeMode, ProbeModeCLI) {
-		return c.probeCodexCLI(ctx, baseURL, key, model)
-	}
-	return c.probeHTTP(ctx, baseURL, key, model)
-}
-
-func IsInternalProbeError(errText string) bool {
-	lower := strings.ToLower(errText)
-	for _, needle := range []string{
-		"model instructions file is empty",
-		"approval_policy",
-		"exec: \"codex\"",
-	} {
-		if strings.Contains(lower, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func (c Client) probeHTTP(ctx context.Context, baseURL, key, model string) ProbeResult {
-	start := time.Now()
-	var raw map[string]any
-	err := c.doJSON(ctx, http.MethodPost, joinURL(baseURL, "/v1/responses"), map[string]any{
-		"model": model,
-		"input": []map[string]any{{
-			"role": "user",
-			"content": []map[string]string{{
-				"type": "input_text",
-				"text": probeInput,
-			}},
-		}},
-		"max_output_tokens": 2,
-		"stream":            false,
-		"reasoning":         map[string]any{"effort": "none"},
-	}, bearer(key), &raw)
-	latency := time.Since(start)
-	if err != nil {
-		var httpErr httpStatusError
-		if errors.As(err, &httpErr) {
-			return ProbeResult{HTTPStatus: httpErr.Status, Latency: latency, Status: StatusFailed, Input: probeInput, Error: httpErr.Error()}
-		}
-		return ProbeResult{Latency: latency, Status: StatusError, Input: probeInput, Error: err.Error()}
-	}
-	return probeResultFromOutput(responseText(raw), http.StatusOK, latency)
-}
-
-func (c Client) probeCodexCLI(ctx context.Context, baseURL, key, model string) ProbeResult {
-	start := time.Now()
-	dir, err := os.MkdirTemp("", "aum-codex-probe-*")
-	if err != nil {
-		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: probeInput, Error: err.Error()}
-	}
-	defer os.RemoveAll(dir)
-
-	codexHome := filepath.Join(dir, "codex-home")
-	workDir := filepath.Join(dir, "work")
-	homeDir := filepath.Join(dir, "home")
-	for _, path := range []string{codexHome, workDir, homeDir} {
-		if err := os.MkdirAll(path, 0700); err != nil {
-			return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: probeInput, Error: err.Error()}
-		}
-	}
-
-	instructionsPath := filepath.Join(codexHome, "instructions.txt")
-	if err := os.WriteFile(instructionsPath, []byte("Answer briefly.\n"), 0600); err != nil {
-		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: probeInput, Error: err.Error()}
-	}
-	config := fmt.Sprintf(`model_provider = "aum_card"
-model = %q
-model_instructions_file = %q
-disable_response_storage = true
-project_doc_max_bytes = 0
-web_search = "disabled"
-model_reasoning_effort = "none"
-model_verbosity = "low"
-model_reasoning_summary = "none"
-
-[shell_environment_policy]
-inherit = "none"
-
-[model_providers.aum_card]
-name = "AUM Card"
-base_url = %q
-wire_api = "responses"
-env_key = %q
-`, model, instructionsPath, codexProviderBaseURL(baseURL), codexAPIKeyEnv)
-	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(config), 0600); err != nil {
-		return ProbeResult{Latency: time.Since(start), Status: StatusError, Input: probeInput, Error: err.Error()}
-	}
-
-	answerPath := filepath.Join(dir, "answer.txt")
-	codex := c.CodexPath
-	if codex == "" {
-		codex = "codex"
-	}
-	cmd := exec.CommandContext(ctx, codex,
-		"exec",
-		"-c", `approval_policy="never"`,
-		"-m", model,
-		"--skip-git-repo-check",
-		"--ephemeral",
-		"--ignore-rules",
-		"--sandbox", "read-only",
-		"-C", workDir,
-		"-o", answerPath,
-		probeInput,
-	)
-	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(),
-		"CODEX_HOME="+codexHome,
-		"HOME="+homeDir,
-		codexAPIKeyEnv+"="+key,
-	)
-	configureProbeCommand(cmd)
-	output, err := cmd.CombinedOutput()
-	latency := time.Since(start)
-	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return ProbeResult{Latency: latency, Status: StatusFailed, Input: probeInput, Error: "Codex CLI 探测超时"}
-		}
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return ProbeResult{Latency: latency, Status: StatusError, Input: probeInput, Error: "Codex CLI 探测已取消"}
-		}
-		return ProbeResult{Latency: latency, Status: StatusError, Input: probeInput, Error: codexCLIError(err, output, key)}
-	}
-	answer, err := os.ReadFile(answerPath)
-	if err != nil {
-		return ProbeResult{Latency: latency, Status: StatusError, Input: probeInput, Error: err.Error()}
-	}
-	return probeResultFromOutput(strings.TrimSpace(string(answer)), 0, latency)
-}
-
-func codexCLIError(err error, output []byte, key string) string {
-	text := string(output)
-	if key != "" {
-		text = strings.ReplaceAll(text, key, "[redacted]")
-	}
-	if IsInternalProbeError(text) {
-		return limitText(err.Error()+": "+strings.TrimSpace(text), 2000)
-	}
-	if msg := upstreamErrorMessage(text); msg != "" {
-		return err.Error() + ": " + msg
-	}
-	var lines []string
-	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		lower := strings.ToLower(line)
-		if line == "" || strings.HasPrefix(lower, "warning:") || strings.HasPrefix(lower, "tip:") || strings.HasPrefix(lower, "usage:") || strings.HasPrefix(lower, "for more information") {
-			continue
-		}
-		if strings.Contains(lower, "error") && (len(lines) == 0 || lines[len(lines)-1] != line) {
-			lines = append(lines, line)
-		}
-	}
-	if len(lines) > 0 {
-		return limitText(err.Error()+": "+lines[len(lines)-1], 2000)
-	}
-	return err.Error()
-}
-
-func upstreamErrorMessage(text string) string {
-	for i, r := range text {
-		if r != '{' {
-			continue
-		}
-		var raw map[string]any
-		if err := json.NewDecoder(strings.NewReader(text[i:])).Decode(&raw); err != nil {
-			continue
-		}
-		return strings.TrimSpace(firstErrorMessage(raw))
-	}
-	return ""
-}
-
-func firstErrorMessage(raw map[string]any) string {
-	if msg := strings.TrimSpace(str(first(raw, "message", "msg", "detail"))); msg != "" {
-		return msg
-	}
-	if errText := strings.TrimSpace(str(raw["error"])); errText != "" {
-		return errText
-	}
-	if errObj := obj(raw["error"]); len(errObj) != 0 {
-		return firstErrorMessage(errObj)
-	}
-	return ""
-}
-
-func limitText(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "..."
-	}
-	return s
-}
-
-func probeResultFromOutput(output string, httpStatus int, latency time.Duration) ProbeResult {
-	if output == "" {
-		return ProbeResult{HTTPStatus: httpStatus, Latency: latency, Status: StatusFailed, Input: probeInput, Error: "回复为空"}
-	}
-	status := StatusOperational
-	if latency > degradedAfter {
-		status = StatusDegraded
-	}
-	return ProbeResult{HTTPStatus: httpStatus, Latency: latency, Status: status, Input: probeInput, Output: output, Success: true}
-}
-
-func codexProviderBaseURL(baseURL string) string {
-	baseURL = strings.TrimRight(baseURL, "/")
-	if strings.HasSuffix(baseURL, "/v1") {
-		return baseURL
-	}
-	return joinURL(baseURL, "/v1")
-}
-
-func responseText(raw map[string]any) string {
-	if text := strings.TrimSpace(str(raw["output_text"])); text != "" {
-		return text
-	}
-	var parts []string
-	for _, item := range array(raw["output"]) {
-		m := obj(item)
-		if text := strings.TrimSpace(str(m["text"])); text != "" {
-			parts = append(parts, text)
-		}
-		for _, content := range array(m["content"]) {
-			if text := strings.TrimSpace(str(obj(content)["text"])); text != "" {
-				parts = append(parts, text)
-			}
-		}
-	}
-	return strings.TrimSpace(strings.Join(parts, "\n"))
-}
-
 func (c Client) doJSON(ctx context.Context, method, rawURL string, body any, headers map[string]string, out any) error {
 	var bodyBytes []byte
 	if body != nil {
@@ -555,7 +311,6 @@ func (c Client) doJSON(ctx context.Context, method, rawURL string, body any, hea
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	status := resp.StatusCode
-	contentType := resp.Header.Get("Content-Type")
 	if c.Browser != nil && shouldRetryInBrowser(rawURL, status, b) {
 		browserHeaders := make(map[string]string, len(headers)+1)
 		for key, value := range headers {
@@ -568,23 +323,12 @@ func (c Client) doJSON(ctx context.Context, method, rawURL string, body any, hea
 		if err != nil {
 			return fmt.Errorf("上游要求浏览器会话，浏览器回退失败: %w", err)
 		}
-		contentType = "application/json"
 	}
 	if status < 200 || status >= 300 {
 		return httpStatusError{Status: status, Message: strings.TrimSpace(string(b))}
 	}
 	if out == nil || len(b) == 0 {
 		return nil
-	}
-	if strings.HasSuffix(strings.TrimRight(rawURL, "/"), "/v1/responses") && strings.Contains(contentType, "text/event-stream") {
-		if m, ok := out.(*map[string]any); ok {
-			text := responseTextFromSSE(b)
-			if text == "" {
-				return httpStatusError{Status: resp.StatusCode, Message: strings.TrimSpace(string(b))}
-			}
-			*m = map[string]any{"output_text": text}
-			return nil
-		}
 	}
 	if err := json.Unmarshal(b, out); err != nil {
 		if msg := strings.TrimSpace(string(b)); msg != "" {
@@ -607,44 +351,6 @@ func shouldRetryInBrowser(rawURL string, status int, body []byte) bool {
 	}
 	u, err := url.Parse(rawURL)
 	return err == nil && strings.HasPrefix(u.Path, "/api/v1/")
-}
-
-func responseTextFromSSE(body []byte) string {
-	var delta strings.Builder
-	final := ""
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
-			continue
-		}
-		var raw map[string]any
-		if err := json.Unmarshal([]byte(data), &raw); err != nil {
-			continue
-		}
-		if text := str(raw["delta"]); text != "" {
-			delta.WriteString(text)
-		}
-		if text := strings.TrimSpace(str(raw["text"])); text != "" {
-			final = text
-		}
-		if text := strings.TrimSpace(str(obj(raw["part"])["text"])); text != "" {
-			final = text
-		}
-		if text := responseText(obj(raw["item"])); text != "" {
-			final = text
-		}
-		if text := responseText(obj(raw["response"])); text != "" {
-			final = text
-		}
-	}
-	if final != "" {
-		return final
-	}
-	return strings.TrimSpace(delta.String())
 }
 
 type httpStatusError struct {

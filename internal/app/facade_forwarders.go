@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"ai-upstream-monitor/internal/domain"
-	"ai-upstream-monitor/internal/onebot"
 )
 
 // 公开 API 转发器：保持 httpapi 与既有调用方仍挂在 *Service 上。
@@ -37,14 +36,6 @@ func (s *Service) SwitchSchedulerProvider(ctx context.Context, provider, control
 	return s.Scheduler.SwitchProvider(ctx, provider, controlMode)
 }
 
-func (s *Service) AdoptBoundAxonHubChannels(ctx context.Context) (int, error) {
-	return s.Scheduler.AdoptBoundAxonHubChannels(ctx)
-}
-
-func (s *Service) AxonHubControlPlane(ctx context.Context) (domain.AxonHubControlPlane, error) {
-	return s.Scheduler.AxonHubControlPlane(ctx)
-}
-
 func (s *Service) SeedSchedulerSnapshots(ctx context.Context) error {
 	return s.Scheduler.SeedSchedulerSnapshots(ctx)
 }
@@ -65,128 +56,38 @@ func (s *Service) ApplySchedulerGroups(ctx context.Context) (domain.SchedulerApp
 	return s.Scheduler.ApplySchedulerGroups(ctx)
 }
 
-func (s *Service) SetCardSchedulerChannelStatus(ctx context.Context, cardID string, status int) (domain.ModelCard, error) {
-	return s.Scheduler.SetCardSchedulerChannelStatus(ctx, cardID, status)
+func (s *Service) SchedulerChannelsForProvider(ctx context.Context, provider, keyword string) ([]domain.SchedulerChannel, error) {
+	return s.Scheduler.SchedulerChannelsForProvider(ctx, provider, keyword)
 }
 
-func (s *Service) AvailabilityPolicy(ctx context.Context, upstreamID string) (domain.AvailabilityPolicy, error) {
-	return s.Scheduler.AvailabilityPolicy(ctx, upstreamID)
+func (s *Service) CostBindings(ctx context.Context) ([]domain.SchedulerCostBinding, error) {
+	return s.Scheduler.CostBindings(ctx)
 }
 
-func (s *Service) SaveAvailabilityPolicy(ctx context.Context, upstreamID string, policy domain.AvailabilityPolicy) (domain.AvailabilityPolicy, error) {
-	return s.Scheduler.SaveAvailabilityPolicy(ctx, upstreamID, policy)
+func (s *Service) SaveCostBinding(ctx context.Context, id string, in domain.SchedulerCostBinding) (domain.SchedulerCostBinding, error) {
+	return s.Scheduler.SaveCostBinding(ctx, id, in)
 }
 
-func (s *Service) AvailabilityRows(ctx context.Context, upstreamID, state string) ([]domain.AvailabilityView, error) {
-	return s.Scheduler.AvailabilityRows(ctx, upstreamID, state)
+func (s *Service) DeleteCostBinding(ctx context.Context, id string) error {
+	return s.Scheduler.DeleteCostBinding(ctx, id)
 }
 
-func (s *Service) AvailabilityAction(ctx context.Context, cardID, action string, minutes int) (domain.AvailabilityView, error) {
-	return s.Scheduler.AvailabilityAction(ctx, cardID, action, minutes)
-}
-
-func (s *Service) ReconcileAvailability(ctx context.Context) error {
-	return s.Scheduler.ReconcileAvailability(ctx)
-}
-
-func (s *Service) ReconcileTraffic(ctx context.Context) error {
-	return s.Scheduler.ReconcileTraffic(ctx)
-}
-
-func (s *Service) TrafficStatus(ctx context.Context) (domain.TrafficStatus, error) {
-	return s.Scheduler.TrafficStatus(ctx)
-}
-
-func (s *Service) TrafficRows(ctx context.Context) ([]domain.TrafficChannelState, error) {
-	return s.Scheduler.TrafficRows(ctx)
-}
-
-func (s *Service) AdoptTrafficBaseline(ctx context.Context, channelID string) (domain.TrafficControlState, error) {
-	return s.Scheduler.AdoptTrafficBaseline(ctx, channelID)
-}
-
-func (s *Service) SchedulerControlPlane(ctx context.Context) (domain.SchedulerControlPlane, error) {
-	return s.Scheduler.ControlPlane(ctx)
-}
-
-func (s *Service) AdoptSchedulerControlPlaneChannel(ctx context.Context, channelID string) (domain.SchedulerChannelLifecycle, error) {
-	return s.Scheduler.AdoptControlPlaneChannel(ctx, channelID)
-}
-
-func (s *Service) AdoptAxonHubControlPlaneChannel(ctx context.Context, channelID string) (domain.AxonHubChannelLifecycle, error) {
-	return s.Scheduler.AdoptAxonHubChannel(ctx, channelID)
-}
-
-func (s *Service) GGAPISettings(ctx context.Context) (domain.GGAPISettings, error) {
-	return s.Scheduler.GGAPISettings(ctx)
-}
-
-func (s *Service) SaveGGAPISettings(ctx context.Context, settings domain.GGAPISettings) (domain.GGAPISettingsUpdateResult, error) {
-	return s.Scheduler.SaveGGAPISettings(ctx, settings)
-}
-
-func (s *Service) GGAPIAffinityCache(ctx context.Context) (domain.GGAPIAffinityCacheStats, error) {
-	return s.Scheduler.GGAPIAffinityCache(ctx)
-}
-
-func (s *Service) ClearGGAPIAffinityCache(ctx context.Context, ruleName string, all bool) (domain.GGAPIAffinityCacheClearResult, error) {
-	return s.Scheduler.ClearGGAPIAffinityCache(ctx, ruleName, all)
+func (s *Service) AdoptCostBinding(ctx context.Context, id, provider string) (domain.CostFieldOwnership, error) {
+	return s.Scheduler.AdoptCostBinding(ctx, id, provider)
 }
 
 func (s *Service) Profit(ctx context.Context, window string) (domain.ProfitResponse, error) {
 	return s.ProfitSvc.Profit(ctx, window)
 }
 
-// cards/check/upstreams 使用的内部钩子 — 仍挂在 Service 上以便薄调用。
+// 余额刷新使用的内部成本同步钩子。
 
 func (s *Service) recordCurrentCostSnapshots(ctx context.Context) error {
 	return s.Scheduler.recordCurrentCostSnapshots(ctx)
 }
 
-func (s *Service) recordCardCostSnapshot(ctx context.Context, card domain.ModelCard) error {
-	return s.Scheduler.recordCardCostSnapshot(ctx, card)
-}
-
-func (s *Service) recordInactiveCostSnapshot(ctx context.Context, card domain.ModelCard, reason string) error {
-	return s.Scheduler.recordInactiveCostSnapshot(ctx, card, reason)
-}
-
 func (s *Service) syncSchedulerGroupsBestEffort(ctx context.Context) {
 	s.Scheduler.syncSchedulerGroupsBestEffort(ctx)
-}
-
-func (s *Service) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {
-	return s.Scheduler.applySchedulerAutomation(ctx, card, success, failures)
-}
-
-// 探测 / 卡片公开 API
-
-func (s *Service) SaveCard(ctx context.Context, id string, in domain.ModelCard) (domain.ModelCard, error) {
-	return s.Probe.SaveCard(ctx, id, in)
-}
-
-func (s *Service) SortCards(ctx context.Context, ids []string) error {
-	return s.Probe.SortCards(ctx, ids)
-}
-
-func (s *Service) DeleteCard(ctx context.Context, id string) error {
-	return s.Probe.DeleteCard(ctx, id)
-}
-
-func (s *Service) CheckCard(ctx context.Context, cardID string) error {
-	return s.Probe.CheckCard(ctx, cardID)
-}
-
-func (s *Service) ListCards(ctx context.Context) ([]domain.ModelCard, error) {
-	return s.Probe.ListCards(ctx)
-}
-
-func (s *Service) MonitorStatus(ctx context.Context, window string) (map[string]any, error) {
-	return s.Probe.MonitorStatus(ctx, window)
-}
-
-func (s *Service) PublicMonitorStatus(ctx context.Context, window string) (domain.PublicMonitorStatus, error) {
-	return s.Probe.PublicMonitorStatus(ctx, window)
 }
 
 // OneBot 公开 API
@@ -197,22 +98,6 @@ func (s *Service) OneBotStatus(ctx context.Context) (domain.OneBotStatus, error)
 
 func (s *Service) AuthorizeOneBotEvent(ctx context.Context, signature string, payload []byte) error {
 	return s.OneBot.AuthorizeEvent(ctx, signature, payload)
-}
-
-func (s *Service) HandleOneBotEvent(ctx context.Context, event onebot.Event) error {
-	return s.OneBot.HandleEvent(ctx, event)
-}
-
-func (s *Service) CheckDue(ctx context.Context) error {
-	return s.Probe.CheckDue(ctx)
-}
-
-func (s *Service) CheckAll(ctx context.Context) error {
-	return s.Probe.CheckAll(ctx)
-}
-
-func (s *Service) CheckUpstream(ctx context.Context, upstreamID string) error {
-	return s.Probe.CheckUpstream(ctx, upstreamID)
 }
 
 // CLIProxy 公开 API

@@ -33,15 +33,11 @@ func (s *Service) CaptureUpstreamBrowserTokens(ctx context.Context, id, access, 
 	if err != nil {
 		return domain.Upstream{}, err
 	}
-	if err := s.CheckUpstream(ctx, id); err != nil {
+	if err := s.RefreshUpstreamBalance(ctx, id); err != nil {
 		return out.Public(), err
 	}
 	out, err = s.Store.Upstream(ctx, id)
 	return out.Public(), err
-}
-
-func (s *Service) GetCard(ctx context.Context, id string) (domain.ModelCard, error) {
-	return s.Cards.Card(ctx, id)
 }
 
 func (s *Service) GetRevenueCard(ctx context.Context, id string) (domain.RevenueCard, error) {

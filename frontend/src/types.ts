@@ -16,11 +16,8 @@ export type Upstream = {
   sub2api_access_token_set?: boolean
   sub2api_refresh_token?: string
   sub2api_refresh_token_set?: boolean
-  balance_rate: number
-  low_balance_threshold: number
-	balance_guard_mode?: 'observe' | 'active'
-	balance_close_threshold?: number
-	balance_recover_threshold?: number
+	balance_rate: number
+	low_balance_threshold: number
 	runway_warning_hours?: number
   last_error?: string
 }
@@ -46,53 +43,6 @@ export type UpstreamRow = {
   }
 }
 
-export type ModelCard = {
-  id: string
-  name: string
-  base_url?: string
-  api_key?: string
-  api_key_set?: boolean
-  model: string
-  upstream_id?: string
-  upstream_name: string
-  key_id?: string
-  key_name?: string
-  key_group?: string
-  key_group_ratio?: string
-  effective_ratio?: string
-  display_group: string
-  pool_enabled: boolean
-  manual_cost_ratio?: string
-  scheduler_group?: string
-  scheduler_channel_id?: string
-  scheduler_channel_name?: string
-  axonhub_channel_id?: string
-  axonhub_channel_name?: string
-  scheduler_auto_disabled: boolean
-  scheduler_auto_disabled_at?: string
-  probe_muted: boolean
-  enabled: boolean
-  public_enabled: boolean
-  sort_order: number
-  last_error: string
-  history?: Probe[]
-}
-
-export type PublicModelCard = Pick<ModelCard, 'name' | 'display_group' | 'probe_muted' | 'last_error' | 'history'> & {
-  auto_probe_paused: boolean
-}
-
-export type Probe = {
-  checked_at: string
-  status: string
-  input?: string
-  output?: string
-  success: boolean
-  latency_ms: number
-  http_status: number
-  error: string
-}
-
 export type BalanceRow = {
   id: string
   name: string
@@ -103,6 +53,14 @@ export type BalanceRow = {
   source_remain?: number
   low_balance?: boolean
   last_check?: string
+  error?: string
+}
+
+export type BalanceRefreshResult = {
+  total: number
+  succeeded: number
+  failed: number
+  results: { upstream_id: string; upstream_name: string; success: boolean; error?: string }[]
 }
 
 export type RechargeMethod = {
@@ -144,20 +102,6 @@ export type RechargeLog = {
   created_at: string
 }
 
-export type MonitorStatus = {
-  window: string
-  requests: number
-  success: number
-  failed: number
-  success_rate: number
-  avg_latency: number
-  rows: ModelCard[]
-}
-
-export type PublicMonitorStatus = Omit<MonitorStatus, 'rows'> & {
-  rows: PublicModelCard[]
-}
-
 export type SettingsData = {
   check_interval_minutes: number
   telegram_bot_token?: string
@@ -170,7 +114,6 @@ export type SettingsData = {
   onebot_webhook_token?: string
   onebot_webhook_token_set?: boolean
   onebot_group_ids: string[]
-  probe_model: string
   site_name: string
   site_icon: string
   epay_base_url: string
@@ -187,7 +130,7 @@ export type OneBotStatus = {
 
 export type SiteSettings = Pick<SettingsData, 'site_name' | 'site_icon'>
 
-export type TabID = 'status' | 'balances' | 'revenue' | 'profit' | 'messages' | 'upstreams' | 'scheduler' | 'pools' | 'events' | 'audit' | 'notifications' | 'self-check' | 'settings'
+export type TabID = 'balances' | 'costs' | 'revenue' | 'profit' | 'messages' | 'upstreams' | 'pools' | 'events' | 'audit' | 'notifications' | 'self-check' | 'settings'
 
 export type NavTab = { id: TabID; label: string; short: string; icon: ElementType }
 
@@ -281,21 +224,6 @@ export type TGLoginForm = {
   password: string
 }
 
-export type CardForm = {
-  name: string
-  source: 'custom' | 'upstream'
-  base_url: string
-  api_key: string
-  model: string
-  upstream_id: string
-  key_id: string
-  display_group: string
-  pool_enabled: boolean
-  manual_cost_ratio: string
-  enabled: boolean
-  public_enabled: boolean
-}
-
 export type SchedulerConfig = {
   scheduler_provider: 'ggapi' | 'axonhub'
   scheduler_base_url: string
@@ -305,9 +233,6 @@ export type SchedulerConfig = {
   /** 价格未命中托管档位时落到该 new-api 分组（不可空串） */
   scheduler_unassigned_group: string
   scheduler_tiers: SchedulerTier[]
-  scheduler_traffic_mode: 'off' | 'observe' | 'active'
-  scheduler_traffic_profile: 'balanced'
-  scheduler_log_poll_seconds: number
 }
 
 export type SchedulerTier = {
@@ -339,57 +264,7 @@ export type AxonHubConfig = {
   admin_email: string
   admin_password?: string
   admin_password_set?: boolean
-  control_mode: 'off' | 'observe' | 'active'
-}
-
-export type AxonHubLifecycle = {
-  channel_id: string
-  channel_name?: string
-  remote_status: 'enabled' | 'disabled' | 'archived' | string
-  remote_tags: string[]
-  remote_managed_tag?: string
-  remote_weight: number
-  desired_tag?: string
-  desired_weight: number
-  owner: 'aum' | 'external' | 'observed' | string
-  external_takeover: boolean
-  aum_disabled: boolean
-  aum_disabled_at?: string
-  last_aum_status?: string
-  last_aum_tag?: string
-  last_aum_weight: number
-  last_aum_write_at?: string
-  last_source?: string
-  last_reason?: string
-  pending_action?: string
-  pending_status?: string
-  pending_tag?: string
-  pending_weight: number
-  retry_at?: string
-  retry_count: number
-  last_error?: string
-  updated_at?: string
-}
-
-export type AxonHubControlPlaneChannel = AxonHubLifecycle & {
-  card_id?: string
-  card_name?: string
-  model?: string
-  models?: string[]
-  cost?: number
-  cost_available: boolean
-  target_tags: string[]
-  archived: boolean
-  model_supported: boolean
-  balance_fresh: boolean
-  balance_remain?: number
-}
-
-export type AxonHubControlPlane = {
-  provider: 'axonhub'
-  control_mode: 'off' | 'observe' | 'active'
-  channels: AxonHubControlPlaneChannel[]
-  logs: SchedulerLog[]
+  control_mode: 'off' | 'active'
 }
 
 export type AxonHubPreflight = {
@@ -414,196 +289,8 @@ export type SchedulerLog = {
   status: 'success' | 'error' | 'skipped'
   message: string
   reason?: string
+  provider?: 'ggapi' | 'axonhub' | string
   created_at: string
-}
-
-export type TrafficWindow = {
-  channel_id: string
-  channel_name?: string
-  model: string
-  group?: string
-  window_start: string
-  window_end: string
-  requests: number
-  successes: number
-  soft_failures: number
-  hard_failures: number
-  auth_failures: number
-  user_errors: number
-  p95_ttft_ms: number
-  avg_ttft_ms: number
-  failure_rate: number
-}
-
-export type TrafficChannelState = {
-  channel_id: string
-  channel_name?: string
-  managed: boolean
-  state: string
-  reason?: string
-  desired_status: number
-  actual_status: number
-  base_priority: number
-  actual_priority: number
-  base_weight: number
-  actual_weight: number
-  health_score: number
-  healthy_baseline_ttft_ms?: number
-  model?: string
-  window_15s?: TrafficWindow
-  window_1m?: TrafficWindow
-  window_5m?: TrafficWindow
-  updated_at?: string
-}
-
-export type TrafficStatus = {
-  mode: 'off' | 'observe' | 'active'
-  profile: 'balanced'
-  connected: boolean
-  last_poll_at?: string
-  last_event_at?: string
-  lag_seconds: number
-  backlog_pages: number
-  frozen: boolean
-  freeze_reason?: string
-  session_failures: number
-  channels: TrafficChannelState[]
-}
-
-export type SchedulerControlPlaneChannel = {
-  channel_id: string
-  channel_name?: string
-  managed: boolean
-  remote_status: number
-  remote_priority: number
-  remote_weight: number
-  owner: 'aum' | 'ggapi' | 'external' | 'observed'
-  external_takeover: boolean
-  aum_disabled: boolean
-  close_source?: string
-  close_reason?: string
-  traffic_since?: string
-  new_traffic_requests: number
-  session_failures: number
-  affinity_cleanup_pending: boolean
-  affinity_cleanup_retry_at?: string
-  affinity_cleanup_error?: string
-  availability?: AvailabilityRow
-  traffic?: TrafficChannelState
-  updated_at?: string
-}
-
-export type SchedulerControlPlane = {
-  traffic: TrafficStatus
-  channels: SchedulerControlPlaneChannel[]
-  logs: SchedulerLog[]
-}
-
-export type GGAPIAffinityKeySource = {
-  type: 'context_int' | 'context_string' | 'request_header' | 'gjson'
-  key?: string
-  path?: string
-  [key: string]: unknown
-}
-
-export type GGAPIAffinityRule = {
-  name: string
-  model_regex: string[]
-  path_regex: string[]
-  user_agent_include?: string[]
-  key_sources: GGAPIAffinityKeySource[]
-  value_regex: string
-  ttl_seconds: number
-  skip_retry_on_failure: boolean
-  include_using_group: boolean
-  include_model_name: boolean
-  include_rule_name: boolean
-  param_override_template?: Record<string, unknown>
-  [key: string]: unknown
-}
-
-export type GGAPISettings = {
-  retry_times: number
-  automatic_retry_status_codes: string
-  automatic_disable_status_codes: string
-  channel_test_mode: 'scheduled_all' | 'passive_recovery'
-  auto_test_channel_enabled: boolean
-  auto_test_channel_minutes: number
-  automatic_disable_channel_enabled: boolean
-  automatic_enable_channel_enabled: boolean
-  affinity: {
-    enabled: boolean
-    switch_on_success: boolean
-    keep_on_channel_disabled: boolean
-    max_entries: number
-    default_ttl_seconds: number
-    rules: GGAPIAffinityRule[]
-  }
-}
-
-export type GGAPISettingsUpdateResult = {
-  complete: boolean
-  applied: string[]
-  failed_key?: string
-  error?: string
-  settings: GGAPISettings
-}
-
-export type GGAPIAffinityCacheStats = {
-  enabled: boolean
-  total: number
-  unknown: number
-  by_rule_name: Record<string, number>
-  cache_capacity: number
-  cache_algo: string
-}
-
-export type AvailabilityPolicy = {
-  balance_guard_mode: 'observe' | 'active'
-  low_balance_threshold: number
-  balance_close_threshold: number
-  balance_recover_threshold: number
-  runway_warning_hours: number
-}
-
-export type AvailabilityBlocker = {
-  kind: 'balance_low' | 'quota_exhausted' | 'probe_failed' | string
-  since: string
-  message?: string
-  observed?: boolean
-}
-
-export type BalanceRunway = {
-  hours_remaining?: number
-  rate_per_hour?: number
-  samples: number
-  warning: boolean
-}
-
-export type AvailabilityRow = {
-  channel_id: string
-  channel_name: string
-  card_id: string
-  card_name: string
-  upstream_id: string
-  upstream_name: string
-  managed: boolean
-  blockers: AvailabilityBlocker[]
-  desired_status: number
-  actual_status: number
-  disabled_at?: string
-  recovery_success_count: number
-  override?: 'force_enable' | 'manual_hold' | string
-  override_until?: string
-  pending_action?: string
-  pending_status?: number
-  retry_at?: string
-  retry_count: number
-  last_error?: string
-  state: 'healthy' | 'warning' | 'suspect' | 'blocked' | 'recovering' | 'forced_on' | 'manual_off' | 'action_failed' | 'unmanaged' | string
-  balance_fresh: boolean
-  balance_remain?: number
-  runway: BalanceRunway
 }
 
 export type SchedulerApplyResult = {
@@ -611,6 +298,48 @@ export type SchedulerApplyResult = {
   unchanged: number
   skipped: number
 }
+
+export type SchedulerCostBinding = {
+  id: string
+  name: string
+  upstream_id?: string
+  upstream_name?: string
+  key_id?: string
+  key_name?: string
+  key_group?: string
+  key_group_ratio?: string
+  balance_rate?: number
+  manual_cost_ratio?: string
+  source_type: 'upstream_key' | 'manual'
+  effective_cost?: number
+  cost_available: boolean
+  missing_reason?: string
+  ggapi_external_takeover: boolean
+  ggapi_ownership_reason?: string
+  axonhub_external_takeover: boolean
+  axonhub_ownership_reason?: string
+  scheduler_channel_id?: string
+  scheduler_channel_name?: string
+  axonhub_channel_id?: string
+  axonhub_channel_name?: string
+  enabled: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export type CostBindingForm = Pick<
+  SchedulerCostBinding,
+  | 'name'
+  | 'upstream_id'
+  | 'key_id'
+  | 'manual_cost_ratio'
+  | 'source_type'
+  | 'scheduler_channel_id'
+  | 'scheduler_channel_name'
+  | 'axonhub_channel_id'
+  | 'axonhub_channel_name'
+  | 'enabled'
+>
 
 export type CLIProxyConfig = {
   name: string
@@ -663,9 +392,6 @@ export type NotificationRules = {
   enabled: boolean
   event_types: Record<string, boolean>
   failure_threshold: number
-  mute_failure_threshold: number
-  internal_retry_count: number
-  internal_retry_interval_ms: number
   recovery: boolean
 }
 

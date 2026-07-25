@@ -3,35 +3,24 @@ package domain
 import "time"
 
 type NotificationRules struct {
-	Enabled                 bool            `json:"enabled"`
-	EventTypes              map[string]bool `json:"event_types"`
-	FailureThreshold        int             `json:"failure_threshold"`
-	MuteFailureThreshold    int             `json:"mute_failure_threshold"`
-	InternalRetryCount      int             `json:"internal_retry_count"`
-	InternalRetryIntervalMs int             `json:"internal_retry_interval_ms"`
-	Recovery                bool            `json:"recovery"`
+	Enabled          bool            `json:"enabled"`
+	EventTypes       map[string]bool `json:"event_types"`
+	FailureThreshold int             `json:"failure_threshold"`
+	Recovery         bool            `json:"recovery"`
 }
 
 func DefaultNotificationRules() NotificationRules {
 	return NotificationRules{
-		Enabled:                 true,
-		FailureThreshold:        2,
-		MuteFailureThreshold:    4,
-		InternalRetryCount:      1,
-		InternalRetryIntervalMs: 0,
-		Recovery:                true,
+		Enabled:          true,
+		FailureThreshold: 2,
+		Recovery:         true,
 		EventTypes: map[string]bool{
-			"probe_failed":               true,
-			"quota_exhausted":            true,
-			"probe_internal_error":       false,
-			"balance_low":                true,
-			"credential_invalid":         true,
-			"balance_query_failed":       true,
-			"scheduler_changed":          true,
-			"availability_changed":       true,
-			"availability_action_failed": true,
-			"balance_runway_low":         true,
-			"cliproxy_error":             true,
+			"balance_low":          true,
+			"credential_invalid":   true,
+			"balance_query_failed": true,
+			"balance_runway_low":   true,
+			"cliproxy_error":       true,
+			"cost_sync_failed":     true,
 		},
 	}
 }
@@ -42,22 +31,6 @@ func NormalizeNotificationRules(in NotificationRules) NotificationRules {
 	out.Recovery = in.Recovery
 	if in.FailureThreshold > 0 {
 		out.FailureThreshold = in.FailureThreshold
-	}
-	if in.MuteFailureThreshold > 0 {
-		out.MuteFailureThreshold = in.MuteFailureThreshold
-	}
-	// 0 表示「用默认」（与 FailureThreshold 相同）。限制重试次数以免探测延迟失控。
-	if in.InternalRetryCount > 0 {
-		out.InternalRetryCount = in.InternalRetryCount
-	}
-	if out.InternalRetryCount > 5 {
-		out.InternalRetryCount = 5
-	}
-	if in.InternalRetryIntervalMs > 0 {
-		out.InternalRetryIntervalMs = in.InternalRetryIntervalMs
-	}
-	if out.InternalRetryIntervalMs > 30_000 {
-		out.InternalRetryIntervalMs = 30_000
 	}
 	for key := range out.EventTypes {
 		if in.EventTypes != nil {

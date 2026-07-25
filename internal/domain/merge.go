@@ -82,74 +82,8 @@ func (in Upstream) MergeUpdate(old Upstream) Upstream {
 	out.LastError = old.LastError
 	out.FailureCount = old.FailureCount
 	out.CreatedAt = old.CreatedAt
-	// 可用性策略由专用接口维护，普通上游编辑不得意外清空。
-	out.BalanceGuardMode = old.BalanceGuardMode
-	out.BalanceCloseThreshold = old.BalanceCloseThreshold
-	out.BalanceRecoverThreshold = old.BalanceRecoverThreshold
 	out.RunwayWarningHours = old.RunwayWarningHours
 	return out
-}
-
-// MergeUpdate：密钥保留、空来源保留、运行时字段保留，以及绑定变更→清除自动关渠规则。
-// 在拼好请求字段后调用；规范化/校验仍在 app 层单独做。
-func (in ModelCard) MergeUpdate(old ModelCard) ModelCard {
-	out := in
-	out.APIKey = KeepSecret(in.APIKey, old.APIKey)
-	if strings.TrimSpace(out.BaseURL) == "" && strings.TrimSpace(out.UpstreamID) == "" && strings.TrimSpace(out.KeyID) == "" {
-		out.BaseURL, out.UpstreamID, out.KeyID = old.BaseURL, old.UpstreamID, old.KeyID
-		if strings.TrimSpace(out.APIKey) == "" {
-			out.APIKey = old.APIKey
-		}
-	}
-	out.ID = old.ID
-	out.LastError = old.LastError
-	out.FailureCount = old.FailureCount
-	out.SortOrder = old.SortOrder
-	out.CreatedAt = old.CreatedAt
-	out.SchedulerAutoDisabledAt = old.SchedulerAutoDisabledAt
-
-	// 变更调度绑定时清除自动关渠（渠道仍可由调用方设置）。
-	if schedulerBindingChanged(old, out) {
-		out.SchedulerAutoDisabled = false
-	}
-	return out
-}
-
-func schedulerBindingChanged(old, next ModelCard) bool {
-	if strings.TrimSpace(next.SchedulerChannelID) != strings.TrimSpace(old.SchedulerChannelID) {
-		return true
-	}
-	if strings.TrimSpace(next.SchedulerGroup) != strings.TrimSpace(old.SchedulerGroup) {
-		return true
-	}
-	if strings.TrimSpace(next.AxonHubChannelID) != strings.TrimSpace(old.AxonHubChannelID) {
-		return true
-	}
-	if !next.PoolEnabled && old.PoolEnabled {
-		return true
-	}
-	return false
-}
-
-// ApplySchedulerGroupPatch：PATCH /cards 的可选分组变更语义：
-// 分组为空或变更时清除渠道 id/名称与自动关渠。
-func ApplySchedulerGroupPatch(oldGroup, oldChannelID, oldChannelName string, oldAutoDisabled bool, newGroup string) (group, channelID, channelName string, autoDisabled bool) {
-	group = newGroup
-	channelID, channelName, autoDisabled = oldChannelID, oldChannelName, oldAutoDisabled
-	if strings.TrimSpace(group) == "" || strings.TrimSpace(group) != oldGroup {
-		channelID, channelName, autoDisabled = "", "", false
-	}
-	return group, channelID, channelName, autoDisabled
-}
-
-// ApplySchedulerChannelPatch：渠道清空或变更时清除自动关渠。
-func ApplySchedulerChannelPatch(oldChannelID string, oldAutoDisabled bool, newChannelID string) (channelID string, autoDisabled bool) {
-	channelID = newChannelID
-	autoDisabled = oldAutoDisabled
-	if strings.TrimSpace(channelID) == "" || channelID != oldChannelID {
-		autoDisabled = false
-	}
-	return channelID, autoDisabled
 }
 
 // MergeUpdate：密钥/文本保留，并保留身份字段。
@@ -174,7 +108,6 @@ func (in RevenueCard) MergeUpdate(old RevenueCard) RevenueCard {
 func (in Settings) MergeUpdate(old Settings) Settings {
 	out := in
 	out.CheckIntervalMinutes = NormalizeCheckInterval(in.CheckIntervalMinutes)
-	out.ProbeModel = ProbeModel
 	out.SiteName = strings.TrimSpace(in.SiteName)
 	if out.SiteName == "" {
 		out.SiteName = DefaultSiteName
@@ -211,21 +144,6 @@ func (in SchedulerConfig) MergeUpdate(old SchedulerConfig) SchedulerConfig {
 	out.AccessToken = KeepSecret(in.AccessToken, old.AccessToken)
 	out.UnassignedGroup = strings.TrimSpace(in.UnassignedGroup)
 	out.Tiers = NormalizeSchedulerTiers(in.Tiers)
-	if strings.TrimSpace(in.TrafficMode) == "" {
-		out.TrafficMode = NormalizeTrafficMode(old.TrafficMode)
-	} else {
-		out.TrafficMode = NormalizeTrafficMode(in.TrafficMode)
-	}
-	if strings.TrimSpace(in.TrafficProfile) == "" {
-		out.TrafficProfile = NormalizeTrafficProfile(old.TrafficProfile)
-	} else {
-		out.TrafficProfile = NormalizeTrafficProfile(in.TrafficProfile)
-	}
-	if in.TrafficPollSecs == 0 {
-		out.TrafficPollSecs = NormalizeTrafficPollSeconds(old.TrafficPollSecs)
-	} else {
-		out.TrafficPollSecs = NormalizeTrafficPollSeconds(in.TrafficPollSecs)
-	}
 	return out
 }
 

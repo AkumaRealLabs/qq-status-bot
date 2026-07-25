@@ -1,6 +1,8 @@
 package domain
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestCostPriorities(t *testing.T) {
 	got := CostPriorities(map[string]float64{

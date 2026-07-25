@@ -113,14 +113,6 @@ func (c Client) UpdateFields(ctx context.Context, id string, tags []string, weig
 	return data.Channel.channel(), err
 }
 
-func (c Client) UpdateStatus(ctx context.Context, id, status string) (Channel, error) {
-	var data struct {
-		Channel channelPayload `json:"updateChannelStatus"`
-	}
-	err := c.graphql(ctx, `mutation AUMUpdateStatus($id: ID!, $status: ChannelStatus!) { updateChannelStatus(id: $id, status: $status) { `+channelFields+` } }`, map[string]any{"id": id, "status": strings.ToLower(status)}, &data)
-	return data.Channel.channel(), err
-}
-
 type channelPayload struct {
 	ID             json.RawMessage `json:"id"`
 	Name           string          `json:"name"`
@@ -141,7 +133,10 @@ func (p channelPayload) channel() Channel {
 			models = append(models, model)
 		}
 	}
-	return Channel{ID: id, Name: p.Name, Type: strings.ToLower(p.Type), Status: strings.ToLower(p.Status), OrderingWeight: p.OrderingWeight, Tags: p.Tags, Models: models}
+	return Channel{
+		ID: id, Name: p.Name, Type: strings.ToLower(p.Type), Status: strings.ToLower(p.Status), OrderingWeight: p.OrderingWeight,
+		Tags: p.Tags, Models: models,
+	}
 }
 
 type graphQLError struct {

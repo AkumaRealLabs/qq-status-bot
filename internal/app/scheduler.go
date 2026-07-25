@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -26,15 +25,11 @@ func (s *SchedulerService) SchedulerConfig(ctx context.Context) (domain.Schedule
 }
 
 func (s *SchedulerService) SaveSchedulerConfig(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerConfig, error) {
-	if err := domain.ValidateTrafficConfig(cfg.TrafficMode, cfg.TrafficProfile, cfg.TrafficPollSecs); err != nil {
-		return domain.SchedulerConfig{}, BadRequest(err)
-	}
 	old, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
 		return domain.SchedulerConfig{}, err
 	}
 	cfg = cfg.MergeUpdate(old)
-	// provider 只能经显式切换接口变更，避免旧配置表单绕过 AxonHub 预检。
 	cfg.Provider = old.Provider
 	if err := domain.ValidateSchedulerTiers(cfg.Tiers); err != nil {
 		return domain.SchedulerConfig{}, BadRequest(err)
@@ -87,97 +82,91 @@ func (s *SchedulerService) recordCurrentSaleSnapshots(ctx context.Context) error
 		if err != nil {
 			return err
 		}
-		if !ok || !latest.Active {
-			continue
-		}
-		if _, err := s.app.Store.SaveSchedulerGroupSaleSnapshot(ctx, domain.SchedulerGroupSaleSnapshot{
-			Group: group, Tag: latest.Tag, Active: false, EffectiveAt: now,
-		}); err != nil {
-			return err
+		if ok && latest.Active {
+			if _, err := s.app.Store.SaveSchedulerGroupSaleSnapshot(ctx, domain.SchedulerGroupSaleSnapshot{Group: group, Tag: latest.Tag, Active: false, EffectiveAt: now}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
 func (s *SchedulerService) recordCurrentCostSnapshots(ctx context.Context) error {
-	cards, err := s.app.Cards.ListCards(ctx)
+	bindings, err := s.app.Store.ListCostBindings(ctx)
 	if err != nil {
 		return err
 	}
-	for _, card := range cards {
-		if err := s.recordCardCostSnapshot(ctx, card); err != nil {
+	for _, binding := range bindings {
+		binding = costBindingProjection(binding)
+		if err := s.recordCostBindingSnapshot(ctx, binding); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *SchedulerService) recordCardCostSnapshot(ctx context.Context, card domain.ModelCard) error {
-	snap := s.cardCostSnapshot(ctx, card)
-	if snap.ChannelID == "" {
-		return nil
+func (s *SchedulerService) recordCostBindingSnapshot(ctx context.Context, binding domain.SchedulerCostBinding) error {
+	cfg, err := s.app.Store.SchedulerConfig(ctx)
+	if err != nil {
+		return err
 	}
-	_, err := s.app.Store.SaveSchedulerChannelCostSnapshot(ctx, snap)
-	return err
-}
-
-func (s *SchedulerService) recordInactiveCostSnapshot(ctx context.Context, card domain.ModelCard, reason string) error {
-	snap := s.cardCostSnapshot(ctx, card)
-	if snap.ChannelID == "" {
-		return nil
+	provider := cfg.Provider
+	channelID, channelName := binding.SchedulerChannelID, binding.SchedulerChannelName
+	if provider == domain.SchedulerProviderAxonHub {
+		channelID, channelName = binding.AxonHubChannelID, binding.AxonHubChannelName
 	}
-	snap.Active, snap.CostPerUnit, snap.MissingReason = false, 0, reason
-	_, err := s.app.Store.SaveSchedulerChannelCostSnapshot(ctx, snap)
-	return err
-}
-
-func (s *SchedulerService) cardCostSnapshot(ctx context.Context, card domain.ModelCard) domain.SchedulerChannelCostSnapshot {
-	provider := domain.SchedulerProviderGGAPI
-	channelID, channelName := card.SchedulerChannelID, card.SchedulerChannelName
-	if cfg, err := s.app.Store.SchedulerConfig(ctx); err == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
-		provider, channelID, channelName = domain.SchedulerProviderAxonHub, card.AxonHubChannelID, card.AxonHubChannelName
+	if channelID == "" {
+		return nil
 	}
 	snap := domain.SchedulerChannelCostSnapshot{
-		Provider: provider, ChannelID: channelID, ChannelName: channelName,
-		CardID: card.ID, CardName: card.Name, MissingReason: "缺成本绑定", EffectiveAt: time.Now().UTC(),
+		Provider: provider, ChannelID: channelID, ChannelName: channelName, CardID: binding.ID, CardName: binding.Name,
+		SourceType: binding.SourceType, UpstreamID: binding.UpstreamID, UpstreamName: binding.UpstreamName,
+		KeyID: binding.KeyID, KeyName: binding.KeyName, CostPerUnit: binding.EffectiveCost,
+		Active: binding.Enabled && binding.CostAvailable, MissingReason: binding.MissingReason, EffectiveAt: time.Now().UTC(),
 	}
-	if snap.ChannelID == "" {
-		return snap
+	if !binding.Enabled {
+		snap.MissingReason = "绑定已停用"
 	}
-	if !card.PoolEnabled {
-		snap.MissingReason = "纯监控"
-		return snap
-	}
-	if card.BaseURL != "" {
-		snap.SourceType = "manual_cost_ratio"
-		ratio, reason := domain.CostPerUnitFromManual(card.ManualCostRatio)
-		if reason != "" {
-			snap.MissingReason = reason
-			return snap
+	_, err = s.app.Store.SaveSchedulerChannelCostSnapshot(ctx, snap)
+	return err
+}
+
+func costBindingProjection(binding domain.SchedulerCostBinding) domain.SchedulerCostBinding {
+	binding.SourceType = domain.CostSourceManual
+	if binding.UpstreamID != "" || binding.KeyID != "" {
+		binding.SourceType = domain.CostSourceUpstreamKey
+		if binding.UpstreamID == "" {
+			binding.MissingReason = "未绑定上游"
+			return binding
 		}
-		snap.CostPerUnit, snap.Active, snap.MissingReason = ratio, true, ""
-		return snap
+		if binding.KeyID == "" || binding.KeyName == "" {
+			binding.MissingReason = "未绑定上游 Key"
+			return binding
+		}
+		cost, reason := domain.CostPerUnitFromUpstreamKey(binding.KeyRatio, binding.BalanceRate)
+		binding.EffectiveCost, binding.MissingReason = cost, reason
+		binding.CostAvailable = reason == ""
+		return binding
 	}
-	key, err := s.app.Store.Key(ctx, card.KeyID)
+	cost, reason := domain.CostPerUnitFromManual(binding.ManualCostRatio)
+	binding.EffectiveCost, binding.MissingReason = cost, reason
+	binding.CostAvailable = reason == ""
+	return binding
+}
+
+func (s *SchedulerService) SchedulerChannelsForProvider(ctx context.Context, provider, keyword string) ([]domain.SchedulerChannel, error) {
+	provider = domain.NormalizeSchedulerProvider(provider)
+	if provider == domain.SchedulerProviderAxonHub {
+		return s.AxonHubChannels(ctx, keyword)
+	}
+	cfg, err := s.app.Store.SchedulerConfig(ctx)
 	if err != nil {
-		snap.MissingReason = "未绑定上游 Key"
-		return snap
+		return nil, err
 	}
-	upstream, err := s.app.Store.Upstream(ctx, card.UpstreamID)
-	if err != nil {
-		snap.MissingReason = "未绑定上游"
-		return snap
+	if !schedulerConfigured(cfg) {
+		return nil, ErrBadRequest("请先配置 GGAPI 连接")
 	}
-	snap.SourceType = "upstream_key"
-	snap.UpstreamID, snap.UpstreamName = upstream.ID, upstream.Name
-	snap.KeyID, snap.KeyName = key.ID, key.Name
-	ratio, reason := domain.CostPerUnitFromUpstreamKey(key.GroupRatio, domain.BalanceRate(upstream))
-	if reason != "" {
-		snap.MissingReason = reason
-		return snap
-	}
-	snap.CostPerUnit, snap.Active, snap.MissingReason = ratio, true, ""
-	return snap
+	return s.fetchSchedulerChannels(ctx, cfg, keyword)
 }
 
 func (s *SchedulerService) SchedulerChannels(ctx context.Context, keyword string) ([]domain.SchedulerChannel, error) {
@@ -185,79 +174,29 @@ func (s *SchedulerService) SchedulerChannels(ctx context.Context, keyword string
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Provider == domain.SchedulerProviderAxonHub {
-		return s.AxonHubChannels(ctx, keyword)
-	}
-	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
-		return nil, ErrBadRequest("请先配置调度器连接")
-	}
-	return s.fetchSchedulerChannels(ctx, cfg, keyword)
+	return s.SchedulerChannelsForProvider(ctx, cfg.Provider, keyword)
 }
 
 func (s *SchedulerService) fetchSchedulerChannels(ctx context.Context, cfg domain.SchedulerConfig, keyword string) ([]domain.SchedulerChannel, error) {
 	var out []domain.SchedulerChannel
-	for p := 1; ; p++ {
-		values := url.Values{}
-		values.Set("page_size", "100")
-		values.Set("p", strconv.Itoa(p))
+	for page := 1; ; page++ {
+		values := url.Values{"page_size": {"100"}, "p": {strconv.Itoa(page)}}
 		if strings.TrimSpace(keyword) != "" {
 			values.Set("keyword", strings.TrimSpace(keyword))
 		}
-		path := "/api/channel/"
-		if encoded := values.Encode(); encoded != "" {
-			path += "?" + encoded
-		}
 		var raw map[string]any
-		if err := s.schedulerJSON(ctx, cfg, http.MethodGet, path, nil, &raw); err != nil {
+		if err := s.schedulerJSON(ctx, cfg, http.MethodGet, "/api/channel/?"+values.Encode(), nil, &raw); err != nil {
 			return nil, err
 		}
 		if ok, exists := raw["success"].(bool); exists && !ok {
 			return nil, errors.New(schedulerMessage(raw))
 		}
-		page := schedulerChannels(raw)
-		out = append(out, page...)
-		if len(page) < 100 {
-			s.observeSchedulerChannels(ctx, out)
-			if strings.TrimSpace(keyword) == "" {
-				if err := s.pruneTrafficControls(ctx, out); err != nil {
-					return nil, err
-				}
-			}
+		rows := schedulerChannels(raw)
+		out = append(out, rows...)
+		if len(rows) < 100 {
 			return out, nil
 		}
 	}
-}
-
-func (s *SchedulerService) pruneTrafficControls(ctx context.Context, channels []domain.SchedulerChannel) error {
-	remote := make(map[string]struct{}, len(channels))
-	for _, channel := range channels {
-		remote[channel.ID] = struct{}{}
-	}
-	cards, err := s.app.Cards.ListCards(ctx)
-	if err != nil {
-		return err
-	}
-	managed := make(map[string]struct{}, len(cards))
-	for _, card := range cards {
-		if card.Enabled && card.PoolEnabled && strings.TrimSpace(card.SchedulerChannelID) != "" {
-			managed[card.SchedulerChannelID] = struct{}{}
-		}
-	}
-	rows, err := s.app.Store.TrafficControls(ctx)
-	if err != nil {
-		return err
-	}
-	for _, row := range rows {
-		_, remoteExists := remote[row.ChannelID]
-		_, managedExists := managed[row.ChannelID]
-		if remoteExists && managedExists {
-			continue
-		}
-		if err := s.app.Store.DeleteTrafficControl(ctx, row.ChannelID); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (s *SchedulerService) SchedulerGroups(ctx context.Context) ([]domain.SchedulerGroup, error) {
@@ -268,8 +207,8 @@ func (s *SchedulerService) SchedulerGroups(ctx context.Context) ([]domain.Schedu
 	if cfg.Provider == domain.SchedulerProviderAxonHub {
 		return []domain.SchedulerGroup{{Name: domain.AxonHubTagLow}, {Name: domain.AxonHubTagStable}}, nil
 	}
-	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
-		return nil, ErrBadRequest("请先配置调度器连接")
+	if !schedulerConfigured(cfg) {
+		return nil, ErrBadRequest("请先配置 GGAPI 连接")
 	}
 	if groups, err := s.fetchSchedulerGroups(ctx, cfg, "/api/user/self/groups"); err == nil {
 		return groups, nil
@@ -301,378 +240,188 @@ func (s *SchedulerService) ApplySchedulerGroups(ctx context.Context) (domain.Sch
 		return domain.SchedulerApplyResult{}, err
 	}
 	if cfg.Provider == domain.SchedulerProviderAxonHub {
-		if err := s.ReconcileAxonHub(ctx); err != nil {
-			return domain.SchedulerApplyResult{}, err
-		}
-		return domain.SchedulerApplyResult{}, nil
+		return s.applyAxonHubCosts(ctx)
 	}
-	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.UserID) == "" || strings.TrimSpace(cfg.AccessToken) == "" {
-		return domain.SchedulerApplyResult{}, errSchedulerNotConfigured
+	return s.applyGGAPICosts(ctx, cfg)
+}
+
+func (s *SchedulerService) applyGGAPICosts(ctx context.Context, cfg domain.SchedulerConfig) (domain.SchedulerApplyResult, error) {
+	var out domain.SchedulerApplyResult
+	if !schedulerConfigured(cfg) {
+		return out, errSchedulerNotConfigured
 	}
 	if err := domain.ValidateSchedulerUnassignedGroup(cfg.UnassignedGroup, cfg.Tiers); err != nil {
-		// 与未连接区分：后台 best-effort 静默跳过，避免每轮巡检刷 error 日志；手动 apply 仍返回 400。
-		return domain.SchedulerApplyResult{}, ErrBadRequest(err.Error())
+		return out, BadRequest(err)
 	}
-	unassigned := strings.TrimSpace(cfg.UnassignedGroup)
-	tiers := domain.NormalizeSchedulerTiers(cfg.Tiers)
-	cards, err := s.app.Cards.ListCards(ctx)
+	bindings, err := s.app.Store.ListCostBindings(ctx)
 	if err != nil {
-		return domain.SchedulerApplyResult{}, err
-	}
-	var out domain.SchedulerApplyResult
-	poolCards := make([]domain.ModelCard, 0, len(cards))
-	for _, card := range cards {
-		if card.PoolEnabled {
-			poolCards = append(poolCards, card)
-		}
-	}
-	if len(poolCards) == 0 {
-		return out, nil
+		return out, err
 	}
 	channels, err := s.fetchSchedulerChannels(ctx, cfg, "")
 	if err != nil {
-		return domain.SchedulerApplyResult{}, err
+		return out, err
 	}
-	channelsByID := make(map[string]domain.SchedulerChannel, len(channels))
+	byID := make(map[string]domain.SchedulerChannel, len(channels))
 	for _, channel := range channels {
-		channelsByID[channel.ID] = channel
+		byID[channel.ID] = channel
 	}
-	costs := make(map[string]float64, len(poolCards))
-	for _, card := range poolCards {
-		channelID := strings.TrimSpace(card.SchedulerChannelID)
-		price, ok := s.cardPrice(ctx, card)
-		if _, found := channelsByID[channelID]; channelID != "" && found && ok {
-			costs[channelID] = price
+	costs := map[string]float64{}
+	for _, binding := range bindings {
+		binding = costBindingProjection(binding)
+		if binding.Enabled && binding.CostAvailable && binding.SchedulerChannelID != "" {
+			if _, ok := byID[binding.SchedulerChannelID]; ok {
+				costs[binding.SchedulerChannelID] = binding.EffectiveCost
+			}
 		}
 	}
 	priorities := domain.CostPriorities(costs)
-	managed := domain.ManagedGroups(tiers)
-	var changes []string
-	for _, card := range poolCards {
-		channelID := strings.TrimSpace(card.SchedulerChannelID)
-		price, ok := costs[channelID]
-		current, found := channelsByID[channelID]
-		priority, hasPriority := priorities[channelID]
-		if !ok || channelID == "" || !found || !hasPriority {
+	tiers := domain.NormalizeSchedulerTiers(cfg.Tiers)
+	managedGroups := domain.ManagedGroups(tiers)
+	for _, binding := range bindings {
+		binding = costBindingProjection(binding)
+		channel, found := byID[binding.SchedulerChannelID]
+		cost, hasCost := costs[binding.SchedulerChannelID]
+		priority, hasPriority := priorities[binding.SchedulerChannelID]
+		if !binding.Enabled || !binding.CostAvailable || binding.SchedulerChannelID == "" || !found || !hasCost || !hasPriority {
 			out.Skipped++
 			continue
 		}
-		basePriority := priority
-		if control, exists, controlErr := s.app.Store.TrafficControl(ctx, channelID); controlErr == nil && exists {
-			control.BasePriority = basePriority
-			control.UpdatedAt = time.Now().UTC()
-			if cfg.TrafficMode == domain.TrafficModeActive {
-				forceEnabled := false
-				if availability, found, _ := s.app.Store.ChannelAvailability(ctx, channelID); found && availability.Override == domain.OverrideForceEnable {
-					forceEnabled = availability.OverrideUntil == nil || time.Now().UTC().Before(*availability.OverrideUntil)
-				}
-				if !forceEnabled {
-					switch control.State {
-					case "warning":
-						priority -= 1000
-					case "degraded", "soft_blocked", "hard_blocked", "hard_recovering":
-						priority -= 2000
-					case "recovering":
-						if control.RecoveryStage >= 3 {
-							priority -= 1000
-						} else {
-							priority -= 2000
-						}
-					}
-				}
-			}
-			control.DesiredPriority = priority
-			_ = s.app.Store.SaveTrafficControl(ctx, control)
-		}
-		groups := domain.AssignedTargetGroups(tiers, managed, price, current.Group, unassigned)
-		if domain.SameGroups(domain.SplitGroups(current.Group), groups) && current.Priority == priority {
-			out.Unchanged++
-			continue
-		}
-		group := domain.JoinGroups(groups)
-		if err := s.setSchedulerChannelGroup(ctx, cfg, current, group, priority); err != nil {
-			if errors.Is(err, errControlPlaneExternalTakeover) || errors.Is(err, errControlPlaneOwnedByGGAPI) {
-				out.Skipped++
-				continue
-			}
-			return out, err
-		}
-		// new-api 对部分写入可能 success 但不生效；始终校验分组、优先级与原权重。
-		actual, found, err := s.schedulerChannel(ctx, cfg, channelID)
+		targetGroups := domain.AssignedTargetGroups(tiers, managedGroups, cost, channel.Group, cfg.UnassignedGroup)
+		ownership, exists, err := s.app.Store.CostFieldOwnership(ctx, domain.SchedulerProviderGGAPI, channel.ID)
 		if err != nil {
 			return out, err
 		}
-		if !found || !domain.SameGroups(domain.SplitGroups(actual.Group), groups) || actual.Priority != priority || actual.Weight != current.Weight {
+		currentGroups := domain.SplitGroups(channel.Group)
+		if exists && ownership.Managed && !ownership.ExternalTakeover && (!domain.SameGroups(currentGroups, ownership.RemoteGroups) || channel.Priority != ownership.RemotePriority) {
+			ownership.ExternalTakeover, ownership.Managed = true, false
+			ownership.LastReason, ownership.UpdatedAt = "GGAPI 分组或优先级发生外部修改", time.Now().UTC()
+			_ = s.app.Store.SaveCostFieldOwnership(ctx, ownership)
+		}
+		if exists && ownership.ExternalTakeover {
 			out.Skipped++
-			_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
-				Action:  "group_sync",
-				Status:  "error",
-				Message: fmt.Sprintf("%s: 写入分组 %q、优先级 %d 后校验失败（实际分组 %q、优先级 %d、权重 %d -> %d）", domain.FirstNonEmpty(current.Name, card.SchedulerChannelName, channelID), group, priority, domain.FirstNonEmpty(actual.Group, "-"), actual.Priority, current.Weight, actual.Weight),
-			})
 			continue
 		}
-		channelsByID[channelID] = actual
-		changes = append(changes, fmt.Sprintf("%s: 成本 %g，分组 %s -> %s，优先级 %d -> %d", domain.FirstNonEmpty(current.Name, card.SchedulerChannelName, channelID), price, domain.FirstNonEmpty(current.Group, "-"), group, current.Priority, priority))
+		if domain.SameGroups(currentGroups, targetGroups) && channel.Priority == priority {
+			out.Unchanged++
+			_ = s.app.Store.SaveCostFieldOwnership(ctx, domain.CostFieldOwnership{Provider: domain.SchedulerProviderGGAPI, ChannelID: channel.ID, ChannelName: channel.Name, RemoteGroups: currentGroups, RemotePriority: channel.Priority, RemoteWeight: int(channel.Weight), Managed: true, UpdatedAt: time.Now().UTC()})
+			continue
+		}
+		if err := s.writeGGAPICostFields(ctx, cfg, channel, domain.JoinGroups(targetGroups), priority); err != nil {
+			return out, err
+		}
+		actual, found, err := s.schedulerChannel(ctx, cfg, channel.ID)
+		if err != nil || !found {
+			if err == nil {
+				err = errors.New("GGAPI 写入后找不到渠道")
+			}
+			return out, err
+		}
+		if !domain.SameGroups(domain.SplitGroups(actual.Group), targetGroups) || actual.Priority != priority || actual.Weight != channel.Weight || actual.Status != channel.Status {
+			return out, errors.New("GGAPI 成本字段写入校验失败")
+		}
+		_ = s.app.Store.SaveCostFieldOwnership(ctx, domain.CostFieldOwnership{Provider: domain.SchedulerProviderGGAPI, ChannelID: actual.ID, ChannelName: actual.Name, RemoteGroups: domain.SplitGroups(actual.Group), RemotePriority: actual.Priority, RemoteWeight: int(actual.Weight), Managed: true, UpdatedAt: time.Now().UTC()})
 		out.Updated++
 	}
-	if out.Updated > 0 {
-		_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
-			Action:  "group_sync",
-			Status:  "success",
-			Message: schedulerGroupSyncMessage(out, changes),
-		})
-	}
+	s.logCostSync(ctx, domain.SchedulerProviderGGAPI, out)
 	return out, nil
 }
 
-func (s *SchedulerService) schedulerChannel(ctx context.Context, cfg domain.SchedulerConfig, channelID string) (domain.SchedulerChannel, bool, error) {
+func (s *SchedulerService) writeGGAPICostFields(ctx context.Context, cfg domain.SchedulerConfig, current domain.SchedulerChannel, group string, priority int64) error {
+	id, err := strconv.Atoi(strings.TrimSpace(current.ID))
+	if err != nil || id <= 0 {
+		return ErrBadRequest("invalid scheduler channel id")
+	}
+	var raw map[string]any
+	if err := s.schedulerJSON(ctx, cfg, http.MethodPut, "/api/channel/", map[string]any{"id": id, "group": group, "priority": priority}, &raw); err != nil {
+		return err
+	}
+	if ok, exists := raw["success"].(bool); exists && !ok {
+		return errors.New(schedulerMessage(raw))
+	}
+	return nil
+}
+
+func (s *SchedulerService) schedulerChannel(ctx context.Context, cfg domain.SchedulerConfig, id string) (domain.SchedulerChannel, bool, error) {
 	channels, err := s.fetchSchedulerChannels(ctx, cfg, "")
 	if err != nil {
 		return domain.SchedulerChannel{}, false, err
 	}
 	for _, channel := range channels {
-		if channel.ID == channelID {
+		if channel.ID == id {
 			return channel, true, nil
 		}
 	}
 	return domain.SchedulerChannel{}, false, nil
 }
 
-func schedulerGroupSyncMessage(out domain.SchedulerApplyResult, changes []string) string {
-	msg := fmt.Sprintf("成本调度：更新 %d 个，保持 %d 个，跳过 %d 个", out.Updated, out.Unchanged, out.Skipped)
-	if len(changes) == 0 {
-		return msg
+func (s *SchedulerService) logCostSync(ctx context.Context, provider string, out domain.SchedulerApplyResult) {
+	status := "success"
+	if out.Updated == 0 {
+		status = "skipped"
 	}
-	if len(changes) > 6 {
-		changes = append(changes[:6], fmt.Sprintf("还有 %d 个", len(changes)-6))
-	}
-	return msg + "；" + strings.Join(changes, "；")
+	_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{Provider: provider, Action: "group_sync", Status: status, Message: fmt.Sprintf("成本同步：更新 %d 个，未变更 %d 个，跳过 %d 个", out.Updated, out.Unchanged, out.Skipped)})
 }
 
 func (s *SchedulerService) syncSchedulerGroupsBestEffort(ctx context.Context) {
-	if _, err := s.ApplySchedulerGroups(ctx); err != nil && !errors.Is(err, errSchedulerNotConfigured) {
-		// 未配置 unassigned：功能未就绪，不刷调度日志；手动「应用成本调度」仍会返回错误提示。
-		if IsBadRequest(err) && strings.Contains(err.Error(), "未分配分组") {
-			return
-		}
-		_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
-			Action:  "group_sync",
-			Status:  "error",
-			Message: err.Error(),
-		})
+	_, err := s.ApplySchedulerGroups(ctx)
+	if err == nil {
+		s.recordCostSyncAlert(ctx, false, "成本同步已恢复")
+		return
 	}
+	if errors.Is(err, errSchedulerNotConfigured) || (IsBadRequest(err) && strings.Contains(err.Error(), "未分配分组")) {
+		return
+	}
+	provider := domain.SchedulerProviderGGAPI
+	if cfg, cfgErr := s.app.Store.SchedulerConfig(ctx); cfgErr == nil {
+		provider = cfg.Provider
+	}
+	_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{Provider: provider, Action: "group_sync", Status: "error", Message: err.Error()})
+	s.recordCostSyncAlert(ctx, true, "成本同步失败: "+err.Error())
 }
 
-func (s *SchedulerService) SetCardSchedulerChannelStatus(ctx context.Context, cardID string, status int) (domain.ModelCard, error) {
-	if status != 1 && status != 2 {
-		return domain.ModelCard{}, ErrBadRequest("status must be 1 or 2")
-	}
-	card, err := s.app.Cards.Card(ctx, cardID)
+func (s *SchedulerService) recordCostSyncAlert(ctx context.Context, failing bool, message string) {
+	const kind = "cost_sync"
+	prev, err := s.app.Store.AlertState(ctx, "", kind)
 	if err != nil {
-		return domain.ModelCard{}, err
+		return
 	}
-	if cfg, cfgErr := s.app.Store.SchedulerConfig(ctx); cfgErr == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
-		return domain.ModelCard{}, ErrBadRequest("AxonHub 状态仅由余额硬保护控制")
+	decision, send := domain.DecideAlert(time.Now(), kind, failing, message, prev)
+	if !send {
+		return
 	}
-	if !card.PoolEnabled {
-		return domain.ModelCard{}, ErrBadRequest("card is monitor-only")
+	severity, title := "warning", "成本同步失败"
+	if decision.Recover {
+		severity, title = "success", "成本同步已恢复"
 	}
-	if card.SchedulerChannelID == "" {
-		return domain.ModelCard{}, ErrBadRequest("scheduler channel required")
-	}
-	if s.availabilityManagedSchedulerCard(ctx, card) {
-		action := "hold_off"
-		if status == 1 {
-			action = "force_enable"
-		}
-		if _, err := s.AvailabilityAction(ctx, card.ID, action, 30); err != nil {
-			return domain.ModelCard{}, err
-		}
-		updated, err := s.app.Cards.Card(ctx, card.ID)
-		return updated.Public(), err
-	}
-	if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, status, domain.ControlSourceManual, schedulerManualMessage(status), card.SchedulerAutoDisabled); err != nil {
-		s.logSchedulerAction(ctx, card, schedulerAction(status), "error", err.Error())
-		return domain.ModelCard{}, err
-	}
-	if err := s.app.Cards.UpdateCardSchedulerAutoDisabled(ctx, card.ID, false); err != nil {
-		s.logSchedulerAction(ctx, card, schedulerAction(status), "error", err.Error())
-		return domain.ModelCard{}, err
-	}
-	card.SchedulerAutoDisabled = false
-	s.logSchedulerAction(ctx, card, schedulerAction(status), "success", schedulerManualMessage(status))
-	return card.Public(), nil
-}
-
-func (s *SchedulerService) availabilityManagedSchedulerCard(ctx context.Context, card domain.ModelCard) bool {
-	if !card.PoolEnabled || card.BaseURL != "" || card.UpstreamID == "" || card.SchedulerChannelID == "" {
-		return false
-	}
-	upstream, err := s.app.Store.Upstream(ctx, card.UpstreamID)
-	return err == nil && (upstream.Type == "newapi" || upstream.Type == "sub2api")
-}
-
-func (s *SchedulerService) applySchedulerAutomation(ctx context.Context, card domain.ModelCard, success bool, failures int) error {
-	if cfg, err := s.app.Store.SchedulerConfig(ctx); err == nil && cfg.Provider == domain.SchedulerProviderAxonHub {
-		return nil
-	}
-	if success {
-		if cfg, cfgErr := s.app.Store.SchedulerConfig(ctx); cfgErr == nil && cfg.TrafficMode == domain.TrafficModeActive {
-			if control, found, controlErr := s.app.Store.TrafficControl(ctx, card.SchedulerChannelID); controlErr == nil && found && control.ActualStatus == 2 {
-				if control.State == "soft_blocked" || control.State == "hard_blocked" || control.State == "recovering" || control.State == "hard_recovering" {
-					// 真实流量控制尚未确认恢复，旧的探测自动恢复不能抢先打开渠道。
-					return nil
-				}
-			}
-		}
-	}
-	muteAt := s.app.probeMuteFailureThreshold(ctx)
-	if domain.ShouldAutoDisableScheduler(card.PoolEnabled, card.SchedulerChannelID, success, failures, muteAt, card.SchedulerAutoDisabled) {
-		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 2, domain.ControlSourceProbe, fmt.Sprintf("连续探测失败 %d 次", muteAt), false); err != nil {
-			if errors.Is(err, errSchedulerNotConfigured) {
-				s.logSchedulerAction(ctx, card, "disable", "skipped", "调度器未配置")
-				return nil
-			}
-			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
-			return err
-		}
-		if err := s.app.Cards.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true); err != nil {
-			s.logSchedulerAction(ctx, card, "disable", "error", err.Error())
-			return err
-		}
-		s.logSchedulerAction(ctx, card, "disable", "success", fmt.Sprintf("连续失败 %d 次，已关闭调度器渠道", muteAt))
-		return nil
-	}
-	if success && card.SchedulerAutoDisabled && s.schedulerRestoreReady(ctx, card) {
-		if err := s.setSchedulerChannelStatus(ctx, card.SchedulerChannelID, 1, domain.ControlSourceProbe, "连续探测恢复确认", card.SchedulerAutoDisabled); err != nil {
-			if errors.Is(err, errSchedulerNotConfigured) {
-				s.logSchedulerAction(ctx, card, "restore", "skipped", "调度器未配置")
-				return nil
-			}
-			s.logSchedulerAction(ctx, card, "restore", "error", err.Error())
-			return err
-		}
-		if err := s.app.Cards.UpdateCardSchedulerAutoDisabled(ctx, card.ID, false); err != nil {
-			s.logSchedulerAction(ctx, card, "restore", "error", err.Error())
-			return err
-		}
-		s.logSchedulerAction(ctx, card, "restore", "success", "连续成功 3 次且已关闭至少 15 分钟，已恢复调度器渠道")
-		return nil
-	}
-	return nil
-}
-
-func schedulerAction(status int) string {
-	if status == 1 {
-		return "restore"
-	}
-	return "disable"
-}
-
-func schedulerManualMessage(status int) string {
-	if status == 1 {
-		return "手动启用调度器渠道"
-	}
-	return "手动关闭调度器渠道"
-}
-
-func (s *SchedulerService) logSchedulerAction(ctx context.Context, card domain.ModelCard, action, status, message string) {
-	_ = s.app.Store.CreateSchedulerLog(ctx, domain.SchedulerLog{
-		CardID:      card.ID,
-		CardName:    card.Name,
-		ChannelID:   card.SchedulerChannelID,
-		ChannelName: card.SchedulerChannelName,
-		Action:      action,
-		Status:      status,
-		Message:     message,
+	_, _ = s.app.Store.CreateOpsEvent(ctx, domain.OpsEvent{
+		Type: "cost_sync_failed", Severity: severity, Title: title, Message: message,
+		TargetType: "scheduler", Actions: []string{"check_cost_bindings"},
 	})
-	if status == "success" {
-		severity := "warning"
-		if action == "restore" {
-			severity = "success"
-		}
-		actions := []string{}
-		if action == "disable" {
-			actions = []string{"scheduler_restore"}
-		}
-		_, _ = s.app.Store.CreateOpsEvent(ctx, domain.OpsEvent{
-			Type: "scheduler_changed", Severity: severity, Title: "调度器状态变更", Message: card.Name + " " + message,
-			TargetType: "card", TargetID: card.ID, Actions: actions,
-		})
-	}
-}
-
-func (s *SchedulerService) schedulerRestoreReady(ctx context.Context, card domain.ModelCard) bool {
-	// 副作用留在 app：补齐缺失的 disabled-at 时间戳。
-	if domain.NeedsSchedulerRestoreTimestamp(card.SchedulerAutoDisabledAt) {
-		now := time.Now().UTC()
-		_ = s.app.Cards.UpdateCardSchedulerAutoDisabled(ctx, card.ID, true)
-		card.SchedulerAutoDisabledAt = &now
-		return false
-	}
-	probes, err := s.app.Store.RecentProbesForCard(ctx, card.ID, domain.SchedulerRestoreSuccessCount)
+	rules, err := s.app.Store.NotificationRules(ctx)
 	if err != nil {
-		return false
+		return
 	}
-	return domain.SchedulerRestoreReady(card.SchedulerAutoDisabledAt, probes, time.Now())
+	sent := false
+	if domain.ShouldNotify(rules, "cost_sync_failed", decision.Recover) {
+		sent = s.app.Notify.Send(ctx, message) == nil
+	}
+	_ = s.app.Store.SaveAlert(ctx, "", decision, sent)
 }
 
-func (s *SchedulerService) cardPrice(ctx context.Context, card domain.ModelCard) (float64, bool) {
-	if card.BaseURL != "" {
-		price, err := strconv.ParseFloat(strings.TrimSpace(card.ManualCostRatio), 64)
-		if err != nil || price < 0 || math.IsNaN(price) || math.IsInf(price, 0) {
-			return 0, false
-		}
-		return price, true
-	}
-	if card.KeyID == "" {
-		return 0, false
-	}
-	key, err := s.app.Store.Key(ctx, card.KeyID)
-	if err != nil {
-		return 0, false
-	}
-	price, err := strconv.ParseFloat(strings.TrimSpace(key.GroupRatio), 64)
-	if err != nil {
-		return 0, false
-	}
-	if card.UpstreamID != "" {
-		if u, err := s.app.Store.Upstream(ctx, card.UpstreamID); err == nil {
-			price *= domain.BalanceRate(u)
-		}
-	}
-	return price, true
+func schedulerConfigured(cfg domain.SchedulerConfig) bool {
+	return strings.TrimSpace(cfg.BaseURL) != "" && strings.TrimSpace(cfg.UserID) != "" && strings.TrimSpace(cfg.AccessToken) != ""
 }
 
-func (s *SchedulerService) setSchedulerChannelStatus(ctx context.Context, channelID string, status int, source, reason string, confirmedRestore bool) error {
-	return s.coordinateSchedulerStatus(ctx, channelID, status, source, reason, confirmedRestore)
-}
-
-func (s *SchedulerService) clearSchedulerChannelAffinityCache(ctx context.Context, cfg domain.SchedulerConfig) error {
-	var raw map[string]any
-	if err := s.schedulerJSON(ctx, cfg, http.MethodDelete, "/api/option/channel_affinity_cache?all=true", nil, &raw); err != nil {
-		return err
-	}
-	if ok, exists := raw["success"].(bool); !exists || !ok {
-		return errors.New(schedulerMessage(raw))
-	}
-	return nil
-}
-
-func (s *SchedulerService) setSchedulerChannelGroup(ctx context.Context, cfg domain.SchedulerConfig, current domain.SchedulerChannel, group string, priority int64) error {
-	return s.coordinateSchedulerFields(ctx, cfg, current, group, priority, current.Weight, false, domain.ControlSourceCost, "成本分组基线")
-}
-
-func (s *SchedulerService) schedulerJSON(ctx context.Context, cfg domain.SchedulerConfig, method, path string, body any, out any) error {
-	var r io.Reader
+func (s *SchedulerService) schedulerJSON(ctx context.Context, cfg domain.SchedulerConfig, method, path string, body, out any) error {
+	var reader io.Reader
 	if body != nil {
-		b, err := json.Marshal(body)
+		payload, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		r = bytes.NewReader(b)
+		reader = bytes.NewReader(payload)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, joinSchedulerURL(cfg.BaseURL, path), r)
+	req, err := http.NewRequestWithContext(ctx, method, joinSchedulerURL(cfg.BaseURL, path), reader)
 	if err != nil {
 		return err
 	}
@@ -690,17 +439,14 @@ func (s *SchedulerService) schedulerJSON(ctx context.Context, cfg domain.Schedul
 		return err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("调度器 HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return fmt.Errorf("调度器 HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
-	if len(b) == 0 || out == nil {
+	if len(payload) == 0 || out == nil {
 		return nil
 	}
-	if err := json.Unmarshal(b, out); err != nil {
-		return err
-	}
-	return nil
+	return json.Unmarshal(payload, out)
 }
 
 func joinSchedulerURL(baseURL, path string) string {
@@ -709,8 +455,8 @@ func joinSchedulerURL(baseURL, path string) string {
 
 func schedulerMessage(raw map[string]any) string {
 	for _, key := range []string{"message", "error", "msg"} {
-		if v := strings.TrimSpace(fmt.Sprint(raw[key])); v != "" && v != "<nil>" {
-			return v
+		if value := strings.TrimSpace(fmt.Sprint(raw[key])); value != "" && value != "<nil>" {
+			return value
 		}
 	}
 	return "调度器返回失败"
@@ -727,19 +473,9 @@ func schedulerChannels(raw map[string]any) []domain.SchedulerChannel {
 		if !ok {
 			continue
 		}
-		ch := domain.SchedulerChannel{
-			ID:       schedulerString(firstScheduler(m, "id")),
-			Name:     schedulerString(firstScheduler(m, "name", "channel_name")),
-			Status:   schedulerInt(firstScheduler(m, "status")),
-			Priority: int64(schedulerInt(firstScheduler(m, "priority"))),
-			Weight:   schedulerUint(firstScheduler(m, "weight")),
-			Tag:      schedulerString(firstScheduler(m, "tag")),
-			Type:     schedulerString(firstScheduler(m, "type")),
-			Group:    schedulerString(firstScheduler(m, "group")),
-			Models:   schedulerStrings(firstScheduler(m, "models")),
-		}
-		if ch.ID != "" {
-			out = append(out, ch)
+		channel := domain.SchedulerChannel{ID: schedulerString(firstScheduler(m, "id")), Name: schedulerString(firstScheduler(m, "name", "channel_name")), Status: schedulerInt(firstScheduler(m, "status")), Priority: int64(schedulerInt(firstScheduler(m, "priority"))), Weight: schedulerUint(firstScheduler(m, "weight")), Tag: schedulerString(firstScheduler(m, "tag")), Type: schedulerString(firstScheduler(m, "type")), Group: schedulerString(firstScheduler(m, "group")), Models: schedulerStrings(firstScheduler(m, "models"))}
+		if channel.ID != "" {
+			out = append(out, channel)
 		}
 	}
 	return out
@@ -748,8 +484,8 @@ func schedulerChannels(raw map[string]any) []domain.SchedulerChannel {
 func schedulerGroups(raw map[string]any) []domain.SchedulerGroup {
 	data := firstScheduler(raw, "data", "groups", "items")
 	seen := map[string]domain.SchedulerGroup{}
-	if m, ok := data.(map[string]any); ok {
-		for name, value := range m {
+	if values, ok := data.(map[string]any); ok {
+		for name, value := range values {
 			group := schedulerGroup(name, value)
 			if group.Name != "" {
 				seen[group.Name] = group
@@ -772,11 +508,7 @@ func schedulerGroups(raw map[string]any) []domain.SchedulerGroup {
 
 func schedulerGroup(defaultName string, value any) domain.SchedulerGroup {
 	m, _ := value.(map[string]any)
-	group := domain.SchedulerGroup{
-		Name:        schedulerString(firstScheduler(m, "name", "group", "group_name", "groupName", "id", "group_id")),
-		Ratio:       schedulerRatioString(firstScheduler(m, "rate_multiplier", "rateMultiplier", "ratio", "group_ratio", "groupRatio")),
-		Description: schedulerString(firstScheduler(m, "description", "desc", "remark", "memo", "note")),
-	}
+	group := domain.SchedulerGroup{Name: schedulerString(firstScheduler(m, "name", "group", "group_name", "groupName", "id", "group_id")), Ratio: schedulerRatioString(firstScheduler(m, "rate_multiplier", "rateMultiplier", "ratio", "group_ratio", "groupRatio")), Description: schedulerString(firstScheduler(m, "description", "desc", "remark", "memo", "note"))}
 	if group.Name == "" {
 		group.Name = strings.TrimSpace(defaultName)
 	}
@@ -789,89 +521,72 @@ func schedulerGroup(defaultName string, value any) domain.SchedulerGroup {
 	return group
 }
 
-func schedulerArray(v any) []any {
-	switch x := v.(type) {
+func schedulerArray(value any) []any {
+	switch typed := value.(type) {
 	case []any:
-		return x
+		return typed
 	case map[string]any:
 		for _, key := range []string{"items", "channels", "data"} {
-			if a, ok := x[key].([]any); ok {
-				return a
+			if out, ok := typed[key].([]any); ok {
+				return out
 			}
 		}
 	}
 	return nil
 }
 
-func firstScheduler(m map[string]any, keys ...string) any {
+func firstScheduler(values map[string]any, keys ...string) any {
 	for _, key := range keys {
-		if v, ok := m[key]; ok {
-			return v
+		if value, ok := values[key]; ok {
+			return value
 		}
 	}
 	return nil
 }
 
-func schedulerString(v any) string {
-	if v == nil {
+func schedulerString(value any) string {
+	if value == nil {
 		return ""
 	}
-	switch x := v.(type) {
-	case string:
-		return strings.TrimSpace(x)
-	case float64:
-		return strconv.FormatInt(int64(x), 10)
-	case int:
-		return strconv.Itoa(x)
-	default:
-		return strings.TrimSpace(fmt.Sprint(v))
-	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
-func schedulerRatioString(v any) string {
-	switch x := v.(type) {
-	case string:
-		return strings.TrimSuffix(strings.TrimSpace(x), "x")
+func schedulerRatioString(value any) string {
+	if value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
 	case float64:
-		return strconv.FormatFloat(x, 'f', -1, 64)
-	case int:
-		return strconv.Itoa(x)
+		return strconv.FormatFloat(typed, 'f', -1, 64)
 	case json.Number:
-		return x.String()
+		return typed.String()
 	default:
-		return ""
+		return strings.TrimSpace(fmt.Sprint(value))
 	}
 }
 
-func schedulerInt(v any) int {
-	switch x := v.(type) {
-	case float64:
-		return int(x)
-	case int:
-		return x
-	case string:
-		n, _ := strconv.Atoi(strings.TrimSpace(x))
-		return n
-	default:
-		return 0
-	}
+func schedulerInt(value any) int {
+	out, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value)))
+	return out
+}
+func schedulerUint(value any) uint {
+	out, _ := strconv.ParseUint(strings.TrimSpace(fmt.Sprint(value)), 10, 64)
+	return uint(out)
 }
 
-func schedulerUint(v any) uint {
-	n := schedulerInt(v)
-	if n < 0 {
-		return 0
-	}
-	return uint(n)
-}
-
-func schedulerStrings(v any) []string {
-	items := schedulerArray(v)
-	out := make([]string, 0, len(items))
-	for _, item := range items {
-		if s := schedulerString(item); s != "" {
-			out = append(out, s)
+func schedulerStrings(value any) []string {
+	var out []string
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			if value := strings.TrimSpace(fmt.Sprint(item)); value != "" {
+				out = append(out, value)
+			}
 		}
+	case []string:
+		out = append(out, typed...)
+	case string:
+		_ = json.Unmarshal([]byte(typed), &out)
 	}
 	return out
 }

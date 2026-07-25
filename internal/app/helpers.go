@@ -59,22 +59,6 @@ func (s *Service) alertFailureThreshold(ctx context.Context) int {
 	return domain.EffectiveFailureThreshold(rules)
 }
 
-func (s *Service) probeMuteFailureThreshold(ctx context.Context) int {
-	rules, err := s.Store.NotificationRules(ctx)
-	if err != nil {
-		return domain.EffectiveMuteThreshold(domain.NotificationRules{})
-	}
-	return domain.EffectiveMuteThreshold(rules)
-}
-
-func (s *Service) probeInternalRetryPolicy(ctx context.Context) (retries int, interval time.Duration) {
-	rules, err := s.Store.NotificationRules(ctx)
-	if err != nil {
-		return domain.EffectiveInternalRetry(domain.NotificationRules{})
-	}
-	return domain.EffectiveInternalRetry(rules)
-}
-
 func (s *Service) sendTelegram(ctx context.Context, message string) error {
 	cfg, err := s.Store.Settings(ctx)
 	if err != nil {
@@ -117,31 +101,6 @@ func toMonitorUpstream(u domain.Upstream) monitor.Upstream {
 		AccessToken: u.AccessToken, Email: u.Email, Password: u.Password, Sub2APIAccessToken: u.Sub2APIAccessToken,
 		Sub2APIRefreshToken: u.Sub2APIRefreshToken, LowBalanceThreshold: u.LowBalanceThreshold, FailureCount: u.FailureCount,
 	}
-}
-
-func windowSince(window string) (time.Time, string, time.Duration) {
-	windows := map[string]time.Duration{
-		"1h": time.Hour, "3h": 3 * time.Hour, "5h": 5 * time.Hour, "1d": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "15d": 15 * 24 * time.Hour,
-	}
-	if _, ok := windows[window]; !ok {
-		window = "1h"
-	}
-	duration := windows[window]
-	return time.Now().UTC().Add(-duration), window, duration
-}
-
-func percent(part, total int) float64 {
-	if total == 0 {
-		return 0
-	}
-	return float64(part) * 100 / float64(total)
-}
-
-func avg(total, count int) int {
-	if count == 0 {
-		return 0
-	}
-	return total / count
 }
 
 func reverse[T any](items []T) {

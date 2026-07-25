@@ -24,15 +24,10 @@ import type {
 } from '@/types'
 
 const eventLabels: Record<string, string> = {
-  probe_failed: '探测失败',
-  quota_exhausted: '余额不足/成本池不可用',
-  probe_internal_error: '本地探测错误',
   balance_low: '余额低',
   credential_invalid: '凭据失效',
   balance_query_failed: '额度查询失败',
-  scheduler_changed: '调度器变更',
-  availability_changed: '渠道可用性变更',
-  availability_action_failed: '渠道动作失败',
+  cost_sync_failed: '成本同步失败',
   balance_runway_low: '余额预计耗尽',
   cliproxy_error: '号池异常',
 }
@@ -127,8 +122,8 @@ function EventsTab() {
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={() => read.mutate(eventGroupFilter(group))} disabled={read.isPending}><Check className="size-4" />标为已读</Button>
                   <Button variant="outline" size="sm" onClick={() => ack.mutate(eventGroupFilter(group))} disabled={ack.isPending}><ShieldCheck className="size-4" />确认</Button>
-                  {group.target_type === 'upstream' && ['availability_changed', 'availability_action_failed', 'balance_runway_low'].includes(group.type) && (
-                    <Button asChild variant="outline" size="sm"><a href={`/admin/scheduler?upstream_id=${encodeURIComponent(group.target_id ?? '')}`}>查看渠道</a></Button>
+                  {group.target_type === 'upstream' && group.type === 'balance_runway_low' && (
+                    <Button asChild variant="outline" size="sm"><a href={`/admin/costs?upstream_id=${encodeURIComponent(group.target_id ?? '')}`}>查看成本绑定</a></Button>
                   )}
                 </div>
               </div>
@@ -274,12 +269,9 @@ function NotificationsTab() {
     onError: fb.fail,
   })
   if (!data) return <ShellLoading />
-  const muteThreshold = data.mute_failure_threshold > 0 ? data.mute_failure_threshold : 4
-  const internalRetries = data.internal_retry_count > 0 ? data.internal_retry_count : 1
-  const retryIntervalMs = data.internal_retry_interval_ms >= 0 ? data.internal_retry_interval_ms : 0
   const update = (patch: Partial<NotificationRules>) => {
     fb.clear()
-    setDraft({ ...data, mute_failure_threshold: muteThreshold, internal_retry_count: internalRetries, internal_retry_interval_ms: retryIntervalMs, ...patch })
+    setDraft({ ...data, ...patch })
   }
   const feedbackError = save.isError || test.isError
   return (
@@ -296,17 +288,6 @@ function NotificationsTab() {
           </Field>
           <Field label="告警失败次数阈值">
             <Input type="number" min={1} value={data.failure_threshold} onChange={(event) => update({ failure_threshold: Number(event.target.value) })} />
-          </Field>
-          <Field label="静默失败次数">
-            <Input type="number" min={1} value={muteThreshold} onChange={(event) => update({ mute_failure_threshold: Number(event.target.value) })} />
-            <p className="text-xs text-muted-foreground">连续失败达到该次数后，重复失败通知会进入静默，直到状态恢复。</p>
-          </Field>
-          <Field label="本地错误内部重试次数">
-            <Input type="number" min={1} max={5} value={internalRetries} onChange={(event) => update({ internal_retry_count: Number(event.target.value) })} />
-            <p className="text-xs text-muted-foreground">仅对本地/内部探测错误重试；上游业务失败不重试。默认 1。</p>
-          </Field>
-          <Field label="内部重试间隔 (ms)">
-            <Input type="number" min={0} max={30000} step={100} value={retryIntervalMs} onChange={(event) => update({ internal_retry_interval_ms: Number(event.target.value) })} />
           </Field>
           <Field label="恢复通知">
             <Select value={data.recovery ? 'true' : 'false'} onValueChange={(value) => update({ recovery: value === 'true' })}>

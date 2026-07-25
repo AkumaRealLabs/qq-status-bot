@@ -53,10 +53,10 @@ func (s *Store) MigratePocketBase(ctx context.Context, oldPath string) error {
 	if err := copyPBTable(ctx, oldDB, s, "upstream_keys", "api_keys", map[string]string{"upstream": "upstream_id", "group": "group_name"}); err != nil {
 		return err
 	}
-	if err := copyPBTable(ctx, oldDB, s, "model_cards", "model_cards", map[string]string{"upstream": "upstream_id", "key": "key_id"}); err != nil {
+	if err := copyPBCostBindings(ctx, oldDB, s); err != nil {
 		return err
 	}
-	for _, table := range []string{"balance_snapshots", "probe_runs", "alert_events"} {
+	for _, table := range []string{"balance_snapshots", "alert_events"} {
 		if err := copyPBTable(ctx, oldDB, s, table, table, map[string]string{"upstream": "upstream_id", "card": "card_id"}); err != nil {
 			return err
 		}
@@ -100,10 +100,10 @@ func (s *Store) migratePocketBaseSQLite(ctx context.Context, oldPath, source str
 	if err := copyPBTableSQLite(ctx, conn, oldDB, "upstream_keys", "api_keys", map[string]string{"upstream": "upstream_id", "group": "group_name"}); err != nil {
 		return err
 	}
-	if err := copyPBTableSQLite(ctx, conn, oldDB, "model_cards", "model_cards", map[string]string{"upstream": "upstream_id", "key": "key_id"}); err != nil {
+	if err := copyPBCostBindingsSQLite(ctx, conn, oldDB); err != nil {
 		return err
 	}
-	for _, table := range []string{"balance_snapshots", "probe_runs", "alert_events"} {
+	for _, table := range []string{"balance_snapshots", "alert_events"} {
 		if err := copyPBTableSQLite(ctx, conn, oldDB, table, table, map[string]string{"upstream": "upstream_id", "card": "card_id"}); err != nil {
 			return err
 		}
@@ -173,6 +173,23 @@ func quoteSQLString(s string) string {
 }
 
 func copyPBTableSQLite(ctx context.Context, conn *sql.Conn, oldDB *sql.DB, sourceTable, dstTable string, aliases map[string]string) error {
+	return copyPBTableSQLiteWhere(ctx, conn, oldDB, sourceTable, dstTable, aliases, "")
+}
+
+func copyPBCostBindingsSQLite(ctx context.Context, conn *sql.Conn, oldDB *sql.DB) error {
+	if !tableExists(ctx, oldDB, "model_cards") {
+		return nil
+	}
+	where := ""
+	if cols, err := tableColumns(ctx, oldDB, "model_cards"); err != nil {
+		return err
+	} else if cols["pool_enabled"] {
+		where = ` WHERE COALESCE(` + quoteIdent("pool_enabled") + `, 1)=1`
+	}
+	return copyPBTableSQLiteWhere(ctx, conn, oldDB, "model_cards", "scheduler_cost_bindings", map[string]string{"upstream": "upstream_id", "key": "key_id"}, where)
+}
+
+func copyPBTableSQLiteWhere(ctx context.Context, conn *sql.Conn, oldDB *sql.DB, sourceTable, dstTable string, aliases map[string]string, where string) error {
 	if !tableExists(ctx, oldDB, sourceTable) {
 		return nil
 	}
@@ -205,13 +222,30 @@ func copyPBTableSQLite(ctx context.Context, conn *sql.Conn, oldDB *sql.DB, sourc
 		return nil
 	}
 	_, err = conn.ExecContext(ctx, fmt.Sprintf(
-		`INSERT OR IGNORE INTO %s (%s) SELECT %s FROM pb.%s`,
-		quoteIdent(dstTable), quoteIdents(insertCols), strings.Join(selectExprs, ","), quoteIdent(sourceTable),
+		`INSERT OR IGNORE INTO %s (%s) SELECT %s FROM pb.%s%s`,
+		quoteIdent(dstTable), quoteIdents(insertCols), strings.Join(selectExprs, ","), quoteIdent(sourceTable), where,
 	))
 	return err
 }
 
 func copyPBTable(ctx context.Context, oldDB *sql.DB, dst *Store, sourceTable, dstTable string, aliases map[string]string) error {
+	return copyPBTableWhere(ctx, oldDB, dst, sourceTable, dstTable, aliases, "")
+}
+
+func copyPBCostBindings(ctx context.Context, oldDB *sql.DB, dst *Store) error {
+	if !tableExists(ctx, oldDB, "model_cards") {
+		return nil
+	}
+	where := ""
+	if cols, err := tableColumns(ctx, oldDB, "model_cards"); err != nil {
+		return err
+	} else if cols["pool_enabled"] {
+		where = ` WHERE COALESCE(` + quoteIdent("pool_enabled") + `, 1)=1`
+	}
+	return copyPBTableWhere(ctx, oldDB, dst, "model_cards", "scheduler_cost_bindings", map[string]string{"upstream": "upstream_id", "key": "key_id"}, where)
+}
+
+func copyPBTableWhere(ctx context.Context, oldDB *sql.DB, dst *Store, sourceTable, dstTable string, aliases map[string]string, where string) error {
 	if !tableExists(ctx, oldDB, sourceTable) {
 		return nil
 	}
@@ -248,7 +282,7 @@ func copyPBTable(ctx context.Context, oldDB *sql.DB, dst *Store, sourceTable, ds
 		realSelectCols = append(realSelectCols, col)
 		quotedSelectCols = append(quotedSelectCols, quoteIdent(col))
 	}
-	rows, err := oldDB.QueryContext(ctx, `SELECT `+strings.Join(quotedSelectCols, ",")+` FROM `+quoteIdent(sourceTable))
+	rows, err := oldDB.QueryContext(ctx, `SELECT `+strings.Join(quotedSelectCols, ",")+` FROM `+quoteIdent(sourceTable)+where)
 	if err != nil {
 		return err
 	}
@@ -311,8 +345,8 @@ func migratePBSettingsSQLite(ctx context.Context, conn *sql.Conn, oldDB *sql.DB)
 			minutes = n
 		}
 	}
-	_, err = conn.ExecContext(ctx, `UPDATE settings SET telegram_bot_token=?, telegram_chat_id=?, check_interval_minutes=?, probe_model=? WHERE id='default'`,
-		token, chat, domain.NormalizeCheckInterval(minutes), domain.ProbeModel)
+	_, err = conn.ExecContext(ctx, `UPDATE settings SET telegram_bot_token=?, telegram_chat_id=?, check_interval_minutes=? WHERE id='default'`,
+		token, chat, domain.NormalizeCheckInterval(minutes))
 	return err
 }
 
@@ -348,7 +382,7 @@ func migratePBSettings(ctx context.Context, oldDB *sql.DB, dst *Store) error {
 			minutes = n
 		}
 	}
-	_, err = dst.exec(ctx, `UPDATE settings SET telegram_bot_token=?, telegram_chat_id=?, check_interval_minutes=?, probe_model=? WHERE id='default'`,
-		token, chat, domain.NormalizeCheckInterval(minutes), domain.ProbeModel)
+	_, err = dst.exec(ctx, `UPDATE settings SET telegram_bot_token=?, telegram_chat_id=?, check_interval_minutes=? WHERE id='default'`,
+		token, chat, domain.NormalizeCheckInterval(minutes))
 	return err
 }

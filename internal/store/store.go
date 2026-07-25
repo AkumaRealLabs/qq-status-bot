@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"ai-upstream-monitor/internal/domain"
-
 	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 )
@@ -149,13 +147,6 @@ func formatOptionalTime(v *time.Time) string {
 		return ""
 	}
 	return v.UTC().Format(time.RFC3339Nano)
-}
-
-func cardAutoDisabledAt(c domain.ModelCard) string {
-	if !c.SchedulerAutoDisabled {
-		return ""
-	}
-	return formatOptionalTime(c.SchedulerAutoDisabledAt)
 }
 
 func boolInt(v bool) int {

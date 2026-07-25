@@ -87,18 +87,7 @@ type RevenueOrder struct {
 	PaidAt      time.Time `json:"paid_at"`
 }
 
-type ProbeResult struct {
-	HTTPStatus int
-	Latency    time.Duration
-	Status     string
-	Input      string
-	Output     string
-	Success    bool
-	Error      string
-}
-
 type CheckResult struct {
 	Balance Balance
 	Keys    []APIKey
-	Probe   ProbeResult
 }

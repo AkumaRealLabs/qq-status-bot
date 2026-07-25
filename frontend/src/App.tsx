@@ -1,15 +1,17 @@
 import { lazy, Suspense } from 'react'
 import { ShellLoading } from '@/components/layout'
 
-const PublicApp = lazy(() => import('@/PublicApp'))
 const AdminApp = lazy(() => import('@/AdminApp'))
 
-function isAdminPath(pathname: string) {
-  return pathname === '/admin' || pathname.startsWith('/admin/')
+function adminPath(pathname: string) {
+  if (pathname === '/scheduler' || pathname === '/admin/scheduler') return '/admin/costs'
+  if (pathname === '/' || pathname === '/admin' || pathname === '/status' || pathname === '/admin/status') return '/admin/balances'
+  if (pathname.startsWith('/admin/')) return pathname
+  return '/admin/balances'
 }
 
-/** 薄路由：公开 / 与管理 /admin/* 加载完全独立的应用图。 */
 export default function App() {
-  const admin = isAdminPath(location.pathname)
-  return <Suspense fallback={<ShellLoading />}>{admin ? <AdminApp /> : <PublicApp />}</Suspense>
+  const path = adminPath(location.pathname)
+  if (path !== location.pathname) window.history.replaceState(null, '', path)
+  return <Suspense fallback={<ShellLoading />}><AdminApp /></Suspense>
 }

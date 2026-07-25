@@ -6,42 +6,29 @@ import (
 	"time"
 )
 
-const ProbeModel = "gpt-5.6-sol"
-
-// NormalizeProbeModel：空模型回退到默认探测模型。
-func NormalizeProbeModel(model string) string {
-	if model = strings.TrimSpace(model); model != "" {
-		return model
-	}
-	return ProbeModel
-}
-
 type Upstream struct {
-	ID                      string    `json:"id"`
-	Name                    string    `json:"name"`
-	Type                    string    `json:"type"`
-	BaseURL                 string    `json:"base_url"`
-	Enabled                 bool      `json:"enabled"`
-	UserID                  string    `json:"user_id,omitempty"`
-	AccessToken             string    `json:"access_token,omitempty"`
-	AccessTokenSet          bool      `json:"access_token_set,omitempty"`
-	Email                   string    `json:"email,omitempty"`
-	Password                string    `json:"password,omitempty"`
-	PasswordSet             bool      `json:"password_set,omitempty"`
-	Sub2APIAccessToken      string    `json:"sub2api_access_token,omitempty"`
-	Sub2APIAccessTokenSet   bool      `json:"sub2api_access_token_set,omitempty"`
-	Sub2APIRefreshToken     string    `json:"sub2api_refresh_token,omitempty"`
-	Sub2APIRefreshTokenSet  bool      `json:"sub2api_refresh_token_set,omitempty"`
-	BalanceRate             float64   `json:"balance_rate"`
-	LowBalanceThreshold     float64   `json:"low_balance_threshold"`
-	BalanceGuardMode        string    `json:"balance_guard_mode"`
-	BalanceCloseThreshold   float64   `json:"balance_close_threshold"`
-	BalanceRecoverThreshold float64   `json:"balance_recover_threshold"`
-	RunwayWarningHours      float64   `json:"runway_warning_hours"`
-	LastError               string    `json:"last_error"`
-	FailureCount            int       `json:"failure_count"`
-	CreatedAt               time.Time `json:"created_at"`
-	UpdatedAt               time.Time `json:"updated_at"`
+	ID                     string    `json:"id"`
+	Name                   string    `json:"name"`
+	Type                   string    `json:"type"`
+	BaseURL                string    `json:"base_url"`
+	Enabled                bool      `json:"enabled"`
+	UserID                 string    `json:"user_id,omitempty"`
+	AccessToken            string    `json:"access_token,omitempty"`
+	AccessTokenSet         bool      `json:"access_token_set,omitempty"`
+	Email                  string    `json:"email,omitempty"`
+	Password               string    `json:"password,omitempty"`
+	PasswordSet            bool      `json:"password_set,omitempty"`
+	Sub2APIAccessToken     string    `json:"sub2api_access_token,omitempty"`
+	Sub2APIAccessTokenSet  bool      `json:"sub2api_access_token_set,omitempty"`
+	Sub2APIRefreshToken    string    `json:"sub2api_refresh_token,omitempty"`
+	Sub2APIRefreshTokenSet bool      `json:"sub2api_refresh_token_set,omitempty"`
+	BalanceRate            float64   `json:"balance_rate"`
+	LowBalanceThreshold    float64   `json:"low_balance_threshold"`
+	RunwayWarningHours     float64   `json:"runway_warning_hours"`
+	LastError              string    `json:"last_error"`
+	FailureCount           int       `json:"failure_count"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 type APIKey struct {
@@ -59,64 +46,6 @@ type APIKey struct {
 	UsedQuota   float64   `json:"used_quota"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-type ModelCard struct {
-	ID                      string     `json:"id"`
-	Name                    string     `json:"name"`
-	BaseURL                 string     `json:"base_url,omitempty"`
-	APIKey                  string     `json:"api_key,omitempty"`
-	APIKeySet               bool       `json:"api_key_set,omitempty"`
-	UpstreamID              string     `json:"upstream_id,omitempty"`
-	UpstreamName            string     `json:"upstream_name,omitempty"`
-	Type                    string     `json:"type,omitempty"`
-	KeyID                   string     `json:"key_id,omitempty"`
-	KeyName                 string     `json:"key_name,omitempty"`
-	KeyGroup                string     `json:"key_group,omitempty"`
-	KeyRatio                string     `json:"key_group_ratio,omitempty"`
-	EffectiveRatio          string     `json:"effective_ratio,omitempty"`
-	Model                   string     `json:"model"`
-	DisplayGroup            string     `json:"display_group"`
-	PoolEnabled             bool       `json:"pool_enabled"`
-	PoolEnabledSet          bool       `json:"-"`
-	ManualCostRatio         string     `json:"manual_cost_ratio,omitempty"`
-	SchedulerGroup          string     `json:"scheduler_group,omitempty"`
-	SchedulerChannelID      string     `json:"scheduler_channel_id,omitempty"`
-	SchedulerChannelName    string     `json:"scheduler_channel_name,omitempty"`
-	AxonHubChannelID        string     `json:"axonhub_channel_id,omitempty"`
-	AxonHubChannelName      string     `json:"axonhub_channel_name,omitempty"`
-	SchedulerAutoDisabled   bool       `json:"scheduler_auto_disabled"`
-	SchedulerAutoDisabledAt *time.Time `json:"scheduler_auto_disabled_at,omitempty"`
-	ProbeMuted              bool       `json:"probe_muted"`
-	Enabled                 bool       `json:"enabled"`
-	PublicEnabled           bool       `json:"public_enabled"`
-	SortOrder               int        `json:"sort_order"`
-	LastError               string     `json:"last_error"`
-	FailureCount            int        `json:"failure_count"`
-	History                 []ProbeRun `json:"history,omitempty"`
-	CreatedAt               time.Time  `json:"created_at"`
-	UpdatedAt               time.Time  `json:"updated_at"`
-}
-
-type PublicModelCard struct {
-	Name            string           `json:"name"`
-	DisplayGroup    string           `json:"display_group"`
-	ProbeMuted      bool             `json:"probe_muted"`
-	AutoProbePaused bool             `json:"auto_probe_paused"`
-	LastError       string           `json:"last_error,omitempty"`
-	History         []PublicProbeRun `json:"history,omitempty"`
-}
-
-// PublicMonitorStatus 是公开状态页及外部只读查询共用的状态投影。
-// 字段名保持与既有 /api/public/monitor/status 响应一致。
-type PublicMonitorStatus struct {
-	Window      string            `json:"window"`
-	Rows        []PublicModelCard `json:"rows"`
-	Requests    int               `json:"requests"`
-	Success     int               `json:"success"`
-	Failed      int               `json:"failed"`
-	SuccessRate float64           `json:"success_rate"`
-	AvgLatency  int               `json:"avg_latency"`
 }
 
 // OneBotStatus 是后台连通性检查的最小公开结果。
@@ -137,31 +66,18 @@ type BalanceSnapshot struct {
 	LatencyMS  int       `json:"latency_ms"`
 }
 
-type ProbeRun struct {
-	ID         string    `json:"id,omitempty"`
-	UpstreamID string    `json:"upstream_id,omitempty"`
-	CardID     string    `json:"card_id,omitempty"`
-	CheckedAt  time.Time `json:"checked_at"`
-	Model      string    `json:"model"`
-	Input      string    `json:"input,omitempty"`
-	Status     string    `json:"status"`
-	Output     string    `json:"output,omitempty"`
-	HTTPStatus int       `json:"http_status"`
-	LatencyMS  int       `json:"latency_ms"`
-	Success    bool      `json:"success"`
-	Error      string    `json:"error"`
-	Purpose    string    `json:"purpose,omitempty"`
+type BalanceRefreshItem struct {
+	UpstreamID   string `json:"upstream_id"`
+	UpstreamName string `json:"upstream_name"`
+	Success      bool   `json:"success"`
+	Error        string `json:"error,omitempty"`
 }
 
-type PublicProbeRun struct {
-	CheckedAt  time.Time `json:"checked_at"`
-	Status     string    `json:"status"`
-	Input      string    `json:"input,omitempty"`
-	Output     string    `json:"output,omitempty"`
-	HTTPStatus int       `json:"http_status"`
-	LatencyMS  int       `json:"latency_ms"`
-	Success    bool      `json:"-"`
-	Error      string    `json:"error,omitempty"`
+type BalanceRefreshResult struct {
+	Total     int                  `json:"total"`
+	Succeeded int                  `json:"succeeded"`
+	Failed    int                  `json:"failed"`
+	Results   []BalanceRefreshItem `json:"results"`
 }
 
 type AlertEvent struct {
@@ -199,7 +115,6 @@ type Settings struct {
 	OneBotWebhookToken    string            `json:"onebot_webhook_token,omitempty"`
 	OneBotWebhookTokenSet bool              `json:"onebot_webhook_token_set,omitempty"`
 	OneBotGroupIDs        []string          `json:"onebot_group_ids"`
-	ProbeModel            string            `json:"probe_model"`
 	SiteName              string            `json:"site_name"`
 	SiteIcon              string            `json:"site_icon"`
 	EpayBaseURL           string            `json:"epay_base_url"`
@@ -217,9 +132,6 @@ type SchedulerConfig struct {
 	AccessTokenSet  bool            `json:"scheduler_access_token_set,omitempty"`
 	UnassignedGroup string          `json:"scheduler_unassigned_group"`
 	Tiers           []SchedulerTier `json:"scheduler_tiers"`
-	TrafficMode     string          `json:"scheduler_traffic_mode"`
-	TrafficProfile  string          `json:"scheduler_traffic_profile"`
-	TrafficPollSecs int             `json:"scheduler_log_poll_seconds"`
 }
 
 type SchedulerTier struct {

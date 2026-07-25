@@ -25,48 +25,6 @@ func TestUpstreamMergeUpdate(t *testing.T) {
 	}
 }
 
-func TestModelCardMergeUpdate(t *testing.T) {
-	old := ModelCard{
-		ID: "c1", BaseURL: "https://api", APIKey: "sk-old", UpstreamID: "", KeyID: "",
-		SchedulerGroup: "g1", SchedulerChannelID: "ch1", SchedulerAutoDisabled: true,
-		LastError: "err", FailureCount: 2, SortOrder: 5, CreatedAt: time.Unix(1, 0).UTC(),
-	}
-	// 空来源保留旧绑定 + 密钥
-	in := ModelCard{Name: "Card", APIKey: "", SchedulerGroup: "g1", SchedulerChannelID: "ch1", SchedulerAutoDisabled: true, PoolEnabled: true}
-	got := in.MergeUpdate(old)
-	if got.BaseURL != "https://api" || got.APIKey != "sk-old" || got.ID != "c1" {
-		t.Fatalf("source/secret = %+v", got)
-	}
-	if got.FailureCount != 2 || got.SortOrder != 5 {
-		t.Fatalf("runtime = %+v", got)
-	}
-	// 渠道变更清除自动关渠
-	in2 := ModelCard{Name: "Card", BaseURL: "https://api", APIKey: "sk", SchedulerGroup: "g1", SchedulerChannelID: "ch2", SchedulerAutoDisabled: true, PoolEnabled: true}
-	got2 := in2.MergeUpdate(old)
-	if got2.SchedulerAutoDisabled {
-		t.Fatal("channel change should clear auto-disabled")
-	}
-}
-
-func TestApplySchedulerPatches(t *testing.T) {
-	g, ch, name, auto := ApplySchedulerGroupPatch("g1", "ch1", "n1", true, "g2")
-	if g != "g2" || ch != "" || name != "" || auto {
-		t.Fatalf("group change = %q %q %q %v", g, ch, name, auto)
-	}
-	g, ch, name, auto = ApplySchedulerGroupPatch("g1", "ch1", "n1", true, "g1")
-	if g != "g1" || ch != "ch1" || name != "n1" || !auto {
-		t.Fatalf("same group = %q %q %q %v", g, ch, name, auto)
-	}
-	ch, auto = ApplySchedulerChannelPatch("ch1", true, "ch2")
-	if ch != "ch2" || auto {
-		t.Fatalf("channel change = %q %v", ch, auto)
-	}
-	ch, auto = ApplySchedulerChannelPatch("ch1", true, "ch1")
-	if ch != "ch1" || !auto {
-		t.Fatalf("same channel = %q %v", ch, auto)
-	}
-}
-
 func TestRevenueCardMergeUpdate(t *testing.T) {
 	old := RevenueCard{
 		ID: "r1", SourceType: "newapi_orders", BaseURL: "https://old", UserID: "u",
@@ -105,7 +63,7 @@ func TestSettingsMergeUpdate(t *testing.T) {
 	if got.OneBotHTTPToken != "http-old" || got.OneBotWebhookToken != "webhook-old" {
 		t.Fatalf("onebot secrets should be kept: %+v", got)
 	}
-	in2 := Settings{CheckIntervalMinutes: 10, NotificationRules: NotificationRules{Enabled: false, FailureThreshold: 3, EventTypes: map[string]bool{"probe_failed": false}}}
+	in2 := Settings{CheckIntervalMinutes: 10, NotificationRules: NotificationRules{Enabled: false, FailureThreshold: 3, EventTypes: map[string]bool{"balance_low": false}}}
 	got2 := in2.MergeUpdate(old)
 	if got2.NotificationRules.Enabled || got2.NotificationRules.FailureThreshold != 3 {
 		t.Fatalf("rules updated = %+v", got2.NotificationRules)

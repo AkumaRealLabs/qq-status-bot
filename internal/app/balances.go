@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/monitor"
@@ -13,46 +14,106 @@ import (
 )
 
 const pendingRechargeRefreshBatchSize = 100
+const balanceRefreshConcurrency = 3
 
-func (s *Service) RefreshBalances(ctx context.Context) error {
+func (s *Service) RefreshBalances(ctx context.Context) (domain.BalanceRefreshResult, error) {
 	upstreams, err := s.Store.ListUpstreams(ctx)
 	if err != nil {
-		return err
+		return domain.BalanceRefreshResult{}, err
 	}
-	var firstErr error
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 3)
-	for _, u := range upstreams {
-		if !u.Enabled {
-			continue
+	enabled := make([]domain.Upstream, 0, len(upstreams))
+	for _, upstream := range upstreams {
+		if upstream.Enabled {
+			enabled = append(enabled, upstream)
 		}
-		upstreamID := u.ID
+	}
+	out := domain.BalanceRefreshResult{Total: len(enabled), Results: make([]domain.BalanceRefreshItem, len(enabled))}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, balanceRefreshConcurrency)
+	for i, upstream := range enabled {
+		i, upstream := i, upstream
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			item := domain.BalanceRefreshItem{UpstreamID: upstream.ID, UpstreamName: upstream.Name}
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = ctx.Err()
-				}
-				mu.Unlock()
+				item.Error = ctx.Err().Error()
+				out.Results[i] = item
 				return
 			}
-			if err := s.CheckUpstream(ctx, upstreamID); err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = err
-				}
-				mu.Unlock()
+			if err := s.refreshUpstreamBalance(ctx, upstream); err != nil {
+				item.Error = err.Error()
+			} else {
+				item.Success = true
 			}
+			out.Results[i] = item
 		}()
 	}
 	wg.Wait()
-	return firstErr
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	for _, item := range out.Results {
+		if item.Success {
+			out.Succeeded++
+		} else {
+			out.Failed++
+		}
+	}
+	if err := s.Scheduler.recordCurrentCostSnapshots(ctx); err != nil {
+		return out, err
+	}
+	s.syncSchedulerGroupsBestEffort(ctx)
+	return out, nil
+}
+
+func (s *Service) RefreshUpstreamBalance(ctx context.Context, upstreamID string) error {
+	upstream, err := s.Store.Upstream(ctx, upstreamID)
+	if err != nil {
+		return err
+	}
+	if err := s.refreshUpstreamBalance(ctx, upstream); err != nil {
+		return err
+	}
+	if err := s.Scheduler.recordCurrentCostSnapshots(ctx); err != nil {
+		return err
+	}
+	s.syncSchedulerGroupsBestEffort(ctx)
+	return nil
+}
+
+func (s *Service) refreshUpstreamBalance(ctx context.Context, upstream domain.Upstream) error {
+	start := time.Now()
+	remote := toMonitorUpstream(upstream)
+	result, err := s.Client.Check(ctx, &remote)
+	if err != nil {
+		failures := upstream.FailureCount + 1
+		_ = s.Store.SaveUpstreamError(ctx, upstream.ID, err.Error(), failures)
+		kind := "balance_query"
+		message := upstream.Name + " 额度查询失败: " + err.Error()
+		if monitor.IsAuthError(err) {
+			kind, message = "credential", upstream.Name+" 凭据失效: "+err.Error()
+		}
+		_ = s.alert(ctx, upstream, kind, domain.UpstreamAlerting(failures, s.alertFailureThreshold(ctx)), message)
+		return err
+	}
+	if err := s.Store.SaveUpstreamTokens(ctx, upstream.ID, remote.Sub2APIAccessToken, remote.Sub2APIRefreshToken); err != nil {
+		return err
+	}
+	if err := s.Store.SaveKeys(ctx, upstream.ID, result.Keys); err != nil {
+		return err
+	}
+	snapshot, err := s.Store.SaveBalance(ctx, upstream.ID, result.Balance, "", int(time.Since(start).Milliseconds()))
+	if err != nil {
+		return err
+	}
+	_ = s.Store.SaveUpstreamError(ctx, upstream.ID, "", 0)
+	_ = s.alert(ctx, upstream, "credential", false, upstream.Name+" 凭据已恢复")
+	_ = s.alert(ctx, upstream, "balance_query", false, upstream.Name+" 额度查询已恢复")
+	return s.alert(ctx, upstream, "balance", domain.LowBalance(upstream, snapshot), fmt.Sprintf("%s 余额低于阈值", upstream.Name))
 }
 
 func (s *Service) BalanceRechargeCapabilities(ctx context.Context, upstreamID string) (monitor.RechargeCapabilities, error) {
@@ -84,7 +145,7 @@ func (s *Service) RedeemBalance(ctx context.Context, upstreamID, code string) (m
 		err = logErr
 	}
 	if err == nil {
-		_ = s.CheckUpstream(ctx, u.ID)
+		_ = s.RefreshUpstreamBalance(ctx, u.ID)
 	}
 	return out, err
 }
@@ -147,7 +208,7 @@ func (s *Service) refreshBalanceRechargeLog(ctx context.Context, upstreamID, log
 		return log, err
 	}
 	if refreshBalance && log.Status == "success" {
-		_ = s.CheckUpstream(ctx, u.ID)
+		_ = s.RefreshUpstreamBalance(ctx, u.ID)
 	}
 	return log, nil
 }
@@ -192,7 +253,7 @@ func (s *Service) RefreshPendingBalanceRechargeLogs(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := s.CheckUpstream(ctx, upstreamID); err != nil {
+		if err := s.RefreshUpstreamBalance(ctx, upstreamID); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -252,14 +313,17 @@ func (s *Service) BalanceRows(ctx context.Context) ([]map[string]any, error) {
 	for _, u := range upstreams {
 		row := map[string]any{
 			"id": u.ID, "name": u.Name, "type": u.Type, "enabled": u.Enabled,
-			"balance_rate": domain.BalanceRate(u), "low_balance_threshold": u.LowBalanceThreshold,
+			"balance_rate": domain.BalanceRate(u), "low_balance_threshold": u.LowBalanceThreshold, "error": u.LastError,
 		}
 		if b, err := s.Store.LatestBalance(ctx, u.ID); err == nil {
 			balance, used, remain := domain.ConvertedBalanceValues(u.Type, domain.BalanceRate(u), b.Balance, b.Used, b.Remain)
 			sourceBalance, sourceUsed, sourceRemain := domain.NormalizedBalanceValues(u.Type, b.Balance, b.Used, b.Remain)
 			row["balance"], row["used"], row["remain"] = balance, used, remain
 			row["source_balance"], row["source_used"], row["source_remain"] = sourceBalance, sourceUsed, sourceRemain
-			row["requests"], row["last_check"], row["error"] = b.Requests, b.CheckedAt, b.Error
+			row["requests"], row["last_check"] = b.Requests, b.CheckedAt
+			if u.LastError == "" {
+				row["error"] = b.Error
+			}
 			row["low_balance"] = domain.LowBalance(u, b)
 		}
 		out = append(out, row)

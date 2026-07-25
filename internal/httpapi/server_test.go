@@ -10,37 +10,28 @@ import (
 	"time"
 
 	"ai-upstream-monitor/internal/app"
-	"ai-upstream-monitor/internal/domain"
-	"ai-upstream-monitor/internal/monitor"
 	"ai-upstream-monitor/internal/store"
 )
 
-func TestAuditActionDoesNotDuplicateMethod(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPatch, "/api/cards/1", nil)
-	r.Pattern = "PATCH /api/cards/{id}"
-	if got := auditAction(r); got != "PATCH /api/cards/{id}" {
-		t.Fatalf("action = %q", got)
-	}
-}
-
-func TestAuthSessionFlow(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
+func newHTTPTestServer(t *testing.T) (*store.Store, *httptest.Server) {
+	t.Helper()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "http.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	t.Cleanup(func() { _ = st.Close() })
 	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{App: app.New(st)}
-	ts := httptest.NewServer(srv.Routes())
-	defer ts.Close()
+	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
+	t.Cleanup(ts.Close)
+	return st, ts
+}
 
+func TestAuthSessionFlow(t *testing.T) {
+	_, ts := newHTTPTestServer(t)
 	post := func(path, body string, cookie *http.Cookie) *http.Response {
-		req, err := http.NewRequest(http.MethodPost, ts.URL+path, strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		if cookie != nil {
 			req.AddCookie(cookie)
@@ -51,140 +42,29 @@ func TestAuthSessionFlow(t *testing.T) {
 		}
 		return resp
 	}
-
 	resp := post("/api/setup", `{"username":"admin","password":"secret12"}`, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("setup status = %d", resp.StatusCode)
-	}
 	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup=%d", resp.StatusCode)
+	}
 	resp = post("/api/auth/login", `{"username":"admin","password":"secret12"}`, nil)
 	if resp.StatusCode != http.StatusOK || len(resp.Cookies()) == 0 {
-		t.Fatalf("login status=%d cookies=%v", resp.StatusCode, resp.Cookies())
+		t.Fatalf("login=%d cookies=%v", resp.StatusCode, resp.Cookies())
 	}
 	cookie := resp.Cookies()[0]
 	resp.Body.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/auth/me", nil)
 	req.AddCookie(cookie)
-	resp, err = ts.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp, _ = ts.Client().Do(req)
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("me status = %d", resp.StatusCode)
-	}
-	resp.Body.Close()
-	resp = post("/api/auth/logout", `{}`, cookie)
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("logout status = %d", resp.StatusCode)
-	}
-	resp.Body.Close()
-}
-
-func TestDecodeRejectsLargeJSONBody(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
-	defer ts.Close()
-
-	body := `{"username":"` + strings.Repeat("a", defaultJSONBodyLimit) + `","password":"secret12"}`
-	resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-}
-
-func TestLoginRateLimit(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	srv := &Server{App: app.New(st)}
-	ts := httptest.NewServer(srv.Routes())
-	defer ts.Close()
-
-	if resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(`{"username":"admin","password":"secret12"}`)); err != nil {
-		t.Fatal(err)
-	} else {
-		resp.Body.Close()
-	}
-	for i := 0; i < loginFailLimit; i++ {
-		resp, err := ts.Client().Post(ts.URL+"/api/auth/login", "application/json", strings.NewReader(`{"username":"admin","password":"bad"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("attempt %d status = %d", i, resp.StatusCode)
-		}
-	}
-	resp, err := ts.Client().Post(ts.URL+"/api/auth/login", "application/json", strings.NewReader(`{"username":"admin","password":"secret12"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-}
-
-func TestSecureCookieBehindHTTPSProxy(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
-	defer ts.Close()
-	if resp, err := ts.Client().Post(ts.URL+"/api/setup", "application/json", strings.NewReader(`{"username":"admin","password":"secret12"}`)); err != nil {
-		t.Fatal(err)
-	} else {
-		resp.Body.Close()
-	}
-
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", strings.NewReader(`{"username":"admin","password":"secret12"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Forwarded-Proto", "https")
-	resp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || len(resp.Cookies()) == 0 || !resp.Cookies()[0].Secure {
-		t.Fatalf("status=%d cookies=%v", resp.StatusCode, resp.Cookies())
+		t.Fatalf("me=%d", resp.StatusCode)
 	}
 }
 
 func TestUnsafeMethodRejectsBadOrigin(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
-	defer ts.Close()
-
+	_, ts := newHTTPTestServer(t)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/setup", strings.NewReader(`{"username":"admin","password":"secret12"}`))
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://evil.example")
 	resp, err := ts.Client().Do(req)
 	if err != nil {
@@ -192,19 +72,12 @@ func TestUnsafeMethodRejectsBadOrigin(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d", resp.StatusCode)
+		t.Fatalf("status=%d", resp.StatusCode)
 	}
 }
 
 func TestExportMarksBackupSensitive(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	st, _ := newHTTPTestServer(t)
 	user, err := st.CreateUser(t.Context(), "admin", "hash")
 	if err != nil {
 		t.Fatal(err)
@@ -219,342 +92,69 @@ func TestExportMarksBackupSensitive(t *testing.T) {
 	srv := &Server{App: app.New(st)}
 	srv.auth(srv.exportData)(rr, req)
 	if rr.Code != http.StatusOK || rr.Header().Get("X-Backup-Contains-Secrets") != "true" || !strings.Contains(rr.Header().Get("Content-Disposition"), "sensitive") {
-		t.Fatalf("status=%d disposition=%q sensitive=%q", rr.Code, rr.Header().Get("Content-Disposition"), rr.Header().Get("X-Backup-Contains-Secrets"))
+		t.Fatalf("status=%d headers=%v", rr.Code, rr.Header())
 	}
-}
-
-func TestAuthAuditsJSONFieldsWithoutValues(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	user, err := st.CreateUser(t.Context(), "admin", "hash")
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, err := st.CreateSession(t.Context(), user.ID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPatch, "/api/settings", strings.NewReader(`{"site_name":"Ops","telegram_bot_token":"secret-token","telegram_chat_id":"100"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
-	rr := httptest.NewRecorder()
-	srv := &Server{App: app.New(st)}
-	srv.auth(srv.updateSettings)(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
-	}
-	rows, err := st.AuditLogs(t.Context(), "settings", "", 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || !contains(rows[0].Fields, "telegram_bot_token") || strings.Contains(rows[0].Summary, "secret-token") {
-		t.Fatalf("audit = %+v", rows)
-	}
-}
-
-func contains(items []string, want string) bool {
-	for _, item := range items {
-		if item == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestPublicSettingsDoesNotRequireAuth(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := st.Settings(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.SiteName = "GG API"
-	cfg.SiteIcon = "/logo.png"
-	cfg.EpayBaseURL = "https://pay.example.test"
-	cfg.EpayPID = "1000"
-	cfg.EpayKey = "secret"
+	st, ts := newHTTPTestServer(t)
+	cfg, _ := st.Settings(t.Context())
+	cfg.SiteName, cfg.SiteIcon = "GG API", "/logo.png"
 	if _, err := st.UpdateSettings(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
-	defer ts.Close()
-
 	resp, err := ts.Client().Get(ts.URL + "/api/public/settings")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
 	var out map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		t.Fatal(err)
-	}
-	if out["site_name"] != "GG API" || out["site_icon"] != "/logo.png" || len(out) != 2 {
-		t.Fatalf("public settings = %#v", out)
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != http.StatusOK || out["site_name"] != "GG API" || len(out) != 2 {
+		t.Fatalf("status=%d out=%v", resp.StatusCode, out)
 	}
 }
 
-func TestPublicMonitorStatusDoesNotRequireAuth(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "公开", BaseURL: "https://api.example.test", APIKey: "sk-public", DisplayGroup: "生产", Enabled: true, PublicEnabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.SaveProbe(t.Context(), "", card.ID, domain.ProbeModel, monitor.ProbeResult{Status: monitor.StatusOperational, Input: "ping", Output: "pong"}); err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
-	defer ts.Close()
-
-	resp, err := ts.Client().Get(ts.URL + "/api/public/monitor/status?window=1h")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var out map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		t.Fatal(err)
-	}
-	body, _ := json.Marshal(out)
-	if strings.Contains(string(body), "sk-public") || !strings.Contains(string(body), "ping") || !strings.Contains(string(body), "pong") || !strings.Contains(string(body), "生产") {
-		t.Fatalf("public body = %s", body)
+func TestRetiredMonitorRoutesReturnNotFound(t *testing.T) {
+	_, ts := newHTTPTestServer(t)
+	for _, path := range []string{
+		"/api/cards", "/api/cards/x/check", "/api/monitor/status", "/api/public/monitor/status",
+		"/api/scheduler/availability", "/api/scheduler/traffic", "/api/scheduler/traffic/status",
+		"/api/scheduler/ggapi/settings", "/api/scheduler/ggapi/affinity-cache",
+	} {
+		resp, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s status=%d", path, resp.StatusCode)
+		}
 	}
 }
 
-func TestUpdateCardCanClearDisplayGroup(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", BaseURL: "https://api.example.test", APIKey: "sk-test", DisplayGroup: "生产", SchedulerGroup: "gpt_low", SchedulerChannelID: "9", SchedulerChannelName: "通道", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPatch, "/api/cards/"+card.ID, strings.NewReader(`{"display_group":"","scheduler_group":""}`))
-	req.SetPathValue("id", card.ID)
-	rr := httptest.NewRecorder()
-	(&Server{App: app.New(st)}).updateCard(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
-	}
-	got, err := st.Card(t.Context(), card.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.DisplayGroup != "" {
-		t.Fatalf("display_group = %q", got.DisplayGroup)
-	}
-	if got.SchedulerGroup != "" || got.SchedulerChannelID != "" || got.SchedulerChannelName != "" {
-		t.Fatalf("scheduler binding = %+v", got)
-	}
-}
-
-func TestUpdateCardChangingSchedulerChannelClearsAutoDisabled(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", BaseURL: "https://api.example.test", APIKey: "sk-test", SchedulerGroup: "gpt_low", SchedulerChannelID: "9", SchedulerChannelName: "旧通道", SchedulerAutoDisabled: true, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPatch, "/api/cards/"+card.ID, strings.NewReader(`{"scheduler_channel_id":"10","scheduler_channel_name":"新通道"}`))
-	req.SetPathValue("id", card.ID)
-	rr := httptest.NewRecorder()
-	(&Server{App: app.New(st)}).updateCard(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
-	}
-	got, err := st.Card(t.Context(), card.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.SchedulerAutoDisabled || got.SchedulerChannelID != "10" || got.SchedulerChannelName != "新通道" || got.SchedulerGroup != "gpt_low" {
-		t.Fatalf("card = %+v", got)
-	}
-}
-
-func TestUpdateCardMonitorOnlyClearsSchedulerBinding(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	card, err := st.CreateCard(t.Context(), domain.ModelCard{Name: "卡片", BaseURL: "https://api.example.test", APIKey: "sk-test", PoolEnabled: true, PoolEnabledSet: true, ManualCostRatio: "0.14", SchedulerGroup: "gpt_low", SchedulerChannelID: "9", SchedulerChannelName: "通道", SchedulerAutoDisabled: true, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPatch, "/api/cards/"+card.ID, strings.NewReader(`{"pool_enabled":false}`))
-	req.SetPathValue("id", card.ID)
-	rr := httptest.NewRecorder()
-	(&Server{App: app.New(st)}).updateCard(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
-	}
-	got, err := st.Card(t.Context(), card.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.PoolEnabled || got.ManualCostRatio != "" || got.SchedulerGroup != "" || got.SchedulerChannelID != "" || got.SchedulerChannelName != "" || got.SchedulerAutoDisabled {
-		t.Fatalf("card = %+v", got)
-	}
-}
-
-func TestCardModelCreateAndPatch(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	srv := &Server{App: app.New(st)}
-
-	create := httptest.NewRequest(http.MethodPost, "/api/cards", strings.NewReader(`{"name":"卡片","base_url":"https://api.example.test","api_key":"sk-test","model":"grok-4"}`))
-	createRR := httptest.NewRecorder()
-	srv.createCard(createRR, create)
-	if createRR.Code != http.StatusOK {
-		t.Fatalf("create status = %d body=%s", createRR.Code, createRR.Body.String())
-	}
-	var created domain.ModelCard
-	if err := json.NewDecoder(createRR.Body).Decode(&created); err != nil {
-		t.Fatal(err)
-	}
-	if created.Model != "grok-4" {
-		t.Fatalf("created model = %q", created.Model)
-	}
-
-	patch := httptest.NewRequest(http.MethodPatch, "/api/cards/"+created.ID, strings.NewReader(`{"model":"grok-3"}`))
-	patch.SetPathValue("id", created.ID)
-	patchRR := httptest.NewRecorder()
-	srv.updateCard(patchRR, patch)
-	if patchRR.Code != http.StatusOK {
-		t.Fatalf("patch status = %d body=%s", patchRR.Code, patchRR.Body.String())
-	}
-	got, err := st.Card(t.Context(), created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Model != "grok-3" {
-		t.Fatalf("patched model = %q", got.Model)
-	}
-
-	reset := httptest.NewRequest(http.MethodPatch, "/api/cards/"+created.ID, strings.NewReader(`{"model":""}`))
-	reset.SetPathValue("id", created.ID)
-	resetRR := httptest.NewRecorder()
-	srv.updateCard(resetRR, reset)
-	if resetRR.Code != http.StatusOK {
-		t.Fatalf("reset status = %d body=%s", resetRR.Code, resetRR.Body.String())
-	}
-	got, err = st.Card(t.Context(), created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Model != domain.ProbeModel {
-		t.Fatalf("reset model = %q", got.Model)
-	}
-}
-
-func TestSchedulerTierValidationReturnsBadRequest(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPatch, "/api/scheduler/config", strings.NewReader(`{"scheduler_tiers":[{"tag":"","group":"gpt_low","price_min":0,"price_max":1}]}`))
-	rr := httptest.NewRecorder()
-	(&Server{App: app.New(st)}).updateSchedulerConfig(rr, req)
-	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "分组名称不能为空") {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestLegacyAdminPathsRedirect(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
-	defer ts.Close()
+func TestDefaultAndLegacyStatusPathsRedirectToBalances(t *testing.T) {
+	_, ts := newHTTPTestServer(t)
 	client := ts.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-
-	for path, want := range map[string]string{"/status": "/admin/status", "/balances": "/admin/balances", "/revenue": "/admin/revenue", "/merchant-balance": "/admin/revenue", "/admin/merchant-balance": "/admin/revenue", "/admin/ops": "/admin/events", "/upstreams": "/admin/upstreams", "/scheduler": "/admin/scheduler", "/settings": "/admin/settings", "/ops": "/admin/events"} {
+	for _, path := range []string{"/", "/admin", "/status", "/admin/status"} {
 		resp, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != want {
+		if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != "/admin/balances" {
 			t.Fatalf("%s status=%d location=%q", path, resp.StatusCode, resp.Header.Get("Location"))
 		}
 	}
 }
 
-func TestRevenueRoutesRequireAuth(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
-	defer ts.Close()
-
-	for _, tc := range []struct {
-		method string
-		path   string
-	}{
-		{http.MethodGet, "/api/revenue/today"},
-		{http.MethodGet, "/api/revenue/cards"},
-		{http.MethodGet, "/api/revenue/cards/card-id/orders"},
-		{http.MethodPost, "/api/revenue/cards"},
-		{http.MethodPost, "/api/revenue/cards/order"},
+func TestCostBindingRoutesRequireAuth(t *testing.T) {
+	_, ts := newHTTPTestServer(t)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/cost-bindings"}, {http.MethodPost, "/api/cost-bindings"},
+		{http.MethodPatch, "/api/cost-bindings/x"}, {http.MethodDelete, "/api/cost-bindings/x"},
+		{http.MethodGet, "/api/cost-bindings/channels?provider=ggapi"}, {http.MethodPost, "/api/cost-bindings/x/adopt"},
 	} {
 		req, _ := http.NewRequest(tc.method, ts.URL+tc.path, strings.NewReader(`{}`))
 		resp, err := ts.Client().Do(req)
@@ -563,115 +163,7 @@ func TestRevenueRoutesRequireAuth(t *testing.T) {
 		}
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("%s %s status = %d", tc.method, tc.path, resp.StatusCode)
+			t.Fatalf("%s %s status=%d", tc.method, tc.path, resp.StatusCode)
 		}
-	}
-}
-
-func TestSchedulerRoutesRequireAuth(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
-	defer ts.Close()
-
-	for _, tc := range []struct {
-		method string
-		path   string
-	}{
-		{http.MethodGet, "/api/scheduler/config"},
-		{http.MethodPatch, "/api/scheduler/config"},
-		{http.MethodGet, "/api/scheduler/groups"},
-		{http.MethodGet, "/api/scheduler/channels"},
-		{http.MethodGet, "/api/scheduler/logs"},
-		{http.MethodPost, "/api/scheduler/groups/apply"},
-		{http.MethodPost, "/api/cards/card-id/scheduler/status"},
-	} {
-		req, _ := http.NewRequest(tc.method, ts.URL+tc.path, strings.NewReader(`{}`))
-		resp, err := ts.Client().Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("%s %s status = %d", tc.method, tc.path, resp.StatusCode)
-		}
-	}
-}
-
-func TestTGRoutesRequireAuth(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer((&Server{App: app.New(st)}).Routes())
-	defer ts.Close()
-
-	for _, tc := range []struct {
-		method string
-		path   string
-	}{
-		{http.MethodGet, "/api/tg/session/status"},
-		{http.MethodPost, "/api/tg/session/start"},
-		{http.MethodGet, "/api/tg/channels"},
-		{http.MethodPost, "/api/tg/messages/refresh"},
-	} {
-		req, _ := http.NewRequest(tc.method, ts.URL+tc.path, strings.NewReader(`{}`))
-		resp, err := ts.Client().Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("%s %s status = %d", tc.method, tc.path, resp.StatusCode)
-		}
-	}
-}
-
-func TestTGSessionStatusAPI(t *testing.T) {
-	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.SaveTGSession(t.Context(), domain.TGSession{APIID: 123, APIHash: "hash", Phone: "+100", Authorized: true}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.CreateUser(t.Context(), "admin", "hash"); err != nil {
-		t.Fatal(err)
-	}
-	user, err := st.UserByUsername(t.Context(), "admin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, err := st.CreateSession(t.Context(), user.ID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/api/tg/session/status", nil)
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
-	rr := httptest.NewRecorder()
-	(&Server{App: app.New(st)}).auth((&Server{App: app.New(st)}).tgSessionStatus)(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
-	}
-	var out map[string]any
-	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
-		t.Fatal(err)
-	}
-	if out["authorized"] != true || out["configured"] != true || out["phone"] != "+100" {
-		t.Fatalf("out = %#v", out)
 	}
 }

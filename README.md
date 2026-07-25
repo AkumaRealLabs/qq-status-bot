@@ -1,6 +1,6 @@
 # AI Upstream Monitor
 
-自用运维台：监控 `new-api` / `sub2api` 上游余额与 `gpt-5.6-sol` 探测状态，联动调度器分组、利润核算、Telegram 消息、CLIProxy 号池与易支付收入。
+自用运维台：管理 `new-api` / `sub2api` 上游余额与成本，联动 GGAPI / AxonHub 成本字段、利润核算、Telegram 消息、CLIProxy 号池与易支付收入。服务状态与模型可用性由 Uptime Kuma 负责。
 
 ## 快速启动
 
@@ -8,9 +8,8 @@
 docker compose up -d --build
 ```
 
-默认监听 `127.0.0.1:8090`。首次访问 `/admin` 创建管理员账号（密码至少 8 位）。
+默认监听 `127.0.0.1:8090`。首次访问 `/admin` 创建管理员账号（密码至少 8 位）。`/`、`/admin` 与旧状态页路径都会跳转到 `/admin/balances`。
 
-公开状态页：`/`  
 健康检查：`GET /api/health`
 
 ## 环境变量
@@ -24,15 +23,14 @@ docker compose up -d --build
 | `BROWSER_PROXY_URL` | 空 | noVNC 反代上游 |
 | `BROWSER_VNC_URL` | 空 | 前端打开的 VNC 页面 |
 | `TG_MEDIA_DIR` | `/app/data/tg_media` | Telegram 媒体缓存目录 |
-| `AUM_PROBE_MODE` | `cli` | 探测模式：`cli`（Codex CLI）或 `http` |
 | `TZ` | 系统时区 | 收入「今日」边界等使用 |
 
 ## 功能概览
 
-- **状态监控**：模型卡片探测历史、公开页、失败静音、OneBot QQ 群查询
 - **余额监控**：上游额度、低余额告警、在线充值/兑换
+- **成本管理**：上游 Key / 手动成本倍率、GGAPI / AxonHub 渠道绑定、售价档位、手动与自动成本同步
 - **今日收入**：易支付 / new-api / sub2api 订单
-- **调度器**：渠道绑定、成本分组与优先级调度、真实流量降权/熔断/阶梯恢复、成本/售价快照与利润
+- **利润核算**：保留成本/售价历史快照，按 GGAPI 消费日志计算已确认毛利
 - **号池**：CLIProxyAPI Codex 账号与配额（忽略 xAI）
 - **最新消息**：Telegram 频道同步
 - **事件 / 审计 / 通知规则 / 系统自检**
@@ -43,7 +41,7 @@ docker compose up -d --build
 
 - 业务库：`./data/monitor.sqlite`（SQLite 默认开启 WAL）
 - 后台「设置 → 导出敏感备份」会包含密钥、OneBot Token 与 TG 会话，按机密文件保管
-- 定时任务每小时清理过期时序数据（探测 14 天、余额快照 30 天、审计 90 天等）
+- 定时任务每小时清理过期时序数据（余额快照 30 天、审计 90 天、成本与售价快照 180 天等）
 
 ### 安全
 
@@ -52,32 +50,25 @@ docker compose up -d --build
 - 登录失败限流；非 GET 请求校验 Origin
 - 绑定 `127.0.0.1` 时仍建议放在受信任网络或反代后
 
-### OneBot QQ 群公开状态
+### OneBot / LLBot 连接
 
 - Compose 直接运行 LuckyLilliaBot 官方镜像 `linyuchen/llbot:latest`。`3000` 只在 Compose 内网开放，WebUI 仅绑定 `127.0.0.1:3080`。
 - 首次部署后通过 SSH 隧道访问本机 WebUI，完成 QQ 登录。首次登录会生成该 QQ 号的持久化配置，后续由 LLBot 的 `/app/llbot/data` 卷维护。
 - 在 LLBot WebUI 的 OneBot 11 配置中，为 HTTP 与 HTTP POST 分别设置 Token；HTTP 监听 `0.0.0.0:3000`，HTTP POST 回调保持 `http://app:8090/api/onebot/events`，消息格式为数组。
-- 在后台「设置 → OneBot QQ 群查询」填入 `http://llbot:3000`、同一组 HTTP Token、Webhook Token 和每行一个 QQ 群号白名单，启用后白名单群可发送 `@机器人 状态` 或 `@机器人 status` 查询固定 `1h` 的公开状态图片。图片由服务端原生生成，中文使用 LXGW WenKai，英文与数字使用 Maple Mono；只展示公开卡片的名称、分组、状态与延迟。
+- 在后台「设置 → OneBot 连接」填入 `http://llbot:3000`、HTTP Token、Webhook Token 和允许发送的 QQ 群号。AUM 保留连接检查、Webhook 签名校验与通用文本发送客户端，不解析或回复“状态/status”命令。
 - LuckyLilliaBot `v8.0.14` 对 HTTP POST 使用 `X-Signature: sha1=<HMAC>` 校验回调 Token；本服务按该上游协议验证原始请求体，不保存或记录 Token、请求体。
 
-### 探测
+### 成本同步
 
-- 默认用镜像内 `@openai/codex` CLI 探测；可设 `AUM_PROBE_MODE=http` 走 HTTP
-- 定时检查对上游与卡片使用有限并发（3），避免串行拖超时
-- 失败策略可在「通知规则」配置：告警阈值、静默/自动关渠阈值、本地错误内部重试次数与间隔
+- 每轮余额与 Key 刷新完成后执行一次成本同步，也可在「成本管理」手动触发。
+- GGAPI 只写渠道 `group` 与 `priority`；AxonHub 只写 AUM 托管标签与 `orderingWeight`。任何同步路径都不修改渠道启停状态。
+- AUM 保存最近一次成本字段基线。检测到管理员或其他系统修改后会暂停自动覆盖，需在成本绑定上明确“重新接管”。
+- 生产升级前必须备份 SQLite / Postgres 数据库或导出敏感备份。迁移会删除旧卡片、探测历史、可用性和流量控制表，但保留历史成本/售价快照。
 
-### 真实流量调度
+### 前端入口
 
-- 在「渠道管理 → 连接配置」选择 `observe` 或 `active`；旧数据迁移后默认 `off`
-- 调度端必须启用消费日志，并设置 `ERROR_LOG_ENABLED=true`
-- 调度器 Access Token 必须能读取 `GET /api/log/?type=2` 与 `type=5`
-- 生产启用前确认服务器时钟、日志权限和卡片渠道绑定；只有显式绑定渠道会被自动修改
-- 遥测事件与 10 秒汇总保留 24 小时，1 分钟汇总保留 30 天；这些可重建运行数据不进入敏感备份
-
-### 前端分包
-
-- `/` 走 `PublicApp`，`/admin/*` 走 `AdminApp`（各自 lazy 加载）
-- 状态页按 public / admin / shared 拆分，admin 专有编辑与 dnd 不进公开路径
+- `/` 与旧状态路径跳转 `/admin/balances`
+- `/admin/costs` 是独立成本管理页；旧 `/admin/scheduler` 跳转该页
 
 ## 开发
 

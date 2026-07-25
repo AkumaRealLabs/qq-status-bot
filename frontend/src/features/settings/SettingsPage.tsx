@@ -68,11 +68,11 @@ export function SettingsPage() {
   }
   if (!data) return <ShellLoading />
   return (
-    <Page title="设置" description="监控周期、Telegram 告警、OneBot 群查询和数据备份">
+    <Page title="设置" description="余额刷新、通知连接和数据备份">
       <Card className="w-full max-w-2xl bg-card">
         <CardHeader>
           <CardTitle>基础设置</CardTitle>
-          <CardDescription>探测模型由后端固定为 gpt-5.6-sol</CardDescription>
+          <CardDescription>站点信息、余额刷新周期与 Telegram 告警</CardDescription>
         </CardHeader>
         <CardContent className="grid min-w-0 gap-4">
           <Field label="站点名称">
@@ -81,7 +81,7 @@ export function SettingsPage() {
           <Field label="站点图标 URL">
             <Input value={data.site_icon ?? ''} placeholder="/favicon.ico 或 https://..." onChange={(e) => setForm({ ...data, site_icon: e.target.value })} />
           </Field>
-          <Field label="检查间隔（分钟）">
+          <Field label="余额刷新周期（分钟）">
             <Input type="number" value={data.check_interval_minutes} onChange={(e) => setForm({ ...data, check_interval_minutes: Number(e.target.value) })} />
           </Field>
           <Field label="Telegram Bot Token">
@@ -95,9 +95,6 @@ export function SettingsPage() {
           <Field label="Telegram Chat ID">
             <Input value={data.telegram_chat_id ?? ''} onChange={(e) => setForm({ ...data, telegram_chat_id: e.target.value })} />
           </Field>
-          <Field label="探测模型">
-            <Input value={data.probe_model} disabled />
-          </Field>
           <Field label="构建版本">
             <Input value={buildVersion} disabled />
           </Field>
@@ -105,7 +102,7 @@ export function SettingsPage() {
       </Card>
       <Card className="w-full max-w-2xl bg-card">
         <CardHeader>
-          <CardTitle>OneBot QQ 群查询</CardTitle>
+          <CardTitle>OneBot 连接</CardTitle>
         </CardHeader>
         <CardContent className="grid min-w-0 gap-4">
           <label className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -114,7 +111,7 @@ export function SettingsPage() {
               checked={data.onebot_enabled}
               onChange={(e) => setForm({ ...data, onebot_enabled: e.target.checked })}
             />
-            启用 OneBot QQ 群查询
+            启用 OneBot 连接
           </label>
           <Field label="OneBot HTTP 地址">
             <Input value={data.onebot_base_url ?? ''} placeholder="http://llbot:3000" onChange={(e) => setForm({ ...data, onebot_base_url: e.target.value })} />
@@ -135,7 +132,7 @@ export function SettingsPage() {
               onChange={(e) => setForm({ ...data, onebot_webhook_token: e.target.value })}
             />
           </Field>
-          <Field label="QQ 群号白名单">
+          <Field label="允许发送的 QQ 群号">
             <Textarea
               rows={5}
               value={(data.onebot_group_ids ?? []).join('\n')}

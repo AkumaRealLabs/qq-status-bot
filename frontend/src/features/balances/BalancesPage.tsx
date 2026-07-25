@@ -9,17 +9,17 @@ import { api } from '@/lib/api'
 import { fmtTime, latestRefreshTime, num } from '@/lib/format'
 import { useFeedback } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
-import type { BalanceRow, Upstream } from '@/types'
+import type { BalanceRefreshResult, BalanceRow, Upstream } from '@/types'
 
 export function BalancesPage() {
   const qc = useQueryClient()
   const fb = useFeedback('刷新完成')
   const q = useQuery({ queryKey: ['balances'], queryFn: () => api<BalanceRow[]>('/api/monitor/balances'), refetchInterval: 60000 })
   const refresh = useMutation({
-    mutationFn: () => api('/api/monitor/balances/refresh', { method: 'POST' }),
+    mutationFn: () => api<BalanceRefreshResult>('/api/monitor/balances/refresh', { method: 'POST' }),
     onMutate: () => fb.pending('刷新中...'),
-    onSuccess: async () => {
-      fb.success('刷新完成')
+    onSuccess: async (result) => {
+      fb.success(result.failed > 0 ? `刷新完成：${result.succeeded} 个成功，${result.failed} 个失败` : '刷新完成')
       await Promise.all([qc.invalidateQueries({ queryKey: ['balances'] }), qc.invalidateQueries({ queryKey: ['upstreams'] })])
     },
     onError: fb.fail,
@@ -60,15 +60,16 @@ export function BalancesPage() {
 }
 
 function BalanceMonitorCard({ row }: { row: BalanceRow }) {
+  const queryFailed = Boolean(row.error)
   return (
-    <Card className={cn('bg-card', row.low_balance && 'border-destructive/40')}>
+    <Card className={cn('bg-card', (row.low_balance || queryFailed) && 'border-destructive/40')}>
       <CardHeader className="gap-2">
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="min-w-0">
             <CardTitle className="truncate">{row.name}</CardTitle>
             <CardDescription><TypeBadge type={row.type} /></CardDescription>
           </div>
-          <StatusBadge ok={!row.low_balance} okText="正常" failText="低余额" />
+          <StatusBadge ok={!row.low_balance && !queryFailed} okText="正常" failText={queryFailed ? '查询失败' : '低余额'} />
         </div>
       </CardHeader>
       <CardContent className="grid gap-3">
@@ -77,9 +78,10 @@ function BalanceMonitorCard({ row }: { row: BalanceRow }) {
           <div className="break-words font-display text-3xl font-normal">{num(row.remain)} 元</div>
           <div className="mt-1.5 text-xs text-muted-foreground">最后刷新：{fmtTime(row.last_check)}</div>
         </div>
+        {queryFailed && <div className="whitespace-pre-wrap break-words border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{row.error}</div>}
         <BalanceRechargeDialog upstream={{ id: row.id, name: row.name, type: row.type as Upstream['type'], base_url: '', enabled: row.enabled, balance_rate: row.balance_rate, low_balance_threshold: 0 }} />
         <Button asChild variant="outline" size="sm">
-          <a href={`/admin/scheduler?upstream_id=${encodeURIComponent(row.id)}`}>
+          <a href={`/admin/costs?upstream_id=${encodeURIComponent(row.id)}`}>
             <ShieldAlert className="size-4" />
             受影响渠道
           </a>

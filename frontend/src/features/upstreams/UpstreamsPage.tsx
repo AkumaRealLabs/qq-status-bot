@@ -210,7 +210,7 @@ export function BalanceRechargeDialog({ upstream }: { upstream: Upstream }) {
       </DialogTrigger>
       <DialogContent>
         <DialogTitle>余额充值 · {upstream.name}</DialogTitle>
-        {caps.isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />探测充值能力...</div>}
+        {caps.isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />检查充值能力...</div>}
         <FormError error={caps.error || createOrder.error || redeem.error} />
         {unavailable && <EmptyPanel text="该站点未开放在线充值、兑换码兑换或购买地址" />}
         {caps.data?.external_url && (
@@ -529,9 +529,25 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
               </Field>
             </>
           )}
+          {form.type === 'sub2api' && (
+            <>
+              <Field label="登录邮箱">
+                <Input type="email" value={form.email ?? ''} onChange={(e) => update({ email: e.target.value })} />
+              </Field>
+              <Field label="登录密码">
+                <Input
+                  type="password"
+                  value={form.password ?? ''}
+                  placeholder={secretPlaceholder(form.password_set)}
+                  onChange={(e) => update({ password: e.target.value })}
+                />
+              </Field>
+            </>
+          )}
         </div>
         {form.type === 'sub2api' && persistedUpstream?.id && (
           <div className="rounded-md border border-border bg-secondary/50 p-3">
+            <div className="mb-2 text-xs text-muted-foreground">默认自动使用 Token 或邮箱密码登录；仅遇到 CF 验证或浏览器绑定会话时需要浏览器。</div>
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
@@ -543,7 +559,7 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
                 disabled={browserLogin.isPending}
               >
                 {browserLogin.isPending ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4" />}
-                浏览器登录
+                CF 浏览器登录
               </Button>
               <Button variant="outline" size="sm" onClick={() => browserCapture.mutate()} disabled={browserCapture.isPending}>
                 {browserCapture.isPending ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}

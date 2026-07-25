@@ -11,8 +11,8 @@ func (s *Store) Settings(ctx context.Context) (domain.Settings, error) {
 	var cfg domain.Settings
 	var rules, groups string
 	var oneBotEnabled int
-	err := s.row(ctx, `SELECT check_interval_minutes, telegram_bot_token, telegram_chat_id, onebot_enabled, onebot_base_url, onebot_http_token, onebot_webhook_token, onebot_group_ids, probe_model, site_name, site_icon, epay_base_url, epay_pid, epay_key, notification_rules FROM settings WHERE id='default'`).
-		Scan(&cfg.CheckIntervalMinutes, &cfg.TelegramBotToken, &cfg.TelegramChatID, &oneBotEnabled, &cfg.OneBotBaseURL, &cfg.OneBotHTTPToken, &cfg.OneBotWebhookToken, &groups, &cfg.ProbeModel, &cfg.SiteName, &cfg.SiteIcon, &cfg.EpayBaseURL, &cfg.EpayPID, &cfg.EpayKey, &rules)
+	err := s.row(ctx, `SELECT check_interval_minutes, telegram_bot_token, telegram_chat_id, onebot_enabled, onebot_base_url, onebot_http_token, onebot_webhook_token, onebot_group_ids, site_name, site_icon, epay_base_url, epay_pid, epay_key, notification_rules FROM settings WHERE id='default'`).
+		Scan(&cfg.CheckIntervalMinutes, &cfg.TelegramBotToken, &cfg.TelegramChatID, &oneBotEnabled, &cfg.OneBotBaseURL, &cfg.OneBotHTTPToken, &cfg.OneBotWebhookToken, &groups, &cfg.SiteName, &cfg.SiteIcon, &cfg.EpayBaseURL, &cfg.EpayPID, &cfg.EpayKey, &rules)
 	if err != nil {
 		return cfg, err
 	}
@@ -26,7 +26,6 @@ func (s *Store) Settings(ctx context.Context) (domain.Settings, error) {
 	}
 	cfg.NotificationRules = domain.NormalizeNotificationRules(cfg.NotificationRules)
 	cfg.CheckIntervalMinutes = domain.NormalizeCheckInterval(cfg.CheckIntervalMinutes)
-	cfg.ProbeModel = domain.ProbeModel
 	if cfg.SiteName == "" {
 		cfg.SiteName = domain.DefaultSiteName
 	}
@@ -50,7 +49,7 @@ func (s *Store) UpdateSettings(ctx context.Context, cfg domain.Settings) (domain
 	if err != nil {
 		return cfg, err
 	}
-	_, err = s.exec(ctx, `UPDATE settings SET check_interval_minutes=?, telegram_bot_token=?, telegram_chat_id=?, onebot_enabled=?, onebot_base_url=?, onebot_http_token=?, onebot_webhook_token=?, onebot_group_ids=?, probe_model=?, site_name=?, site_icon=?, epay_base_url=?, epay_pid=?, epay_key=?, notification_rules=? WHERE id='default'`,
-		cfg.CheckIntervalMinutes, cfg.TelegramBotToken, cfg.TelegramChatID, boolInt(cfg.OneBotEnabled), cfg.OneBotBaseURL, cfg.OneBotHTTPToken, cfg.OneBotWebhookToken, string(groups), cfg.ProbeModel, cfg.SiteName, cfg.SiteIcon, cfg.EpayBaseURL, cfg.EpayPID, cfg.EpayKey, string(rules))
+	_, err = s.exec(ctx, `UPDATE settings SET check_interval_minutes=?, telegram_bot_token=?, telegram_chat_id=?, onebot_enabled=?, onebot_base_url=?, onebot_http_token=?, onebot_webhook_token=?, onebot_group_ids=?, site_name=?, site_icon=?, epay_base_url=?, epay_pid=?, epay_key=?, notification_rules=? WHERE id='default'`,
+		cfg.CheckIntervalMinutes, cfg.TelegramBotToken, cfg.TelegramChatID, boolInt(cfg.OneBotEnabled), cfg.OneBotBaseURL, cfg.OneBotHTTPToken, cfg.OneBotWebhookToken, string(groups), cfg.SiteName, cfg.SiteIcon, cfg.EpayBaseURL, cfg.EpayPID, cfg.EpayKey, string(rules))
 	return cfg, err
 }

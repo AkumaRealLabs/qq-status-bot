@@ -1,14 +1,11 @@
 package httpapi
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 
 	"ai-upstream-monitor/internal/app"
-	"ai-upstream-monitor/internal/onebot"
 )
 
 const oneBotEventBodyLimit = 128 << 10
@@ -31,16 +28,6 @@ func (s *Server) oneBotEvents(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		writeError(w, http.StatusServiceUnavailable, "onebot event unavailable")
-		return
-	}
-	var event onebot.Event
-	if err := json.NewDecoder(bytes.NewReader(payload)).Decode(&event); err != nil {
-		writeError(w, http.StatusBadRequest, "JSON 格式错误")
-		return
-	}
-	err = s.App.HandleOneBotEvent(r.Context(), event)
-	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "onebot event unavailable")
 		return
 	}

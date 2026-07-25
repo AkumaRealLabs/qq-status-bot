@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"ai-upstream-monitor/internal/domain"
 )
 
 type ExportData struct {
@@ -20,9 +18,9 @@ var exportTables = []string{
 	"settings",
 	"upstreams",
 	"api_keys",
-	"model_cards",
+	"scheduler_cost_bindings",
+	"scheduler_cost_field_ownership",
 	"balance_snapshots",
-	"probe_runs",
 	"alert_events",
 	"ops_events",
 	"audit_logs",
@@ -30,12 +28,8 @@ var exportTables = []string{
 	"cliproxy_quota_snapshots",
 	"balance_recharge_logs",
 	"scheduler_logs",
-	"channel_availability",
 	"scheduler_channel_cost_snapshots",
 	"scheduler_group_sale_snapshots",
-	"scheduler_traffic_control",
-	"scheduler_channel_lifecycle",
-	"scheduler_axonhub_channel_lifecycle",
 	"revenue_cards",
 	"tg_session",
 	"tg_channels",
@@ -105,12 +99,6 @@ func (s *Store) ImportData(ctx context.Context, in ExportData) error {
 			return err
 		}
 	}
-	// 遥测事件、汇总与游标属于可重建运行数据，不进入敏感备份；导入时必须清空。
-	for _, table := range []string{"scheduler_traffic_events", "scheduler_traffic_10s", "scheduler_traffic_1m", "scheduler_traffic_cursors"} {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM `+quoteIdent(table)); err != nil {
-			return err
-		}
-	}
 	for _, table := range exportTables {
 		cols, err := queryColumns(ctx, tx, table)
 		if err != nil {
@@ -135,7 +123,7 @@ func (s *Store) ImportData(ctx context.Context, in ExportData) error {
 			}
 		}
 	}
-	if _, err := tx.ExecContext(ctx, s.rebind(`INSERT INTO settings (id, check_interval_minutes, probe_model, site_name) VALUES ('default', 5, ?, 'AI 上游监控') ON CONFLICT(id) DO NOTHING`), domain.ProbeModel); err != nil {
+	if _, err := tx.ExecContext(ctx, s.rebind(`INSERT INTO settings (id, check_interval_minutes, site_name) VALUES ('default', 5, 'AI 上游监控') ON CONFLICT(id) DO NOTHING`)); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

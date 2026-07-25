@@ -13,7 +13,6 @@ import (
 	"ai-upstream-monitor/internal/app"
 	"ai-upstream-monitor/internal/browsercdp"
 	"ai-upstream-monitor/internal/httpapi"
-	"ai-upstream-monitor/internal/statusimage"
 	"ai-upstream-monitor/internal/store"
 )
 
@@ -41,15 +40,6 @@ func main() {
 	}
 
 	svc := app.New(st)
-	imageRenderer, err := statusimage.New(
-		env("ONEBOT_STATUS_IMAGE_CHINESE_FONT", "/app/fonts/LXGWWenKai-Regular.ttf"),
-		env("ONEBOT_STATUS_IMAGE_LATIN_FONT", "/app/fonts/MapleMono-Regular.ttf"),
-	)
-	if err != nil {
-		log.Printf("OneBot 状态图片未启用，将回退文本回复: %v", err)
-	} else {
-		svc.OneBotStatusImageRenderer = imageRenderer
-	}
 	svc.Client.Browser = browsercdp.Client{
 		DebugURL:   os.Getenv("BROWSER_DEBUG_URL"),
 		HostHeader: os.Getenv("BROWSER_DEBUG_HOST_HEADER"),

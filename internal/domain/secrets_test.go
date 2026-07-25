@@ -33,11 +33,6 @@ func TestPublicRedactsSecrets(t *testing.T) {
 		t.Fatalf("scheduler secrets: %+v", sc)
 	}
 
-	c := ModelCard{APIKey: "sk"}.Public()
-	if c.APIKey != "" || !c.APIKeySet {
-		t.Fatalf("card secrets: %+v", c)
-	}
-
 	axon := AxonHubConfig{BaseURL: "http://axonhub", AdminEmail: "admin@example.com", AdminPassword: "password"}.Public()
 	if axon.AdminPassword != "" || !axon.AdminPasswordSet || axon.AdminEmail != "admin@example.com" {
 		t.Fatalf("AxonHub secrets: %+v", axon)
@@ -45,7 +40,7 @@ func TestPublicRedactsSecrets(t *testing.T) {
 }
 
 func TestAxonHubConfigMergeKeepsEmptyPassword(t *testing.T) {
-	old := AxonHubConfig{BaseURL: "http://axonhub", AdminEmail: "admin@example.com", AdminPassword: "stored", ControlMode: AxonHubControlObserve}
+	old := AxonHubConfig{BaseURL: "http://axonhub", AdminEmail: "admin@example.com", AdminPassword: "stored", ControlMode: AxonHubControlOff}
 	next := AxonHubConfig{BaseURL: "http://axonhub/", AdminEmail: " admin@example.com ", ControlMode: AxonHubControlActive}.MergeUpdate(old)
 	if next.BaseURL != "http://axonhub" || next.AdminEmail != "admin@example.com" || next.AdminPassword != "stored" || next.ControlMode != AxonHubControlActive {
 		t.Fatalf("merged=%+v", next)

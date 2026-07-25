@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,49 +18,6 @@ type browserHTTPFunc func(context.Context, string, string, []byte, map[string]st
 
 func (f browserHTTPFunc) Do(ctx context.Context, method, rawURL string, body []byte, headers map[string]string) (int, []byte, error) {
 	return f(ctx, method, rawURL, body, headers)
-}
-
-func TestProbeSendsFixedModelPayload(t *testing.T) {
-	var saw bool
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
-			t.Fatalf("path = %s", r.URL.Path)
-		}
-		var body struct {
-			Model string `json:"model"`
-			Input []struct {
-				Role    string `json:"role"`
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"input"`
-			MaxOutputTokens int  `json:"max_output_tokens"`
-			Stream          bool `json:"stream"`
-			Reasoning       struct {
-				Effort string `json:"effort"`
-			} `json:"reasoning"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		saw = body.Model == "gpt-5.6-sol" &&
-			len(body.Input) == 1 &&
-			body.Input[0].Role == "user" &&
-			len(body.Input[0].Content) == 1 &&
-			body.Input[0].Content[0].Type == "input_text" &&
-			body.Input[0].Content[0].Text == "ping" &&
-			body.MaxOutputTokens == 2 &&
-			!body.Stream &&
-			body.Reasoning.Effort == "none"
-		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "pong"})
-	}))
-	defer s.Close()
-
-	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
-	if !saw || !got.Success || got.Status != StatusOperational || got.Input != "ping" {
-		t.Fatalf("saw=%v got=%+v", saw, got)
-	}
 }
 
 func TestApplySub2TokensPreservesRefreshWhenMissing(t *testing.T) {
@@ -89,11 +45,54 @@ func TestSub2APIAuthExplainsMissingCredentialsWithoutLoginRequest(t *testing.T) 
 	defer s.Close()
 
 	err := (Client{HTTP: s.Client()}).sub2apiForceAuth(t.Context(), &Upstream{BaseURL: s.URL})
-	if err == nil || !strings.Contains(err.Error(), "浏览器登录") || !strings.Contains(err.Error(), "采集 Token") {
+	if err == nil || !strings.Contains(err.Error(), "邮箱密码") || !strings.Contains(err.Error(), "CF 浏览器登录") || !strings.Contains(err.Error(), "采集 Token") {
 		t.Fatalf("err = %v", err)
 	}
 	if requestCount != 0 {
 		t.Fatalf("requestCount = %d, want 0", requestCount)
+	}
+}
+
+func TestSub2APILoginUsesEmailPasswordWithoutBrowser(t *testing.T) {
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/auth/login" {
+			http.NotFound(w, r)
+			return
+		}
+		loginRequests++
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["email"] != "user@example.com" || body["password"] != "secret" {
+			t.Fatalf("body=%v", body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"access_token": "access", "refresh_token": "refresh"}})
+	}))
+	defer server.Close()
+	browserCalled := false
+	upstream := &Upstream{BaseURL: server.URL, Email: "user@example.com", Password: "secret"}
+	err := (Client{HTTP: server.Client(), Browser: browserHTTPFunc(func(context.Context, string, string, []byte, map[string]string) (int, []byte, error) {
+		browserCalled = true
+		return 0, nil, nil
+	})}).sub2apiForceAuth(t.Context(), upstream)
+	if err != nil || loginRequests != 1 || browserCalled || upstream.Sub2APIAccessToken != "access" || upstream.Sub2APIRefreshToken != "refresh" {
+		t.Fatalf("err=%v loginRequests=%d browserCalled=%v upstream=%+v", err, loginRequests, browserCalled, upstream)
+	}
+}
+
+func TestSub2APILoginExplainsCloudflareBrowserFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<div id="cf-error-details">Cloudflare Ray ID: abc</div>`))
+	}))
+	defer server.Close()
+	err := (Client{HTTP: server.Client()}).sub2apiForceAuth(t.Context(), &Upstream{
+		BaseURL: server.URL, Email: "user@example.com", Password: "secret",
+	})
+	if err == nil || !strings.Contains(err.Error(), "CF 浏览器登录") {
+		t.Fatalf("err=%v", err)
 	}
 }
 
@@ -179,214 +178,6 @@ func TestShouldRetryInBrowserRecognizesSessionBindingMismatch(t *testing.T) {
 	}
 }
 
-func TestProbeExtractsNestedResponseText(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"output": []any{map[string]any{
-				"content": []any{map[string]any{"text": "Lake!"}},
-			}},
-		})
-	}))
-	defer s.Close()
-
-	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
-	if got.Status != StatusOperational || got.Output != "Lake!" || !got.Success {
-		t.Fatalf("got=%+v", got)
-	}
-}
-
-func TestProbeExtractsSSEText(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
-		_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"pong"}` + "\n\n"))
-		_, _ = w.Write([]byte("event: response.output_text.done\n"))
-		_, _ = w.Write([]byte(`data: {"type":"response.output_text.done","text":"pong"}` + "\n\n"))
-	}))
-	defer s.Close()
-
-	got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
-	if got.Status != StatusOperational || got.Output != "pong" || !got.Success {
-		t.Fatalf("got=%+v", got)
-	}
-}
-
-func TestProbeClassifiesFailures(t *testing.T) {
-	oldDegraded := degradedAfter
-	defer func() {
-		degradedAfter = oldDegraded
-	}()
-
-	t.Run("non empty reply succeeds", func(t *testing.T) {
-		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "blue"})
-		}))
-		defer s.Close()
-		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
-		if got.Status != StatusOperational || !got.Success || got.Output != "blue" {
-			t.Fatalf("got=%+v", got)
-		}
-	})
-
-	t.Run("empty reply", func(t *testing.T) {
-		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = json.NewEncoder(w).Encode(map[string]any{"output_text": ""})
-		}))
-		defer s.Close()
-		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
-		if got.Status != StatusFailed || got.Success {
-			t.Fatalf("got=%+v", got)
-		}
-	})
-
-	t.Run("http error keeps body", func(t *testing.T) {
-		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "bad key", http.StatusUnauthorized)
-		}))
-		defer s.Close()
-		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
-		if got.Status != StatusFailed || got.HTTPStatus != http.StatusUnauthorized || got.Error == "" {
-			t.Fatalf("got=%+v", got)
-		}
-	})
-
-	t.Run("non json success keeps body", func(t *testing.T) {
-		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/plain")
-			_, _ = w.Write([]byte("error code: 1010"))
-		}))
-		defer s.Close()
-		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
-		if got.Status != StatusFailed || got.HTTPStatus != http.StatusOK || !strings.Contains(got.Error, "error code: 1010") {
-			t.Fatalf("got=%+v", got)
-		}
-	})
-
-	t.Run("degraded", func(t *testing.T) {
-		degradedAfter = -time.Nanosecond
-		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "pong"})
-		}))
-		defer s.Close()
-		got := (Client{HTTP: s.Client()}).Probe(t.Context(), s.URL, "sk-test", "gpt-5.6-sol")
-		if got.Status != StatusDegraded || !got.Success {
-			t.Fatalf("got=%+v", got)
-		}
-	})
-}
-
-func TestProbeCodexCLIUsesTempConfigAndEnvKey(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "fake.log")
-	t.Setenv("AUM_FAKE_CODEX_LOG", logPath)
-	fake := fakeCodex(t, `#!/bin/sh
-set -eu
-case " $* " in *" --ask-for-approval "*) echo "bad approval arg" >&2; exit 15;; esac
-config="$CODEX_HOME/config.toml"
-[ "$AUM_CODEX_API_KEY" = "sk-card-secret" ] || { echo "missing card key" >&2; exit 13; }
-grep -q 'base_url = "https://codex.example.test/v1"' "$config" || { cat "$config" >&2; exit 10; }
-grep -q 'env_key = "AUM_CODEX_API_KEY"' "$config" || exit 11
-! grep -q 'sk-card-secret' "$config" || { echo "key leaked" >&2; exit 12; }
-instr=$(grep '^model_instructions_file = ' "$config" | sed 's/model_instructions_file = "\(.*\)"/\1/')
-[ -f "$instr" ] || { echo "missing instructions" >&2; exit 16; }
-grep -qx 'Answer briefly\.' "$instr" || { cat "$instr" >&2; exit 17; }
-{
-  printf 'args:%s\n' "$*"
-  cat "$config"
-} > "$AUM_FAKE_CODEX_LOG"
-out=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then
-    shift
-    out="$1"
-    break
-  fi
-  shift
-done
-[ -n "$out" ] || exit 14
-printf 'pong\n' > "$out"
-`)
-
-	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.6-sol")
-	if !got.Success || got.Status != StatusOperational || got.HTTPStatus != 0 || got.Output != "pong" || got.Input != "ping" {
-		t.Fatalf("got=%+v", got)
-	}
-	logBytes, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	logText := string(logBytes)
-	for _, want := range []string{"args:exec", " ping", "approval_policy=\"never\"", "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "model_provider = \"aum_card\"", "model_instructions_file = ", "project_doc_max_bytes = 0", "web_search = \"disabled\"", "model_reasoning_effort = \"none\"", "model_verbosity = \"low\"", "model_reasoning_summary = \"none\"", "inherit = \"none\"", "disable_response_storage = true", "wire_api = \"responses\""} {
-		if !strings.Contains(logText, want) {
-			t.Fatalf("fake codex log missing %q:\n%s", want, logText)
-		}
-	}
-}
-
-func TestProbeCodexCLIFailureIsRecordedAndRedacted(t *testing.T) {
-	fake := fakeCodex(t, `#!/bin/sh
-echo "user" >&2
-echo "ping" >&2
-echo "warning: Codex could not find bubblewrap on PATH." >&2
-echo "ERROR: exceeded retry limit, last status: 429 Too Many Requests, request id: req-1 sk-card-secret" >&2
-echo "ERROR: exceeded retry limit, last status: 429 Too Many Requests, request id: req-1 sk-card-secret" >&2
-exit 42
-`)
-	got := (Client{ProbeMode: ProbeModeCLI, CodexPath: fake}).Probe(t.Context(), "https://codex.example.test", "sk-card-secret", "gpt-5.6-sol")
-	if got.Success || got.Status != StatusError || !strings.Contains(got.Error, "429 Too Many Requests") || !strings.Contains(got.Error, "[redacted]") || strings.Contains(got.Error, "sk-card-secret") || strings.Contains(got.Error, "ping") || strings.Contains(got.Error, "bubblewrap") {
-		t.Fatalf("got=%+v", got)
-	}
-}
-
-func TestCodexCLIErrorKeepsUpstreamMessage(t *testing.T) {
-	output := []byte(`ERROR: {
-  "error": {
-    "message": "Unsupported value: 'minimal' is not supported with the 'gpt-5.5' model. Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'.",
-    "type": "invalid_request_error",
-    "param": "reasoning.effort"
-  }
-}`)
-	got := codexCLIError(errors.New("exit status 1"), output, "")
-	if !strings.Contains(got, "Unsupported value: 'minimal'") || strings.Contains(got, "invalid_request_error") {
-		t.Fatalf("got=%q", got)
-	}
-}
-
-func TestIsInternalProbeError(t *testing.T) {
-	if !IsInternalProbeError("model instructions file is empty: /tmp/aum-codex-probe-123") {
-		t.Fatal("expected internal probe error")
-	}
-	for _, output := range []string{
-		`WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "/tmp" (codex_home: AbsolutePathBuf("/tmp/aum-codex-probe-123/codex-home"))
-ERROR: unexpected status 502 Bad Gateway: error code: 502`,
-		`WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "/tmp" (codex_home: AbsolutePathBuf("/tmp/aum-codex-probe-123/codex-home"))
-ERROR: unexpected status 503 Service Unavailable: Service temporarily unavailable`,
-	} {
-		if IsInternalProbeError(output) {
-			t.Fatalf("upstream CLI failure misclassified as internal: %q", output)
-		}
-		got := codexCLIError(errors.New("exit status 1"), []byte(output), "")
-		if !strings.Contains(got, "unexpected status") {
-			t.Fatalf("upstream CLI failure was not preserved: %q", got)
-		}
-	}
-}
-
-func TestProbeCodexCLIRealOptIn(t *testing.T) {
-	if os.Getenv("AUM_REAL_CODEX_CLI_TEST") != "1" {
-		t.Skip("set AUM_REAL_CODEX_CLI_TEST=1 with AUM_REAL_CODEX_BASE_URL and AUM_REAL_CODEX_API_KEY")
-	}
-	baseURL, key := os.Getenv("AUM_REAL_CODEX_BASE_URL"), os.Getenv("AUM_REAL_CODEX_API_KEY")
-	if baseURL == "" || key == "" {
-		t.Skip("AUM_REAL_CODEX_BASE_URL and AUM_REAL_CODEX_API_KEY are required")
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-	defer cancel()
-	got := (Client{ProbeMode: ProbeModeCLI}).Probe(ctx, baseURL, key, "gpt-5.6-sol")
-	if !got.Success {
-		t.Fatalf("got=%+v", got)
-	}
-}
-
 func TestSub2APICheckBrowserFallbackRealOptIn(t *testing.T) {
 	if os.Getenv("AUM_REAL_BROWSER_CDP_TEST") != "1" {
 		t.Skip("set AUM_REAL_BROWSER_CDP_TEST=1 with browser and upstream environment variables")
@@ -417,13 +208,4 @@ func TestSub2APICheckBrowserFallbackRealOptIn(t *testing.T) {
 	if len(keys) == 0 {
 		t.Fatal("browser fallback check returned no API keys")
 	}
-}
-
-func fakeCodex(t *testing.T, script string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	return path
 }

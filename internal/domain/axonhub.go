@@ -4,16 +4,14 @@ import (
 	"errors"
 	"sort"
 	"strings"
-	"time"
 )
 
 const (
 	SchedulerProviderGGAPI   = "ggapi"
 	SchedulerProviderAxonHub = "axonhub"
 
-	AxonHubControlOff     = "off"
-	AxonHubControlObserve = "observe"
-	AxonHubControlActive  = "active"
+	AxonHubControlOff    = "off"
+	AxonHubControlActive = "active"
 
 	AxonHubStatusEnabled  = "enabled"
 	AxonHubStatusDisabled = "disabled"
@@ -50,16 +48,7 @@ func NormalizeAxonHubControlMode(mode string) string {
 	case AxonHubControlOff, AxonHubControlActive:
 		return strings.ToLower(strings.TrimSpace(mode))
 	default:
-		return AxonHubControlObserve
-	}
-}
-
-func ValidateAxonHubControlMode(mode string) error {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case AxonHubControlOff, AxonHubControlObserve, AxonHubControlActive:
-		return nil
-	default:
-		return errors.New("AxonHub 控制模式必须是 off、observe 或 active")
+		return AxonHubControlOff
 	}
 }
 
@@ -157,70 +146,6 @@ func AxonHubOrderingWeights(costs map[string]AxonHubCostTarget) map[string]int {
 		}
 	}
 	return out
-}
-
-func AxonHubSupportsGPTModel(models []string, model string) bool {
-	model = strings.ToLower(strings.TrimSpace(model))
-	if !strings.HasPrefix(model, "gpt-") {
-		return false
-	}
-	for _, candidate := range models {
-		if strings.EqualFold(strings.TrimSpace(candidate), model) {
-			return true
-		}
-	}
-	return false
-}
-
-type AxonHubChannelLifecycle struct {
-	ChannelID        string    `json:"channel_id"`
-	ChannelName      string    `json:"channel_name,omitempty"`
-	RemoteStatus     string    `json:"remote_status"`
-	RemoteTags       []string  `json:"remote_tags"`
-	RemoteManagedTag string    `json:"remote_managed_tag,omitempty"`
-	RemoteWeight     int       `json:"remote_weight"`
-	DesiredTag       string    `json:"desired_tag,omitempty"`
-	DesiredWeight    int       `json:"desired_weight"`
-	Owner            string    `json:"owner"`
-	ExternalTakeover bool      `json:"external_takeover"`
-	AUMDisabled      bool      `json:"aum_disabled"`
-	AUMDisabledAt    time.Time `json:"aum_disabled_at,omitempty"`
-	LastAUMStatus    string    `json:"last_aum_status,omitempty"`
-	LastAUMTag       string    `json:"last_aum_tag,omitempty"`
-	LastAUMWeight    int       `json:"last_aum_weight"`
-	LastAUMWriteAt   time.Time `json:"last_aum_write_at,omitempty"`
-	LastSource       string    `json:"last_source,omitempty"`
-	LastReason       string    `json:"last_reason,omitempty"`
-	PendingAction    string    `json:"pending_action,omitempty"`
-	PendingStatus    string    `json:"pending_status,omitempty"`
-	PendingTag       string    `json:"pending_tag,omitempty"`
-	PendingWeight    int       `json:"pending_weight"`
-	RetryAt          time.Time `json:"retry_at,omitempty"`
-	RetryCount       int       `json:"retry_count"`
-	LastError        string    `json:"last_error,omitempty"`
-	UpdatedAt        time.Time `json:"updated_at"`
-}
-
-type AxonHubControlPlaneChannel struct {
-	AxonHubChannelLifecycle
-	CardID         string   `json:"card_id,omitempty"`
-	CardName       string   `json:"card_name,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	Models         []string `json:"models,omitempty"`
-	Cost           float64  `json:"cost,omitempty"`
-	CostAvailable  bool     `json:"cost_available"`
-	TargetTags     []string `json:"target_tags"`
-	Archived       bool     `json:"archived"`
-	ModelSupported bool     `json:"model_supported"`
-	BalanceFresh   bool     `json:"balance_fresh"`
-	BalanceRemain  float64  `json:"balance_remain,omitempty"`
-}
-
-type AxonHubControlPlane struct {
-	Provider string                       `json:"provider"`
-	Mode     string                       `json:"control_mode"`
-	Channels []AxonHubControlPlaneChannel `json:"channels"`
-	Logs     []SchedulerLog               `json:"logs"`
 }
 
 type AxonHubPreflightCheck struct {

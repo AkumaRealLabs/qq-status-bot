@@ -44,21 +44,6 @@ func PublicAPIKeys(keys []APIKey) []APIKey {
 	return out
 }
 
-func (c ModelCard) Public() ModelCard {
-	out := c
-	out.APIKeySet = secretSet(c.APIKey)
-	out.APIKey = ""
-	return out
-}
-
-func PublicModelCards(cards []ModelCard) []ModelCard {
-	out := make([]ModelCard, len(cards))
-	for i, c := range cards {
-		out[i] = c.Public()
-	}
-	return out
-}
-
 func (s Settings) Public() Settings {
 	out := s
 	out.TelegramBotTokenSet = secretSet(s.TelegramBotToken)

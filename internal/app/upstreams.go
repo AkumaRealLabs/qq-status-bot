@@ -44,7 +44,7 @@ func (s *Service) SyncKeys(ctx context.Context, upstreamID string) error {
 		return err
 	}
 	mu := toMonitorUpstream(u)
-	result, err := s.Client.Check(ctx, &mu, "", "")
+	result, err := s.Client.Check(ctx, &mu)
 	if err != nil {
 		return err
 	}

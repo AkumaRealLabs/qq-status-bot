@@ -6,23 +6,14 @@ import (
 	"ai-upstream-monitor/internal/domain"
 )
 
-func (s *Server) monitorStatus(w http.ResponseWriter, r *http.Request) {
-	out, err := s.App.MonitorStatus(r.Context(), r.URL.Query().Get("window"))
-	writeJSONOrError(w, out, err)
-}
-
-func (s *Server) publicMonitorStatus(w http.ResponseWriter, r *http.Request) {
-	out, err := s.App.PublicMonitorStatus(r.Context(), r.URL.Query().Get("window"))
-	writeJSONOrError(w, out, err)
-}
-
 func (s *Server) balances(w http.ResponseWriter, r *http.Request) {
 	out, err := s.App.BalanceRows(r.Context())
 	writeJSONOrError(w, out, err)
 }
 
 func (s *Server) refreshBalances(w http.ResponseWriter, r *http.Request) {
-	writeNoContentOrError(w, s.App.RefreshBalances(r.Context()))
+	out, err := s.App.RefreshBalances(r.Context())
+	writeJSONOrError(w, out, err)
 }
 
 func (s *Server) todayRevenue(w http.ResponseWriter, r *http.Request) {

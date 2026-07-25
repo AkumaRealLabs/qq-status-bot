@@ -4,8 +4,8 @@ import {
   Activity,
   BarChart3,
   Bell,
+  CircleDollarSign,
   Database,
-  ExternalLink,
   FileText,
   KeyRound,
   Loader2,
@@ -13,7 +13,6 @@ import {
   MessageSquare,
   Settings,
   ShieldCheck,
-  SlidersHorizontal,
   TrendingUp,
   WalletCards,
 } from 'lucide-react'
@@ -25,10 +24,8 @@ import { alertError } from '@/lib/feedback'
 import { errorMessage } from '@/lib/format'
 import type { NavTab, SettingsData, SiteSettings, TabID } from '@/types'
 
-const AdminStatusPage = lazy(() =>
-  import('@/features/status/AdminStatusPage').then((m) => ({ default: m.AdminStatusPage })),
-)
 const BalancesPage = lazy(() => import('@/features/balances/BalancesPage').then((m) => ({ default: m.BalancesPage })))
+const CostsPage = lazy(() => import('@/features/costs/CostsPage').then((m) => ({ default: m.CostsPage })))
 const MessagesPage = lazy(() => import('@/features/messages/MessagesPage').then((m) => ({ default: m.MessagesPage })))
 const AuditPage = lazy(() => import('@/features/ops/OpsPage').then((m) => ({ default: m.AuditPage })))
 const EventsPage = lazy(() => import('@/features/ops/OpsPage').then((m) => ({ default: m.EventsPage })))
@@ -39,22 +36,18 @@ const CLIProxyPoolPage = lazy(() =>
   import('@/features/pools/CLIProxyPoolPage').then((m) => ({ default: m.CLIProxyPoolPage })),
 )
 const RevenuePage = lazy(() => import('@/features/revenue/RevenuePage').then((m) => ({ default: m.RevenuePage })))
-const SchedulerPage = lazy(() =>
-  import('@/features/scheduler/SchedulerPage').then((m) => ({ default: m.SchedulerPage })),
-)
 const SettingsPage = lazy(() => import('@/features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const UpstreamsPage = lazy(() =>
   import('@/features/upstreams/UpstreamsPage').then((m) => ({ default: m.UpstreamsPage })),
 )
 
 const tabs: NavTab[] = [
-  { id: 'status', label: '状态监控', short: '状态', icon: Activity },
   { id: 'balances', label: '余额监控', short: '余额', icon: WalletCards },
+  { id: 'costs', label: '成本管理', short: '成本', icon: CircleDollarSign },
   { id: 'revenue', label: '今日收入', short: '收入', icon: BarChart3 },
   { id: 'profit', label: '调度池利润', short: '利润', icon: TrendingUp },
   { id: 'messages', label: '最新消息', short: '消息', icon: MessageSquare },
   { id: 'upstreams', label: '上游管理', short: '上游', icon: Database },
-  { id: 'scheduler', label: '渠道管理', short: '渠道', icon: SlidersHorizontal },
   { id: 'pools', label: '号池管理', short: '号池', icon: KeyRound },
   { id: 'events', label: '事件中心', short: '事件', icon: Activity },
   { id: 'audit', label: '审计日志', short: '审计', icon: FileText },
@@ -64,13 +57,12 @@ const tabs: NavTab[] = [
 ]
 
 const tabPaths: Record<TabID, string> = {
-  status: '/admin/status',
   balances: '/admin/balances',
+  costs: '/admin/costs',
   revenue: '/admin/revenue',
   profit: '/admin/profit',
   messages: '/admin/messages',
   upstreams: '/admin/upstreams',
-  scheduler: '/admin/scheduler',
   pools: '/admin/pools',
   events: '/admin/events',
   audit: '/admin/audit',
@@ -80,6 +72,8 @@ const tabPaths: Record<TabID, string> = {
 }
 
 function normalizePath(pathname: string) {
+  if (pathname === '/' || pathname === '/admin' || pathname === '/status' || pathname === '/admin/status') return '/admin/balances'
+  if (pathname === '/scheduler' || pathname === '/admin/scheduler') return '/admin/costs'
   if (pathname === '/admin/merchant-balance') return '/admin/revenue'
   if (pathname === '/admin/ops' || pathname === '/ops') return '/admin/events'
   return pathname
@@ -87,7 +81,7 @@ function normalizePath(pathname: string) {
 
 function tabFromPath(pathname: string): TabID {
   const path = normalizePath(pathname)
-  return tabs.find((item) => tabPaths[item.id] === path)?.id ?? 'status'
+  return tabs.find((item) => tabPaths[item.id] === path)?.id ?? 'balances'
 }
 
 export default function AdminApp() {
@@ -183,12 +177,6 @@ export default function AdminApp() {
           ))}
         </nav>
         <div className="mt-auto border-t border-border p-3">
-          <Button asChild variant="ghost" className="w-full justify-start">
-            <a href="/">
-              <ExternalLink className="size-4" />
-              前台
-            </a>
-          </Button>
           <Button variant="ghost" className="w-full justify-start" onClick={logout} disabled={loggingOut}>
             {loggingOut ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
             退出登录
@@ -202,12 +190,6 @@ export default function AdminApp() {
             <div className="text-base font-medium text-foreground">{active.label}</div>
           </div>
           <div className="flex shrink-0 items-center gap-2 lg:hidden">
-            <Button asChild variant="outline" size="sm">
-              <a href="/">
-                <ExternalLink className="size-4" />
-                前台
-              </a>
-            </Button>
             <Button variant="outline" size="sm" onClick={logout} disabled={loggingOut}>
               {loggingOut ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
               退出
@@ -218,13 +200,12 @@ export default function AdminApp() {
         <main className="mx-auto grid w-full max-w-[1200px] min-w-0 animate-in gap-4 p-4 fade-in-50 duration-300 lg:p-6">
           <MobileTabs tab={tab} setTab={navigate} tabs={tabs} />
           <Suspense fallback={<ShellLoading />}>
-            {tab === 'status' && <AdminStatusPage />}
             {tab === 'balances' && <BalancesPage />}
+            {tab === 'costs' && <CostsPage />}
             {tab === 'revenue' && <RevenuePage />}
             {tab === 'profit' && <ProfitPage />}
             {tab === 'messages' && <MessagesPage />}
             {tab === 'upstreams' && <UpstreamsPage />}
-            {tab === 'scheduler' && <SchedulerPage />}
             {tab === 'pools' && <CLIProxyPoolPage />}
             {tab === 'events' && <EventsPage />}
             {tab === 'audit' && <AuditPage />}

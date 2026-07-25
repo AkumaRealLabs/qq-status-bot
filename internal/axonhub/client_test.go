@@ -1,7 +1,6 @@
 package axonhub
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -45,35 +44,13 @@ func TestClientTreatsGraphQLErrorsAsFailures(t *testing.T) {
 	}
 }
 
-func TestClientWritesLowercaseStatusAndHandlesTimeout(t *testing.T) {
-	status := ""
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Variables map[string]any `json:"variables"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if value, ok := body.Variables["status"].(string); ok {
-			status = value
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": map[string]any{
-				"updateChannelStatus": map[string]any{
-					"id": "9", "name": "GPT", "type": "openai", "status": "disabled", "orderingWeight": 1, "tags": []string{}, "allModelEntries": []any{},
-				},
-			},
-		})
-	}))
-	defer server.Close()
-	_, err := (Client{BaseURL: server.URL, Token: "key"}).UpdateStatus(t.Context(), "9", "DISABLED")
-	if err != nil || status != "disabled" {
-		t.Fatalf("status=%q err=%v", status, err)
-	}
+func TestClientHandlesTimeout(t *testing.T) {
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(50 * time.Millisecond)
 		_ = json.NewEncoder(w).Encode(map[string]any{})
 	}))
 	defer slow.Close()
-	_, err = (Client{BaseURL: slow.URL, Token: "key", HTTP: &http.Client{Timeout: 5 * time.Millisecond}}).Channels(context.Background())
+	_, err := (Client{BaseURL: slow.URL, Token: "key", HTTP: &http.Client{Timeout: 5 * time.Millisecond}}).Channels(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "超时") {
 		t.Fatalf("timeout err=%v", err)
 	}
@@ -97,5 +74,35 @@ func TestClientSignInUsesAdminCredentials(t *testing.T) {
 	token, expiry, err := (Client{BaseURL: server.URL}).SignIn(t.Context(), "admin@example.com", "password")
 	if err != nil || token != "token" || !expiry.After(time.Now()) {
 		t.Fatalf("token=%q expiry=%s err=%v", token, expiry, err)
+	}
+}
+
+func TestClientUpdateFieldsNeverUsesStatusMutation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(body.Query, "updateChannelStatus") || !strings.Contains(body.Query, "updateChannel") {
+			t.Fatalf("unexpected mutation: %s", body.Query)
+		}
+		input, _ := body.Variables["input"].(map[string]any)
+		if len(input) != 2 || input["orderingWeight"] != float64(90) {
+			t.Fatalf("input=%v", input)
+		}
+		if _, ok := input["status"]; ok {
+			t.Fatalf("status must not be written: %v", input)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"updateChannel": map[string]any{
+			"id": "9", "name": "GPT", "type": "openai", "status": "disabled", "orderingWeight": 90, "tags": []string{"manual", "payg_low"}, "allModelEntries": []any{},
+		}}})
+	}))
+	defer server.Close()
+	row, err := (Client{BaseURL: server.URL, Token: "key"}).UpdateFields(t.Context(), "9", []string{"manual", "payg_low"}, 90)
+	if err != nil || row.Status != "disabled" || row.OrderingWeight != 90 {
+		t.Fatalf("row=%+v err=%v", row, err)
 	}
 }
