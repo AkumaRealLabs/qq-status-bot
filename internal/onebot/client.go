@@ -11,9 +11,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 const maxResponseBytes = 1 << 20
+
+// HTTP 为空时的兜底，避免 LLBot 无响应时挂住连接检查或告警发送。
+var defaultHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 type Client struct {
 	HTTP *http.Client
@@ -91,7 +95,7 @@ func (c *Client) call(ctx context.Context, method, baseURL, token, path string, 
 	}
 	client := c.HTTP
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultHTTPClient
 	}
 	resp, err := client.Do(req)
 	if err != nil {

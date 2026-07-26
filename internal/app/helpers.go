@@ -59,6 +59,9 @@ func (s *Service) alertFailureThreshold(ctx context.Context) int {
 	return domain.EffectiveFailureThreshold(rules)
 }
 
+// Client.HTTP 为空时的兜底，避免 Telegram 无响应时挂住告警发送。
+var telegramFallbackClient = &http.Client{Timeout: 15 * time.Second}
+
 func (s *Service) sendTelegram(ctx context.Context, message string) error {
 	cfg, err := s.Store.Settings(ctx)
 	if err != nil {
@@ -77,7 +80,7 @@ func (s *Service) sendTelegram(ctx context.Context, message string) error {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	hc := s.Client.HTTP
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = telegramFallbackClient
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

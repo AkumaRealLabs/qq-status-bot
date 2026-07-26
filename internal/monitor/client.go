@@ -11,7 +11,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// HTTP 为空时的兜底：宁可超时报错，也不要让上游 hang 住整轮刷新。
+var defaultHTTPClient = &http.Client{Timeout: 45 * time.Second}
 
 type Client struct {
 	HTTP    *http.Client
@@ -302,7 +306,7 @@ func (c Client) doJSON(ctx context.Context, method, rawURL string, body any, hea
 	}
 	hc := c.HTTP
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = defaultHTTPClient
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

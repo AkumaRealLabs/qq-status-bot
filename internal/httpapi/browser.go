@@ -14,6 +14,9 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+// 浏览器侧车（Chromium + noVNC）卡住时 CDP 请求不能无限期挂住 handler。
+var browserDebugClient = &http.Client{Timeout: 10 * time.Second}
+
 func (s *Server) browserLogin(w http.ResponseWriter, r *http.Request) {
 	u, err := s.App.GetUpstream(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -193,7 +196,7 @@ func browserDebugDo(method, path string) (*http.Response, error) {
 		return nil, err
 	}
 	req.Host = browserDebugHostHeader()
-	return http.DefaultClient.Do(req)
+	return browserDebugClient.Do(req)
 }
 
 func rewriteWebSocketURL(debugURL, wsURL string) string {
