@@ -39,8 +39,9 @@
 
 ## 前端约定
 
-- 入口：`/` → `PublicApp`，`/admin/*` → `AdminApp`（各自 lazy）。
-- 状态页 **public / admin / shared** 拆分；admin 编辑、dnd 等**不得**打进公开路径 chunk。
+- 只有一个应用：`main.tsx` 直接挂 `AdminApp`（不要再包一层 lazy 入口，公开页已删除）。
+- 分包按标签页做：`AdminApp` 里各 feature 页面用 `React.lazy()`，入口 chunk 只装外壳与鉴权。
+- 旧地址回落表两处要同步：`AdminApp.tsx` 的 `legacyPaths` 与 `internal/httpapi/server.go` 的 `legacyPaths`。
 - 共享：`src/lib/*`、`src/components/common.tsx`；优先复用反馈/表格/格式化，避免复制粘贴。
 - 样式：Tailwind + 现有组件模式；设计令牌参考 `DESIGN.md`（键名英文）。
 - 包管理：`pnpm`（不要擅自改成 npm/yarn）。

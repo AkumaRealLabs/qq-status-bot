@@ -10,8 +10,7 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
-  // 公开/管理分包由 React.lazy() 入口驱动：
-  // PublicStatusPage / shared 不进 AdminStatusPage 及其他 admin 标签。
-  // 此处避免激进 manualChunks — Vite 8/Rolldown 下易形成循环 chunk 图，
-  // 并可能让公开页下载仅 admin 依赖（如 @dnd-kit）。
+  // 分包由 AdminApp 里各 feature 页面的 React.lazy() 驱动：入口 chunk 只装
+  // 外壳与鉴权，切标签页才拉对应 chunk。
+  // 此处避免激进 manualChunks — Vite 8/Rolldown 下易形成循环 chunk 图。
 })

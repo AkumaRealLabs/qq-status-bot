@@ -13,6 +13,9 @@ import (
 	"time"
 )
 
+// HTTP 为空时的兜底，避免易支付无响应时无限期挂住收入查询。
+var defaultHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 type Config struct {
 	BaseURL string
 	PID     string
@@ -119,7 +122,7 @@ func (c Client) get(ctx context.Context, cfg Config, q url.Values) (map[string]a
 	}
 	hc := c.HTTP
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = defaultHTTPClient
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

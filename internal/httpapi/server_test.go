@@ -162,18 +162,42 @@ func TestRetiredProfitMessageAndPoolRoutesReturnNotFound(t *testing.T) {
 	}
 }
 
-func TestDefaultAndLegacyStatusPathsRedirectToBalances(t *testing.T) {
+// 遍历 legacyPaths 本身，新增条目自动纳入覆盖。
+func TestLegacyPathsRedirect(t *testing.T) {
 	_, ts := newHTTPTestServer(t)
 	client := ts.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	for _, path := range []string{"/", "/admin", "/status", "/admin/status", "/admin/profit", "/admin/messages", "/admin/pools"} {
+	for pattern, want := range legacyPaths {
+		path := pattern
+		if path == "/{$}" {
+			path = "/"
+		}
 		resp, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != "/admin/balances" {
-			t.Fatalf("%s status=%d location=%q", path, resp.StatusCode, resp.Header.Get("Location"))
+		if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != want {
+			t.Errorf("%s status=%d location=%q want %q", path, resp.StatusCode, resp.Header.Get("Location"), want)
+		}
+	}
+}
+
+// 旧地址表至少要覆盖这些历史路径，避免重构时整表被改空。
+func TestLegacyPathsCoverRetiredFeatures(t *testing.T) {
+	for path, want := range map[string]string{
+		"/": "/admin/balances", "/admin": "/admin/balances", "/status": "/admin/balances",
+		"/admin/status": "/admin/balances", "/admin/profit": "/admin/balances",
+		"/admin/messages": "/admin/balances", "/admin/pools": "/admin/balances",
+		"/admin/scheduler": "/admin/costs", "/admin/ops": "/admin/events",
+		"/admin/merchant-balance": "/admin/revenue",
+	} {
+		pattern := path
+		if pattern == "/" {
+			pattern = "/{$}"
+		}
+		if got := legacyPaths[pattern]; got != want {
+			t.Errorf("legacyPaths[%q] = %q, want %q", pattern, got, want)
 		}
 	}
 }

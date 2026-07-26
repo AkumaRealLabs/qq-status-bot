@@ -38,6 +38,7 @@
 | 门面 | 字段 | 职责 |
 |------|------|------|
 | `SchedulerService` | `Service.Scheduler` | 成本绑定、渠道成本分组/优先级或标签/权重同步 |
+| `OneBotService` | `Service.OneBot` | OneBot 连接检查、Webhook 校验、文本发送 |
 
 对外方法仍挂在 `*Service` 上，经 `facade_forwarders.go` 薄转发（避免改 HTTP handler）。
 

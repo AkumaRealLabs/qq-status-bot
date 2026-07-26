@@ -54,15 +54,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 			used_quota REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
 			UNIQUE(upstream_id, remote_id)
 		)`,
-		`CREATE TABLE IF NOT EXISTS model_cards (
-			id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '',
-			upstream_id TEXT NOT NULL DEFAULT '', key_id TEXT NOT NULL DEFAULT '', model TEXT NOT NULL,
-			display_group TEXT NOT NULL DEFAULT '', pool_enabled INTEGER NOT NULL DEFAULT 1, manual_cost_ratio TEXT NOT NULL DEFAULT '',
-			scheduler_group TEXT NOT NULL DEFAULT '', scheduler_channel_id TEXT NOT NULL DEFAULT '', scheduler_channel_name TEXT NOT NULL DEFAULT '',
-			axonhub_channel_id TEXT NOT NULL DEFAULT '', axonhub_channel_name TEXT NOT NULL DEFAULT '',
-			scheduler_auto_disabled INTEGER NOT NULL DEFAULT 0, scheduler_auto_disabled_at TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, public_enabled INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
-			failure_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-		)`,
 		`CREATE TABLE IF NOT EXISTS scheduler_cost_bindings (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, upstream_id TEXT NOT NULL DEFAULT '', key_id TEXT NOT NULL DEFAULT '',
 			manual_cost_ratio TEXT NOT NULL DEFAULT '', scheduler_channel_id TEXT NOT NULL DEFAULT '', scheduler_channel_name TEXT NOT NULL DEFAULT '',
@@ -79,13 +70,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 			id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, checked_at TEXT NOT NULL, balance REAL NOT NULL DEFAULT 0,
 			used REAL NOT NULL DEFAULT 0, remain REAL NOT NULL DEFAULT 0, requests INTEGER NOT NULL DEFAULT 0,
 			error TEXT NOT NULL DEFAULT '', latency_ms INTEGER NOT NULL DEFAULT 0
-		)`,
-		`CREATE TABLE IF NOT EXISTS probe_runs (
-			id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, card_id TEXT NOT NULL DEFAULT '', checked_at TEXT NOT NULL,
-			model TEXT NOT NULL, input TEXT NOT NULL DEFAULT 'ping', status TEXT NOT NULL DEFAULT '',
-			output TEXT NOT NULL DEFAULT '', http_status INTEGER NOT NULL DEFAULT 0,
-			latency_ms INTEGER NOT NULL DEFAULT 0, success INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
-			purpose TEXT NOT NULL DEFAULT 'regular'
 		)`,
 		`CREATE TABLE IF NOT EXISTS alert_events (
 			id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL, type TEXT NOT NULL, recover INTEGER NOT NULL DEFAULT 0,
@@ -118,76 +102,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 			action TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '',
 			provider TEXT NOT NULL DEFAULT 'ggapi', created_at TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS channel_availability (
-			channel_id TEXT PRIMARY KEY, channel_name TEXT NOT NULL DEFAULT '', card_id TEXT NOT NULL DEFAULT '', card_name TEXT NOT NULL DEFAULT '',
-			upstream_id TEXT NOT NULL DEFAULT '', upstream_name TEXT NOT NULL DEFAULT '', managed INTEGER NOT NULL DEFAULT 1,
-			blockers TEXT NOT NULL DEFAULT '[]', desired_status INTEGER NOT NULL DEFAULT 1, actual_status INTEGER NOT NULL DEFAULT 0,
-			disabled_at TEXT NOT NULL DEFAULT '', recovery_success_count INTEGER NOT NULL DEFAULT 0,
-			override_kind TEXT NOT NULL DEFAULT '', override_until TEXT NOT NULL DEFAULT '',
-			pending_action TEXT NOT NULL DEFAULT '', pending_status INTEGER NOT NULL DEFAULT 0,
-			retry_at TEXT NOT NULL DEFAULT '', retry_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
-			version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_traffic_events (
-			id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, source TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL,
-			channel_id TEXT NOT NULL DEFAULT '', channel_name TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', group_name TEXT NOT NULL DEFAULT '',
-			request_id TEXT NOT NULL DEFAULT '', upstream_request_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '', http_status INTEGER NOT NULL DEFAULT 0,
-			error_type TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '', duration_ms INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER NOT NULL DEFAULT 0,
-			stream_ended INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0, retry_count INTEGER NOT NULL DEFAULT 0,
-			retry_succeeded INTEGER NOT NULL DEFAULT 0, affinity_rule TEXT NOT NULL DEFAULT '', affinity_group TEXT NOT NULL DEFAULT '',
-			affinity_hit INTEGER NOT NULL DEFAULT 0, session_scoped INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_traffic_10s (
-			id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, channel_name TEXT NOT NULL DEFAULT '', model TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT '',
-			window_start TEXT NOT NULL, window_end TEXT NOT NULL, requests INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0,
-			soft_failures INTEGER NOT NULL DEFAULT 0, hard_failures INTEGER NOT NULL DEFAULT 0, user_errors INTEGER NOT NULL DEFAULT 0,
-			p95_ttft_ms INTEGER NOT NULL DEFAULT 0, avg_ttft_ms INTEGER NOT NULL DEFAULT 0, failure_rate REAL NOT NULL DEFAULT 0,
-			last_success_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, UNIQUE(channel_id, model, window_start)
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_traffic_1m (
-			id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, channel_name TEXT NOT NULL DEFAULT '', model TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT '',
-			window_start TEXT NOT NULL, window_end TEXT NOT NULL, requests INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0,
-			soft_failures INTEGER NOT NULL DEFAULT 0, hard_failures INTEGER NOT NULL DEFAULT 0, user_errors INTEGER NOT NULL DEFAULT 0,
-			p95_ttft_ms INTEGER NOT NULL DEFAULT 0, avg_ttft_ms INTEGER NOT NULL DEFAULT 0, failure_rate REAL NOT NULL DEFAULT 0,
-			last_success_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, UNIQUE(channel_id, model, window_start)
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_traffic_cursors (
-			source TEXT PRIMARY KEY, cursor_at TEXT NOT NULL DEFAULT '', scan_start_at TEXT NOT NULL DEFAULT '', scan_end_at TEXT NOT NULL DEFAULT '',
-			next_page INTEGER NOT NULL DEFAULT 0, last_poll_at TEXT NOT NULL DEFAULT '', last_event_at TEXT NOT NULL DEFAULT '',
-			backlog_pages INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_traffic_control (
-			channel_id TEXT PRIMARY KEY, base_priority INTEGER NOT NULL DEFAULT 0, base_weight INTEGER NOT NULL DEFAULT 0,
-			desired_priority INTEGER NOT NULL DEFAULT 0, desired_weight INTEGER NOT NULL DEFAULT 0,
-			actual_priority INTEGER NOT NULL DEFAULT 0, actual_weight INTEGER NOT NULL DEFAULT 0, desired_status INTEGER NOT NULL DEFAULT 1,
-			actual_status INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'healthy', reason TEXT NOT NULL DEFAULT '',
-			failure_windows INTEGER NOT NULL DEFAULT 0, recovery_stage INTEGER NOT NULL DEFAULT 0, cooldown_until TEXT NOT NULL DEFAULT '',
-			last_probe_at TEXT NOT NULL DEFAULT '', recovery_successes INTEGER NOT NULL DEFAULT 0, stage_changed_at TEXT NOT NULL DEFAULT '',
-			retry_at TEXT NOT NULL DEFAULT '', retry_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_channel_lifecycle (
-			channel_id TEXT PRIMARY KEY, channel_name TEXT NOT NULL DEFAULT '', remote_status INTEGER NOT NULL DEFAULT 0,
-			remote_priority INTEGER NOT NULL DEFAULT 0, remote_weight INTEGER NOT NULL DEFAULT 0, owner TEXT NOT NULL DEFAULT 'aum',
-			external_takeover INTEGER NOT NULL DEFAULT 0, aum_disabled INTEGER NOT NULL DEFAULT 0, last_aum_status INTEGER NOT NULL DEFAULT 0,
-			last_aum_write_at TEXT NOT NULL DEFAULT '', last_source TEXT NOT NULL DEFAULT '', last_reason TEXT NOT NULL DEFAULT '',
-			traffic_since TEXT NOT NULL DEFAULT '', affinity_cleanup_pending INTEGER NOT NULL DEFAULT 0,
-			affinity_cleanup_retry_at TEXT NOT NULL DEFAULT '', affinity_cleanup_retries INTEGER NOT NULL DEFAULT 0,
-			affinity_cleanup_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_axonhub_channel_lifecycle (
-			channel_id TEXT PRIMARY KEY, channel_name TEXT NOT NULL DEFAULT '', remote_status TEXT NOT NULL DEFAULT '',
-			remote_tags TEXT NOT NULL DEFAULT '[]', remote_managed_tag TEXT NOT NULL DEFAULT '', remote_weight INTEGER NOT NULL DEFAULT 0,
-			desired_tag TEXT NOT NULL DEFAULT '', desired_weight INTEGER NOT NULL DEFAULT 0, owner TEXT NOT NULL DEFAULT 'observed',
-			external_takeover INTEGER NOT NULL DEFAULT 0, aum_disabled INTEGER NOT NULL DEFAULT 0, aum_disabled_at TEXT NOT NULL DEFAULT '',
-			health_state TEXT NOT NULL DEFAULT 'healthy', auto_disabled_at TEXT NOT NULL DEFAULT '', auto_disable_status_code INTEGER NOT NULL DEFAULT 0,
-			auto_disable_model TEXT NOT NULL DEFAULT '', recovery_not_before TEXT NOT NULL DEFAULT '', recovery_successes INTEGER NOT NULL DEFAULT 0,
-			last_recovery_probe_at TEXT NOT NULL DEFAULT '', recovery_error TEXT NOT NULL DEFAULT '',
-			last_aum_status TEXT NOT NULL DEFAULT '', last_aum_tag TEXT NOT NULL DEFAULT '', last_aum_weight INTEGER NOT NULL DEFAULT 0,
-			last_aum_write_at TEXT NOT NULL DEFAULT '', last_source TEXT NOT NULL DEFAULT '', last_reason TEXT NOT NULL DEFAULT '',
-			pending_action TEXT NOT NULL DEFAULT '', pending_status TEXT NOT NULL DEFAULT '', pending_tag TEXT NOT NULL DEFAULT '',
-			pending_weight INTEGER NOT NULL DEFAULT 0, retry_at TEXT NOT NULL DEFAULT '', retry_count INTEGER NOT NULL DEFAULT 0,
-			last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
-		)`,
 		`CREATE TABLE IF NOT EXISTS revenue_cards (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, source_type TEXT NOT NULL, upstream_id TEXT NOT NULL DEFAULT '',
 			base_url TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', access_token TEXT NOT NULL DEFAULT '',
@@ -195,9 +109,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 			enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_upstream ON api_keys(upstream_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_cards_upstream ON model_cards(upstream_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_cost_bindings_upstream ON scheduler_cost_bindings(upstream_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_probe_card_time ON probe_runs(card_id, checked_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_balance_upstream_time ON balance_snapshots(upstream_id, checked_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_state ON alert_events(upstream_id, type, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_ops_events_time ON ops_events(created_at)`,
@@ -206,18 +118,10 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_recharge_upstream_time ON balance_recharge_logs(upstream_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_recharge_pending ON balance_recharge_logs(method, status, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_scheduler_logs_time ON scheduler_logs(created_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_channel_availability_upstream ON channel_availability(upstream_id, managed)`,
-		`CREATE INDEX IF NOT EXISTS idx_channel_availability_retry ON channel_availability(pending_action, retry_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_events_time ON scheduler_traffic_events(occurred_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_events_channel_model ON scheduler_traffic_events(channel_id, model, occurred_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_10s_time ON scheduler_traffic_10s(window_start)`,
-		`CREATE INDEX IF NOT EXISTS idx_scheduler_traffic_1m_time ON scheduler_traffic_1m(window_start)`,
-		`CREATE INDEX IF NOT EXISTS idx_scheduler_channel_lifecycle_cleanup ON scheduler_channel_lifecycle(affinity_cleanup_pending, affinity_cleanup_retry_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_scheduler_axonhub_lifecycle_retry ON scheduler_axonhub_channel_lifecycle(pending_action, retry_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_revenue_cards_upstream ON revenue_cards(upstream_id)`,
 	}
-	if monitoringRetired {
-		stmts = withoutRetiredMonitoringStatements(stmts)
+	if !monitoringRetired {
+		stmts = append(stmts, legacyCostBindingStmts...)
 	}
 	for _, stmt := range stmts {
 		if _, err := s.DB.ExecContext(ctx, stmt); err != nil {
@@ -269,45 +173,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "settings", "scheduler_unassigned_group", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if !monitoringRetired {
-		for _, col := range []struct{ name, def string }{
-			{"scan_start_at", "TEXT NOT NULL DEFAULT ''"}, {"scan_end_at", "TEXT NOT NULL DEFAULT ''"}, {"next_page", "INTEGER NOT NULL DEFAULT 0"},
-		} {
-			if err := s.addColumnIfMissing(ctx, "scheduler_traffic_cursors", col.name, col.def); err != nil {
-				return err
-			}
-		}
-		for _, col := range []struct{ name, def string }{
-			{"affinity_rule", "TEXT NOT NULL DEFAULT ''"}, {"affinity_group", "TEXT NOT NULL DEFAULT ''"},
-			{"affinity_hit", "INTEGER NOT NULL DEFAULT 0"}, {"session_scoped", "INTEGER NOT NULL DEFAULT 0"},
-		} {
-			if err := s.addColumnIfMissing(ctx, "scheduler_traffic_events", col.name, col.def); err != nil {
-				return err
-			}
-		}
-		for _, col := range []struct{ name, def string }{
-			{"desired_priority", "INTEGER NOT NULL DEFAULT 0"}, {"desired_weight", "INTEGER NOT NULL DEFAULT 0"},
-			{"last_probe_at", "TEXT NOT NULL DEFAULT ''"}, {"recovery_successes", "INTEGER NOT NULL DEFAULT 0"}, {"stage_changed_at", "TEXT NOT NULL DEFAULT ''"},
-		} {
-			if err := s.addColumnIfMissing(ctx, "scheduler_traffic_control", col.name, col.def); err != nil {
-				return err
-			}
-		}
-		for _, col := range []struct{ name, def string }{
-			{"health_state", "TEXT NOT NULL DEFAULT 'healthy'"},
-			{"auto_disabled_at", "TEXT NOT NULL DEFAULT ''"},
-			{"auto_disable_status_code", "INTEGER NOT NULL DEFAULT 0"},
-			{"auto_disable_model", "TEXT NOT NULL DEFAULT ''"},
-			{"recovery_not_before", "TEXT NOT NULL DEFAULT ''"},
-			{"recovery_successes", "INTEGER NOT NULL DEFAULT 0"},
-			{"last_recovery_probe_at", "TEXT NOT NULL DEFAULT ''"},
-			{"recovery_error", "TEXT NOT NULL DEFAULT ''"},
-		} {
-			if err := s.addColumnIfMissing(ctx, "scheduler_axonhub_channel_lifecycle", col.name, col.def); err != nil {
-				return err
-			}
-		}
-	}
 	for _, col := range []struct{ name, def string }{
 		{"notification_rules", "TEXT NOT NULL DEFAULT ''"},
 	} {
@@ -316,7 +181,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 	if !monitoringRetired {
-		if err := s.prepareLegacyMonitoringSchema(ctx); err != nil {
+		if err := s.prepareLegacyCostBindingSource(ctx); err != nil {
 			return err
 		}
 	}
@@ -360,26 +225,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if _, err := s.exec(ctx, `UPDATE scheduler_logs SET provider='ggapi' WHERE TRIM(provider)=''`); err != nil {
 		return err
 	}
-	if !monitoringRetired {
-		// 兼容旧自动关闭：只接管状态，不自动远端恢复。
-		if _, err := s.exec(ctx, `INSERT INTO channel_availability
-		(channel_id, channel_name, card_id, card_name, upstream_id, managed, blockers, desired_status, actual_status, disabled_at, recovery_success_count, version, updated_at)
-		SELECT scheduler_channel_id, scheduler_channel_name, id, name, upstream_id, 1, '[{"kind":"probe_failed","message":"从旧自动关闭状态迁移"}]', 2, 2,
-			CASE WHEN scheduler_auto_disabled_at<>'' THEN scheduler_auto_disabled_at ELSE ? END, 0, 1, ?
-		FROM model_cards
-		WHERE pool_enabled=1 AND scheduler_auto_disabled=1 AND TRIM(scheduler_channel_id)<>''
-		ON CONFLICT(channel_id) DO NOTHING`, nowText(), nowText()); err != nil {
-			return err
-		}
-		// 旧运行态里明确由 AUM 关闭的渠道可以继续恢复；其余远端状态在首轮读取时只建立基线。
-		if _, err := s.exec(ctx, `INSERT INTO scheduler_channel_lifecycle
-		(channel_id, channel_name, remote_status, owner, aum_disabled, last_aum_status, last_source, last_reason, traffic_since, updated_at)
-		SELECT channel_id, channel_name, actual_status, 'aum', 1, 2, 'migration', '从既有可用性运行态迁移', ?, ?
-		FROM channel_availability WHERE actual_status=2 AND desired_status=2 AND disabled_at<>''
-		ON CONFLICT(channel_id) DO NOTHING`, nowText(), nowText()); err != nil {
-			return err
-		}
-	}
 	if err := s.retireMonitoringSchema(ctx); err != nil {
 		return err
 	}
@@ -404,57 +249,38 @@ func (s *Store) migrationDoneIfTableExists(ctx context.Context, source string) (
 	return err == nil, err
 }
 
-func withoutRetiredMonitoringStatements(stmts []string) []string {
-	retired := []string{
-		"model_cards", "probe_runs", "channel_availability", "scheduler_traffic_events", "scheduler_traffic_10s",
-		"scheduler_traffic_1m", "scheduler_traffic_cursors", "scheduler_traffic_control",
-		"scheduler_channel_lifecycle", "scheduler_axonhub_channel_lifecycle",
-	}
-	out := make([]string, 0, len(stmts))
-	for _, stmt := range stmts {
-		lower := strings.ToLower(stmt)
-		skip := false
-		for _, table := range retired {
-			if strings.Contains(lower, table) {
-				skip = true
-				break
-			}
-		}
-		if !skip {
-			out = append(out, stmt)
-		}
-	}
-	return out
+// legacyCostBindingStmts 只在 retireMonitoringSchema 还没跑过时建表：那次迁移要
+// 从 model_cards 读出成本绑定，读完就 DROP。已迁移过的库不再重建这张表。
+var legacyCostBindingStmts = []string{
+	`CREATE TABLE IF NOT EXISTS model_cards (
+		id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '',
+		upstream_id TEXT NOT NULL DEFAULT '', key_id TEXT NOT NULL DEFAULT '', model TEXT NOT NULL,
+		display_group TEXT NOT NULL DEFAULT '', pool_enabled INTEGER NOT NULL DEFAULT 1, manual_cost_ratio TEXT NOT NULL DEFAULT '',
+		scheduler_group TEXT NOT NULL DEFAULT '', scheduler_channel_id TEXT NOT NULL DEFAULT '', scheduler_channel_name TEXT NOT NULL DEFAULT '',
+		axonhub_channel_id TEXT NOT NULL DEFAULT '', axonhub_channel_name TEXT NOT NULL DEFAULT '',
+		scheduler_auto_disabled INTEGER NOT NULL DEFAULT 0, scheduler_auto_disabled_at TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, public_enabled INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
+		failure_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_cards_upstream ON model_cards(upstream_id)`,
 }
 
-func (s *Store) prepareLegacyMonitoringSchema(ctx context.Context) error {
-	for _, col := range []struct{ table, name, def string }{
-		{"probe_runs", "status", "TEXT NOT NULL DEFAULT ''"},
-		{"probe_runs", "output", "TEXT NOT NULL DEFAULT ''"},
-		{"probe_runs", "purpose", "TEXT NOT NULL DEFAULT 'regular'"},
-		{"model_cards", "base_url", "TEXT NOT NULL DEFAULT ''"},
-		{"model_cards", "api_key", "TEXT NOT NULL DEFAULT ''"},
-		{"model_cards", "public_enabled", "INTEGER NOT NULL DEFAULT 0"},
-		{"model_cards", "display_group", "TEXT NOT NULL DEFAULT ''"},
-		{"model_cards", "pool_enabled", "INTEGER NOT NULL DEFAULT 1"},
-		{"model_cards", "manual_cost_ratio", "TEXT NOT NULL DEFAULT ''"},
-		{"model_cards", "scheduler_group", "TEXT NOT NULL DEFAULT ''"},
-		{"model_cards", "sort_order", "INTEGER NOT NULL DEFAULT 0"},
-		{"model_cards", "scheduler_channel_id", "TEXT NOT NULL DEFAULT ''"},
-		{"model_cards", "scheduler_channel_name", "TEXT NOT NULL DEFAULT ''"},
-		{"model_cards", "axonhub_channel_id", "TEXT NOT NULL DEFAULT ''"},
-		{"model_cards", "axonhub_channel_name", "TEXT NOT NULL DEFAULT ''"},
-		{"model_cards", "scheduler_auto_disabled", "INTEGER NOT NULL DEFAULT 0"},
-		{"model_cards", "scheduler_auto_disabled_at", "TEXT NOT NULL DEFAULT ''"},
+// prepareLegacyCostBindingSource 只补齐 retireMonitoringSchema 的成本绑定迁移
+// 真正要读的 model_cards 列。其余退役列/表不再补齐，反正下一步就 DROP。
+func (s *Store) prepareLegacyCostBindingSource(ctx context.Context) error {
+	for _, col := range []struct{ name, def string }{
+		{"pool_enabled", "INTEGER NOT NULL DEFAULT 1"},
+		{"key_id", "TEXT NOT NULL DEFAULT ''"},
+		{"manual_cost_ratio", "TEXT NOT NULL DEFAULT ''"},
+		{"scheduler_channel_id", "TEXT NOT NULL DEFAULT ''"},
+		{"scheduler_channel_name", "TEXT NOT NULL DEFAULT ''"},
+		{"axonhub_channel_id", "TEXT NOT NULL DEFAULT ''"},
+		{"axonhub_channel_name", "TEXT NOT NULL DEFAULT ''"},
 	} {
-		if err := s.addColumnIfMissing(ctx, col.table, col.name, col.def); err != nil {
+		if err := s.addColumnIfMissing(ctx, "model_cards", col.name, col.def); err != nil {
 			return err
 		}
 	}
-	if _, err := s.DB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_probe_card_purpose_time ON probe_runs(card_id, purpose, checked_at)`); err != nil {
-		return err
-	}
-	return s.dropColumnIfExists(ctx, "probe_runs", "expected_answer")
+	return nil
 }
 
 func (s *Store) preflightCostBindingMigration(ctx context.Context) error {
@@ -723,18 +549,6 @@ func (s *Store) addColumnIfMissing(ctx context.Context, table, column, def strin
 		return nil
 	}
 	_, err = s.DB.ExecContext(ctx, `ALTER TABLE `+quoteIdent(table)+` ADD COLUMN `+quoteIdent(column)+` `+def)
-	return err
-}
-
-func (s *Store) dropColumnIfExists(ctx context.Context, table, column string) error {
-	cols, err := s.columns(ctx, table)
-	if err != nil {
-		return err
-	}
-	if !cols[column] {
-		return nil
-	}
-	_, err = s.DB.ExecContext(ctx, `ALTER TABLE `+quoteIdent(table)+` DROP COLUMN `+quoteIdent(column))
 	return err
 }
 

@@ -96,25 +96,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/revenue/cards/{id}", s.auth(s.deleteRevenueCard))
 	mux.HandleFunc("/browser/", s.auth(s.proxyBrowser))
 	mux.HandleFunc("/websockify", s.auth(s.proxyBrowser))
-	mux.HandleFunc("GET /admin", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /{$}", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /admin/merchant-balance", redirectTo("/admin/revenue"))
-	mux.HandleFunc("GET /admin/ops", redirectTo("/admin/events"))
-	mux.HandleFunc("GET /admin/profit", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /admin/messages", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /admin/pools", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /status", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /admin/status", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /balances", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /revenue", redirectTo("/admin/revenue"))
-	mux.HandleFunc("GET /merchant-balance", redirectTo("/admin/revenue"))
-	mux.HandleFunc("GET /messages", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /upstreams", redirectTo("/admin/upstreams"))
-	mux.HandleFunc("GET /scheduler", redirectTo("/admin/costs"))
-	mux.HandleFunc("GET /admin/scheduler", redirectTo("/admin/costs"))
-	mux.HandleFunc("GET /pools", redirectTo("/admin/balances"))
-	mux.HandleFunc("GET /ops", redirectTo("/admin/events"))
-	mux.HandleFunc("GET /settings", redirectTo("/admin/settings"))
+	for from, to := range legacyPaths {
+		mux.HandleFunc("GET "+from, redirectTo(to))
+	}
 	mux.Handle("/", s.static())
 	return s.checkOrigin(mux)
 }
@@ -173,6 +157,31 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, out)
+}
+
+// legacyPaths 是「旧地址 → 现地址」的服务端回落表。static() 已经把未知路径
+// 兜给 index.html，SPA 侧 normalizePath 也有同一套回落；这里只是让直接输入或
+// 收藏旧地址时，URL 栏早一次往返就正确。改动时两侧要一起改。
+var legacyPaths = map[string]string{
+	"/{$}":                    "/admin/balances",
+	"/admin":                  "/admin/balances",
+	"/status":                 "/admin/balances",
+	"/admin/status":           "/admin/balances",
+	"/admin/profit":           "/admin/balances",
+	"/messages":               "/admin/balances",
+	"/admin/messages":         "/admin/balances",
+	"/pools":                  "/admin/balances",
+	"/admin/pools":            "/admin/balances",
+	"/balances":               "/admin/balances",
+	"/revenue":                "/admin/revenue",
+	"/merchant-balance":       "/admin/revenue",
+	"/admin/merchant-balance": "/admin/revenue",
+	"/upstreams":              "/admin/upstreams",
+	"/scheduler":              "/admin/costs",
+	"/admin/scheduler":        "/admin/costs",
+	"/ops":                    "/admin/events",
+	"/admin/ops":              "/admin/events",
+	"/settings":               "/admin/settings",
 }
 
 func redirectTo(path string) http.HandlerFunc {
