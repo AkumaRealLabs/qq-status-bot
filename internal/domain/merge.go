@@ -89,7 +89,10 @@ func (in Upstream) MergeUpdate(old Upstream) Upstream {
 	out.LastError = old.LastError
 	out.FailureCount = old.FailureCount
 	out.CreatedAt = old.CreatedAt
-	out.RunwayWarningHours = old.RunwayWarningHours
+	// runway_warning_hours 可编辑；请求未带（0）时保留旧值，store 落库时 ≤0 回落 24。
+	if in.RunwayWarningHours <= 0 {
+		out.RunwayWarningHours = old.RunwayWarningHours
+	}
 	return out
 }
 

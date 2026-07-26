@@ -107,7 +107,22 @@ func (s *Service) refreshUpstreamBalance(ctx context.Context, upstream domain.Up
 	_ = s.Store.SaveUpstreamError(ctx, upstream.ID, "", 0)
 	_ = s.alert(ctx, upstream, "credential", false, upstream.Name+" 凭据已恢复")
 	_ = s.alert(ctx, upstream, "balance_query", false, upstream.Name+" 额度查询已恢复")
+	s.checkBalanceRunway(ctx, upstream)
 	return s.alert(ctx, upstream, "balance", domain.LowBalance(upstream, snapshot), fmt.Sprintf("%s 余额低于阈值", upstream.Name))
+}
+
+// checkBalanceRunway 用近 24 小时快照估算消耗速率，预计支撑不足阈值时告警。
+// 估算无效（样本不足、刚充值、零消耗）不触发也不恢复，等窗口滑动后再判断。
+func (s *Service) checkBalanceRunway(ctx context.Context, upstream domain.Upstream) {
+	history, err := s.Store.BalanceHistory(ctx, upstream.ID, time.Now().UTC().Add(-domain.RunwayWindow))
+	if err != nil {
+		return
+	}
+	est := domain.EstimateRunway(upstream, history)
+	if !est.Valid {
+		return
+	}
+	_ = s.alert(ctx, upstream, domain.RunwayAlertKind, domain.RunwayLow(upstream, est), domain.RunwayAlertMessage(upstream.Name, est))
 }
 
 func (s *Service) BalanceRechargeCapabilities(ctx context.Context, upstreamID string) (monitor.RechargeCapabilities, error) {
@@ -320,7 +335,59 @@ func (s *Service) BalanceRows(ctx context.Context) ([]map[string]any, error) {
 			}
 			row["low_balance"] = domain.LowBalance(u, b)
 		}
+		if history, err := s.Store.BalanceHistory(ctx, u.ID, time.Now().UTC().Add(-domain.RunwayWindow)); err == nil && len(history) > 0 {
+			row["runway"] = domain.EstimateRunway(u, history)
+			row["trend"] = balanceTrendPoints(u, history, balanceTrendMaxPoints)
+		}
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+const balanceTrendMaxPoints = 48
+
+type balanceTrendPoint struct {
+	At     time.Time `json:"at"`
+	Remain float64   `json:"remain"`
+}
+
+// balanceTrendPoints 把窗口内的有效快照均匀降采样成 ≤ max 个换算后的余额点。
+func balanceTrendPoints(u domain.Upstream, history []domain.BalanceSnapshot, max int) []balanceTrendPoint {
+	valid := make([]domain.BalanceSnapshot, 0, len(history))
+	for _, snap := range history {
+		if strings.TrimSpace(snap.Error) == "" && !snap.CheckedAt.IsZero() {
+			valid = append(valid, snap)
+		}
+	}
+	if len(valid) == 0 {
+		return nil
+	}
+	rate := domain.BalanceRate(u)
+	pick := func(snap domain.BalanceSnapshot) balanceTrendPoint {
+		_, _, remain := domain.ConvertedBalanceValues(u.Type, rate, snap.Balance, snap.Used, snap.Remain)
+		return balanceTrendPoint{At: snap.CheckedAt, Remain: remain}
+	}
+	if max < 2 || len(valid) <= max {
+		out := make([]balanceTrendPoint, 0, len(valid))
+		for _, snap := range valid {
+			out = append(out, pick(snap))
+		}
+		return out
+	}
+	// 首尾必保留，中间按等距索引取样。
+	out := make([]balanceTrendPoint, 0, max)
+	step := float64(len(valid)-1) / float64(max-1)
+	last := -1
+	for i := 0; i < max; i++ {
+		idx := int(float64(i)*step + 0.5)
+		if idx >= len(valid) {
+			idx = len(valid) - 1
+		}
+		if idx == last {
+			continue
+		}
+		last = idx
+		out = append(out, pick(valid[idx]))
+	}
+	return out
 }
