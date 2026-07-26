@@ -57,14 +57,25 @@ const tabPaths: Record<TabID, string> = {
   settings: '/admin/settings',
 }
 
+/** 旧地址 → 现地址；与 internal/httpapi/server.go 的 legacyPaths 保持一致。 */
+const legacyPaths: Record<string, string> = {
+  '/scheduler': '/admin/costs',
+  '/admin/scheduler': '/admin/costs',
+  '/ops': '/admin/events',
+  '/admin/ops': '/admin/events',
+  '/revenue': '/admin/revenue',
+  '/merchant-balance': '/admin/revenue',
+  '/admin/merchant-balance': '/admin/revenue',
+  '/upstreams': '/admin/upstreams',
+  '/settings': '/admin/settings',
+}
+
+const canonicalPaths = new Set(Object.values(tabPaths))
+
+/** 已删除的功能页（/status /profit /messages /pools 等）和任何未知路径都回落到余额页。 */
 function normalizePath(pathname: string) {
-  if (pathname === '/' || pathname === '/admin' || pathname === '/status' || pathname === '/admin/status') return '/admin/balances'
-  if (pathname === '/scheduler' || pathname === '/admin/scheduler') return '/admin/costs'
-  if (pathname === '/admin/merchant-balance') return '/admin/revenue'
-  if (pathname === '/admin/ops' || pathname === '/ops') return '/admin/events'
-  if (pathname === '/messages' || pathname === '/pools' || pathname === '/profit') return '/admin/balances'
-  if (pathname.startsWith('/admin/') && !Object.values(tabPaths).includes(pathname)) return '/admin/balances'
-  return pathname
+  if (canonicalPaths.has(pathname)) return pathname
+  return legacyPaths[pathname] ?? '/admin/balances'
 }
 
 function tabFromPath(pathname: string): TabID {
