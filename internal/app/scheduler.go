@@ -396,6 +396,12 @@ func schedulerGroups(raw map[string]any) []domain.SchedulerGroup {
 	seen := map[string]domain.SchedulerGroup{}
 	if values, ok := data.(map[string]any); ok {
 		for name, value := range values {
+			// 值是数组说明这个键是 items/channels/data 之类的容器名，不是组名：
+			// 交给下面的 schedulerArray 处理，否则会造出一个名为 "items"、
+			// 倍率是整段 JSON 文本的假分组。
+			if _, isArray := value.([]any); isArray {
+				continue
+			}
 			group := schedulerGroup(name, value)
 			if group.Name != "" {
 				seen[group.Name] = group
