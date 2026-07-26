@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// 超过这个 key 数就先清扫过期条目，防止刷用户名把 loginFails 撑爆。
+const loginFailKeyLimit = 1024
+
 func loginKey(r *http.Request, username string) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil || host == "" {
@@ -20,9 +23,13 @@ func (s *Server) loginLimited(key string) bool {
 	defer s.loginMu.Unlock()
 	now := time.Now()
 	fails := pruneLoginFailures(s.loginFails[key], now)
-	if s.loginFails != nil {
-		s.loginFails[key] = fails
+	if len(fails) == 0 {
+		// 窗口内已无失败记录：删掉而不是留一个空切片，
+		// key 含攻击者可控的用户名，留下就是无界增长。
+		delete(s.loginFails, key)
+		return false
 	}
+	s.loginFails[key] = fails
 	return len(fails) >= loginFailLimit
 }
 
@@ -33,7 +40,22 @@ func (s *Server) recordLoginFailure(key string) {
 	if s.loginFails == nil {
 		s.loginFails = map[string][]time.Time{}
 	}
+	if len(s.loginFails) >= loginFailKeyLimit {
+		s.sweepLoginFailuresLocked(now)
+	}
 	s.loginFails[key] = append(pruneLoginFailures(s.loginFails[key], now), now)
+}
+
+// sweepLoginFailuresLocked 清掉所有已过窗口的 key，把 map 规模压回
+// 「窗口内确实失败过的 key 数」。调用方需持有 loginMu。
+func (s *Server) sweepLoginFailuresLocked(now time.Time) {
+	for key, fails := range s.loginFails {
+		if remaining := pruneLoginFailures(fails, now); len(remaining) == 0 {
+			delete(s.loginFails, key)
+		} else {
+			s.loginFails[key] = remaining
+		}
+	}
 }
 
 func (s *Server) clearLoginFailures(key string) {
