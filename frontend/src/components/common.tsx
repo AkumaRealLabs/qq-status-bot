@@ -41,11 +41,12 @@ export function FormError({ error }: { error: unknown }) {
   return <InlineMessage message={errorMessage(error)} tone="error" />
 }
 
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="grid gap-2">
       <label className="text-sm font-medium leading-none text-foreground">{label}</label>
       {children}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   )
 }

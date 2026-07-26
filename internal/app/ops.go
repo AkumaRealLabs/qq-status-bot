@@ -70,11 +70,29 @@ func (s *Service) SelfCheck(ctx context.Context) (domain.SelfCheckResponse, erro
 	out.Items = append(out.Items, checkItem("database_writable", s.Store.CheckWritable(ctx), "数据库可写"))
 	out.Items = append(out.Items, diskCheck())
 	out.Items = append(out.Items, domain.SelfCheckItem{Name: "build_version", Status: "ok", Message: domain.FirstNonEmpty(os.Getenv("VITE_BUILD_VERSION"), "dev")})
-	out.Items = append(out.Items, domain.SelfCheckItem{Name: "container_restart_count", Status: "safe_mode", Message: "安全模式未读取容器重启次数"})
 	out.Items = append(out.Items, checkHTTP(ctx, s.Client.HTTP, "browser_http", envDefault("BROWSER_PROXY_URL", "http://127.0.0.1:6080")))
 	out.Items = append(out.Items, checkBrowserCDP(ctx, s.Client.HTTP, envDefault("BROWSER_DEBUG_URL", "http://127.0.0.1:19222")))
-	out.Items = append(out.Items, domain.SelfCheckItem{Name: "database_backup", Status: "warn", Message: "未配置自动备份时间"})
+	out.Items = append(out.Items, s.backupCheckItem(ctx))
 	return out, nil
+}
+
+// 敏感备份导出没有自动化，只能靠人手动做；自检提醒上一次是什么时候。
+const backupStaleAfter = 30 * 24 * time.Hour
+
+func (s *Service) backupCheckItem(ctx context.Context) domain.SelfCheckItem {
+	logs, err := s.Store.AuditLogs(ctx, "GET /api/settings/export", "", 1)
+	if err != nil {
+		return domain.SelfCheckItem{Name: "database_backup", Status: "error", Message: err.Error()}
+	}
+	if len(logs) == 0 {
+		return domain.SelfCheckItem{Name: "database_backup", Status: "warn", Message: "从未导出敏感备份"}
+	}
+	last := logs[0].CreatedAt
+	message := "最近备份导出：" + last.In(appLocation()).Format("2006-01-02 15:04")
+	if time.Since(last) > backupStaleAfter {
+		return domain.SelfCheckItem{Name: "database_backup", Status: "warn", Message: message + "（已超过 30 天）"}
+	}
+	return domain.SelfCheckItem{Name: "database_backup", Status: "ok", Message: message}
 }
 
 func diskCheck() domain.SelfCheckItem {

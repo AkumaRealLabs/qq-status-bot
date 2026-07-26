@@ -28,6 +28,11 @@ func (w *auditResponseWriter) Write(b []byte) (int, error) {
 }
 
 func shouldAuditRequest(r *http.Request) bool {
+	// 敏感备份导出含上游密钥与 Bot Token，虽是 GET 也要留审计；
+	// 自检的「最近备份」项也依赖这条记录。
+	if r.Method == http.MethodGet && r.URL.Path == "/api/settings/export" {
+		return true
+	}
 	return strings.HasPrefix(r.URL.Path, "/api/") && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
 }
 

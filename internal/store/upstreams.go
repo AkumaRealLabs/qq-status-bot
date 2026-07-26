@@ -208,6 +208,28 @@ func (s *Store) LatestBalance(ctx context.Context, upstreamID string) (domain.Ba
 	return s.scanBalance(s.row(ctx, `SELECT id, upstream_id, checked_at, balance, used, remain, requests, error, latency_ms FROM balance_snapshots WHERE upstream_id=? ORDER BY checked_at DESC LIMIT 1`, upstreamID))
 }
 
+// BalanceHistory 按时间升序返回 since 之后的快照，供跑道估算与趋势展示使用。
+func (s *Store) BalanceHistory(ctx context.Context, upstreamID string, since time.Time) ([]domain.BalanceSnapshot, error) {
+	rows, err := s.query(ctx, `SELECT id, upstream_id, checked_at, balance, used, remain, requests, error, latency_ms
+		FROM balance_snapshots WHERE upstream_id=? AND checked_at>=? ORDER BY checked_at ASC`,
+		upstreamID, since.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.BalanceSnapshot{}
+	for rows.Next() {
+		var b domain.BalanceSnapshot
+		var checked string
+		if err := rows.Scan(&b.ID, &b.UpstreamID, &checked, &b.Balance, &b.Used, &b.Remain, &b.Requests, &b.Error, &b.LatencyMS); err != nil {
+			return nil, err
+		}
+		b.CheckedAt = parseTime(checked)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) scanBalance(row *sql.Row) (domain.BalanceSnapshot, error) {
 	var b domain.BalanceSnapshot
 	var checked string

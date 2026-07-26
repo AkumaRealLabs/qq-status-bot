@@ -36,7 +36,7 @@ func (s *Service) alert(ctx context.Context, u domain.Upstream, kind string, fai
 		return nil
 	}
 	if dec.Recover {
-		dec.Message = u.Name + " " + kind + " 已恢复"
+		dec.Message = domain.AlertRecoverMessage(u.Name, kind)
 	}
 	s.createAlertOpsEvent(ctx, u, kind, dec.Recover, dec.Message)
 	rules, err := s.Store.NotificationRules(ctx)

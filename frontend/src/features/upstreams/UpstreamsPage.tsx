@@ -24,6 +24,7 @@ const emptyUpstream: Upstream = {
   enabled: true,
   balance_rate: 1,
   low_balance_threshold: 0,
+  runway_warning_hours: 24,
 }
 
 let browserLoginWindow: Window | null = null
@@ -513,6 +514,9 @@ function UpstreamDialog({ upstream }: { upstream?: Upstream }) {
           </Field>
           <Field label="低余额阈值">
             <Input type="number" value={form.low_balance_threshold} onChange={(e) => update({ low_balance_threshold: Number(e.target.value) })} />
+          </Field>
+          <Field label="跑道告警（小时）" hint="余额预计支撑不足该小时数时告警；留 0 用默认 24">
+            <Input type="number" value={form.runway_warning_hours ?? 24} onChange={(e) => update({ runway_warning_hours: Number(e.target.value) })} />
           </Field>
           {form.type === 'newapi' && (
             <>
