@@ -138,6 +138,51 @@ func TestRetireMonitoringMigrationMovesOnlyPoolBindingsAndDropsSecrets(t *testin
 	}
 }
 
+// 早期 model_cards 缺少成本绑定列时，prepareLegacyCostBindingSource 必须先补齐，
+// 否则 retireMonitoringSchema 的 SELECT 会在老库上直接失败。
+func TestRetireMonitoringMigrationBackfillsAncientModelCards(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ancient.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	// 只有最早期就存在的列：没有 pool_enabled / key_id / manual_cost_ratio /
+	// scheduler_channel_* / axonhub_channel_*。
+	_, err = db.Exec(`CREATE TABLE migration_records (source TEXT PRIMARY KEY, migrated_at TEXT NOT NULL);
+		CREATE TABLE model_cards (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
+			upstream_id TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+		INSERT INTO model_cards (id,name,model,upstream_id,enabled,created_at,updated_at)
+			VALUES ('ancient','远古卡片','gpt','u1',1,?,?)`, now, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	st, err := Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatalf("老库迁移失败: %v", err)
+	}
+	rows, err := st.ListCostBindings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != "ancient" {
+		t.Fatalf("远古卡片应迁移成一条成本绑定，实际 %+v", rows)
+	}
+	var count int
+	_ = st.row(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='model_cards'`).Scan(&count)
+	if count != 0 {
+		t.Fatal("迁移后 model_cards 应被删除")
+	}
+}
+
 func TestRetireMonitoringMigrationDuplicateBindingRollsBack(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "duplicate.sqlite")
 	db, err := sql.Open("sqlite", path)
