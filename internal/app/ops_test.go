@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/store"
@@ -254,6 +256,34 @@ func TestCheckItem(t *testing.T) {
 		t.Fatalf("item = %+v", item)
 	}
 	if item := checkItem("x", errors.New("炸了"), "都好"); item.Status != "error" || item.Message != "炸了" {
+		t.Fatalf("item = %+v", item)
+	}
+}
+
+// 备份自检：从未导出 → warn；导出过 → ok 带时间；超过 30 天 → warn。
+func TestBackupCheckItemStates(t *testing.T) {
+	svc, st := newOpsTestService(t)
+
+	item := svc.backupCheckItem(t.Context())
+	if item.Status != "warn" || item.Message != "从未导出敏感备份" {
+		t.Fatalf("item = %+v", item)
+	}
+
+	if err := svc.RecordAudit(t.Context(), domain.AuditLog{Actor: "admin", Action: "GET /api/settings/export"}); err != nil {
+		t.Fatal(err)
+	}
+	item = svc.backupCheckItem(t.Context())
+	if item.Status != "ok" || !strings.HasPrefix(item.Message, "最近备份导出：") {
+		t.Fatalf("item = %+v", item)
+	}
+
+	// 把记录时间改到 31 天前 → warn。
+	if _, err := st.DB.ExecContext(t.Context(), `UPDATE audit_logs SET created_at=?`,
+		time.Now().UTC().Add(-31*24*time.Hour).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	item = svc.backupCheckItem(t.Context())
+	if item.Status != "warn" || !strings.Contains(item.Message, "已超过 30 天") {
 		t.Fatalf("item = %+v", item)
 	}
 }
