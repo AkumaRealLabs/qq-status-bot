@@ -43,6 +43,18 @@ export type UpstreamRow = {
   }
 }
 
+export type RunwayEstimate = {
+  valid: boolean
+  burning: boolean
+  burn_per_hour: number
+  hours_left: number
+}
+
+export type BalanceTrendPoint = {
+  at: string
+  remain: number
+}
+
 export type BalanceRow = {
   id: string
   name: string
@@ -54,6 +66,8 @@ export type BalanceRow = {
   low_balance?: boolean
   last_check?: string
   error?: string
+  runway?: RunwayEstimate
+  trend?: BalanceTrendPoint[]
 }
 
 export type BalanceRefreshResult = {
@@ -340,5 +354,5 @@ export type AuditLog = {
 
 export type SelfCheckResponse = {
   checked_at: string
-  items: { name: string; status: 'ok' | 'warn' | 'error' | 'safe_mode' | string; message?: string }[]
+  items: { name: string; status: 'ok' | 'warn' | 'error' | string; message?: string }[]
 }
