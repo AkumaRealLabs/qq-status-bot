@@ -37,7 +37,9 @@ services:
     restart: unless-stopped
 
   llbot:
-    image: linyuchen/llbot:latest
+    # 钉住版本：本服务按 8.0.14 的 X-Signature: sha1=<HMAC> 回调协议验签，
+    # 跟 latest 会在上游改协议时静默打断 webhook 校验。升级前先确认签名方式未变。
+    image: ${LLBOT_IMAGE:-linyuchen/llbot:8.0.14}
     ports:
       - "127.0.0.1:3080:3080"
     expose:

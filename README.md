@@ -48,7 +48,7 @@ docker compose up -d --build
 
 ### OneBot / LLBot 连接
 
-- Compose 直接运行 LuckyLilliaBot 官方镜像 `linyuchen/llbot:latest`。`3000` 只在 Compose 内网开放，WebUI 仅绑定 `127.0.0.1:3080`。
+- Compose 直接运行 LuckyLilliaBot 官方镜像，版本钉在 `linyuchen/llbot:8.0.14`（回调签名协议按该版本实现，跟 `latest` 会在上游改协议时静默打断 webhook 校验；需要临时换版本用 `LLBOT_IMAGE` 覆盖）。`3000` 只在 Compose 内网开放，WebUI 仅绑定 `127.0.0.1:3080`。
 - 首次部署后通过 SSH 隧道访问本机 WebUI，完成 QQ 登录。首次登录会生成该 QQ 号的持久化配置，后续由 LLBot 的 `/app/llbot/data` 卷维护。
 - 在 LLBot WebUI 的 OneBot 11 配置中，为 HTTP 与 HTTP POST 分别设置 Token；HTTP 监听 `0.0.0.0:3000`，HTTP POST 回调保持 `http://app:8090/api/onebot/events`，消息格式为数组。
 - 在后台「设置 → OneBot 连接」填入 `http://llbot:3000`、HTTP Token、Webhook Token 和允许发送的 QQ 群号。AUM 保留连接检查、Webhook 签名校验与通用文本发送客户端，不解析或回复“状态/status”命令。
