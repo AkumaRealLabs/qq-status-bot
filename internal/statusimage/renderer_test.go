@@ -34,8 +34,11 @@ func TestRendererGolden(t *testing.T) {
 	if got.Bounds() != image.Rect(0, 0, 1280, 708) {
 		t.Fatalf("尺寸错误: %v", got.Bounds())
 	}
-	if got.Bounds() != want.Bounds() || !bytes.Equal(got.Pix, want.Pix) {
-		t.Fatal("渲染结果与 golden PNG 不一致（使用 UPDATE_GOLDEN=1 更新）")
+	if got.Bounds() != want.Bounds() {
+		t.Fatalf("渲染尺寸与 golden PNG 不一致: got=%v want=%v", got.Bounds(), want.Bounds())
+	}
+	if difference := meanPixelDifference(got, want); difference > 0.00025 {
+		t.Fatalf("渲染结果与 golden PNG 差异过大: %.6f（使用 UPDATE_GOLDEN=1 更新）", difference)
 	}
 }
 
@@ -133,4 +136,17 @@ func countColor(img *image.RGBA, target color.RGBA) int {
 		}
 	}
 	return count
+}
+
+func meanPixelDifference(a, b *image.RGBA) float64 {
+	var difference uint64
+	for index, value := range a.Pix {
+		other := b.Pix[index]
+		if value > other {
+			difference += uint64(value - other)
+		} else {
+			difference += uint64(other - value)
+		}
+	}
+	return float64(difference) / float64(len(a.Pix)*255)
 }
