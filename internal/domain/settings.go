@@ -34,8 +34,8 @@ func (s Settings) Public() Settings {
 	out := s
 	out.QQBotAppSecretSet = strings.TrimSpace(s.QQBotAppSecret) != ""
 	out.QQBotAppSecret = ""
-	out.AllowedGroups = append([]string(nil), s.AllowedGroups...)
-	out.Commands = append([]string(nil), s.Commands...)
+	out.AllowedGroups = append([]string{}, s.AllowedGroups...)
+	out.Commands = append([]string{}, s.Commands...)
 	return out
 }
 

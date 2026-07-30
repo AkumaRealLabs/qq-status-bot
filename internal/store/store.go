@@ -161,7 +161,8 @@ func (s *Store) Logs(limit int) []domain.EventLog {
 	if limit <= 0 || limit > len(s.state.EventLogs) {
 		limit = len(s.state.EventLogs)
 	}
-	out := append([]domain.EventLog(nil), s.state.EventLogs[:limit]...)
+	out := make([]domain.EventLog, limit)
+	copy(out, s.state.EventLogs[:limit])
 	return out
 }
 

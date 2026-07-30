@@ -32,3 +32,13 @@ func TestStorePersistsSettingsLogsAndAdmin(t *testing.T) {
 		t.Fatalf("持久化结果错误: settings=%+v logs=%+v", s2.Settings(), s2.Logs(10))
 	}
 }
+
+func TestStoreLogsUsesEmptyListInsteadOfNull(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"), domain.Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logs := s.Logs(100); logs == nil || len(logs) != 0 {
+		t.Fatalf("空日志应返回非 nil 空列表: %#v", logs)
+	}
+}

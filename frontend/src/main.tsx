@@ -33,6 +33,14 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+function normalizeSettings(value: Settings): Settings {
+  return {
+    ...value,
+    qqbot_allowed_groups: value.qqbot_allowed_groups ?? [],
+    status_commands: value.status_commands ?? [],
+  }
+}
+
 function App() {
   const [initialized, setInitialized] = useState<boolean | null>(null)
   const [authenticated, setAuthenticated] = useState(false)
@@ -68,16 +76,23 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [error, setError] = useState('')
 	const [previewURL, setPreviewURL] = useState('')
 	const [previewBusy, setPreviewBusy] = useState(false)
-  const load = async () => { try { setSettings(await api<Settings>('/api/settings')); setLogs(await api<Log[]>('/api/logs?limit=100')) } catch (reason) { setError(reason instanceof Error ? reason.message : '加载失败') } }
+  const load = async () => {
+    try {
+      setSettings(normalizeSettings(await api<Settings>('/api/settings')))
+      setLogs((await api<Log[] | null>('/api/logs?limit=100')) ?? [])
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '加载失败')
+    }
+  }
   useEffect(() => { void load() }, [])
   const status = useMemo(() => logs.filter((item) => item.status === 'failed').length, [logs])
-  async function save() { if (!settings) return; setMessage(''); setError(''); try { setSettings(await api<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(settings) })); setMessage('配置已保存') } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败') } }
+  async function save() { if (!settings) return; setMessage(''); setError(''); try { setSettings(normalizeSettings(await api<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(settings) }))); setMessage('配置已保存') } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败') } }
 	async function preview() {
 		if (!settings) return
 		setPreviewBusy(true); setMessage(''); setError('')
 		try {
 			const updated = await api<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(settings) })
-			setSettings(updated)
+			setSettings(normalizeSettings(updated))
 			const response = await fetch('/api/status-preview', { credentials: 'same-origin', cache: 'no-store' })
 			if (!response.ok) {
 				const body = await response.json().catch(() => ({})) as { error?: string }

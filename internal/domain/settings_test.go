@@ -14,6 +14,13 @@ func TestSettingsPublicAndMergeKeepsSecret(t *testing.T) {
 	}
 }
 
+func TestSettingsPublicUsesEmptyListsInsteadOfNull(t *testing.T) {
+	public := (Settings{}).Public()
+	if public.AllowedGroups == nil || public.Commands == nil {
+		t.Fatalf("公开配置中的列表不能为 nil: %+v", public)
+	}
+}
+
 func TestSettingsValidateStatusImageOptions(t *testing.T) {
 	valid := Settings{StatusURL: "https://status.example", StatusPageID: "default", StatusPeriod: "1y", ScreenshotTimeout: 90, QueueSize: 3}
 	if err := valid.Validate(); err != nil {
