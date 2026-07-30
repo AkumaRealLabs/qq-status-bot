@@ -150,11 +150,18 @@ func (c *Client) uploadParts(ctx context.Context, groupOpenID string, prepared u
 	}
 	sort.Slice(prepared.Parts, func(i, j int) bool { return prepared.Parts[i].Index < prepared.Parts[j].Index })
 	for _, part := range prepared.Parts {
-		start := part.Index * blockSize
-		if part.Index < 0 || start < 0 || start >= len(image) {
+		if part.Index <= 0 || part.Index-1 > (len(image)-1)/blockSize {
 			return errors.New("准备上传 QQ 图片: 无效的分片序号")
 		}
-		end := min(start+blockSize, len(image))
+		partSize := blockSize
+		if strings.TrimSpace(part.BlockSize) != "" {
+			partSize, err = strconv.Atoi(part.BlockSize)
+			if err != nil || partSize <= 0 {
+				return errors.New("准备上传 QQ 图片: 无效的分片大小")
+			}
+		}
+		start := (part.Index - 1) * blockSize
+		end := start + min(partSize, len(image)-start)
 		chunk := image[start:end]
 		if err := c.putPart(ctx, part.PresignedURL, chunk); err != nil {
 			return fmt.Errorf("上传 QQ 图片分片 %d: %w", part.Index, err)
