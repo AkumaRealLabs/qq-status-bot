@@ -5,62 +5,33 @@ services:
     ports:
       - "127.0.0.1:8090:8090"
     environment:
-      DATABASE_DSN: /app/data/monitor.sqlite
-      PB_DATA_DB: /app/pb_data/data.db
+      QQBOT_APP_ID: ${QQBOT_APP_ID:-}
+      QQBOT_APP_SECRET: ${QQBOT_APP_SECRET:-}
+      DATA_PATH: /app/data/qq-status.json
+      QQBOT_ALLOWED_GROUPS: ${QQBOT_ALLOWED_GROUPS:-}
+      STATUS_COMMANDS: ${STATUS_COMMANDS:-状态,status}
+      STATUS_URL: ${STATUS_URL:-https://status.ggapi.cc}
+      SCREENSHOT_SELECTOR: ${SCREENSHOT_SELECTOR:-main > div:not(.sticky)}
+      SCREENSHOT_WIDTH: ${SCREENSHOT_WIDTH:-1280}
+      SCREENSHOT_HEIGHT: ${SCREENSHOT_HEIGHT:-900}
+      SCREENSHOT_WAIT: ${SCREENSHOT_WAIT:-5s}
       BROWSER_DEBUG_URL: http://browser:9222
-      BROWSER_PROXY_URL: http://browser:6080
-      BROWSER_VNC_URL: /browser/vnc.html?autoconnect=true&resize=scale
       TZ: Asia/Shanghai
     volumes:
       - ./data:/app/data
-      - ./pb_data:/app/pb_data:ro
+    depends_on:
+      - browser
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
-    depends_on:
-      - browser
-    networks:
-      - default
-      - ggapi_internal
+      start_period: 10s
     restart: unless-stopped
 
   browser:
     image: ${BROWSER_IMAGE:-ghcr.io/akumareallabs/ai-upstream-monitor-browser:latest}
     build:
       context: browser
-    shm_size: 1gb
-    volumes:
-      - browser_profile:/profile
+    shm_size: 512mb
     restart: unless-stopped
-
-  llbot:
-    # 钉住版本：本服务按 8.0.14 的 X-Signature: sha1=<HMAC> 回调协议验签，
-    # 跟 latest 会在上游改协议时静默打断 webhook 校验。升级前先确认签名方式未变。
-    image: ${LLBOT_IMAGE:-linyuchen/llbot:8.0.14}
-    ports:
-      - "127.0.0.1:3080:3080"
-    expose:
-      - "3000"
-    volumes:
-      - llbot_data:/app/llbot/data
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3080').then(() => process.exit(0), () => process.exit(1))\""]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    depends_on:
-      - app
-    restart: unless-stopped
-
-volumes:
-  browser_profile:
-  llbot_data:
-
-networks:
-  ggapi_internal:
-    external: true
-    name: ggapi_internal

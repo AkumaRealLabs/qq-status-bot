@@ -1,159 +1,194 @@
 package store
 
 import (
-	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	_ "github.com/lib/pq"
-	_ "modernc.org/sqlite"
+	"ai-upstream-monitor/internal/domain"
+	"golang.org/x/crypto/bcrypt"
 )
 
-type Store struct {
-	DB     *sql.DB
-	Driver string
+type diskState struct {
+	Settings      domain.Settings   `json:"settings"`
+	AdminUsername string            `json:"admin_username"`
+	AdminPassHash string            `json:"admin_password_hash"`
+	EventLogs     []domain.EventLog `json:"event_logs"`
 }
 
-const InitialUserID = "initial-user"
+type session struct {
+	Username string
+	Expires  time.Time
+}
 
-var ErrInitialUserExists = errors.New("initial user already exists")
+type Store struct {
+	path     string
+	mu       sync.RWMutex
+	state    diskState
+	sessions map[string]session
+}
 
-func Open(ctx context.Context, dsn string) (*Store, error) {
-	if dsn == "" {
-		dsn = "/app/data/monitor.sqlite"
+func Open(path string, defaults domain.Settings) (*Store, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("配置存储路径为空")
 	}
-	driver := "sqlite"
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		driver = "postgres"
-	} else if !strings.HasPrefix(dsn, "file:") {
-		if err := os.MkdirAll(filepath.Dir(dsn), 0o755); err != nil {
+	s := &Store{path: path, sessions: make(map[string]session), state: diskState{Settings: defaults}}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := s.persistLocked(); err != nil {
 			return nil, err
 		}
+		return s, nil
 	}
-	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{DB: db, Driver: driver}
-	if driver == "sqlite" {
-		db.SetMaxOpenConns(1)
-		for _, pragma := range []string{
-			"PRAGMA foreign_keys=ON",
-			"PRAGMA busy_timeout=10000",
-			"PRAGMA journal_mode=WAL",
-			"PRAGMA synchronous=NORMAL",
-		} {
-			if _, err := db.ExecContext(ctx, pragma); err != nil {
-				_ = db.Close()
-				return nil, err
-			}
-		}
+	if err := json.Unmarshal(data, &s.state); err != nil {
+		return nil, errors.New("配置存储文件格式无效")
 	}
-	if err := db.PingContext(ctx); err != nil {
-		return nil, err
-	}
+	s.state.Settings = s.state.Settings.MergeUpdate(defaults)
 	return s, nil
 }
 
-func (s *Store) Close() error {
-	return s.DB.Close()
+func (s *Store) Close() error { return nil }
+
+func (s *Store) Settings() domain.Settings {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state.Settings
 }
 
-func (s *Store) exec(ctx context.Context, q string, args ...any) (sql.Result, error) {
-	return s.DB.ExecContext(ctx, s.rebind(q), args...)
-}
-
-func (s *Store) query(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
-	return s.DB.QueryContext(ctx, s.rebind(q), args...)
-}
-
-func (s *Store) row(ctx context.Context, q string, args ...any) *sql.Row {
-	return s.DB.QueryRowContext(ctx, s.rebind(q), args...)
-}
-
-func (s *Store) rebind(q string) string {
-	if s.Driver != "postgres" {
-		return q
+func (s *Store) UpdateSettings(next domain.Settings) (domain.Settings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.Settings = next.MergeUpdate(s.state.Settings)
+	if err := s.persistLocked(); err != nil {
+		return domain.Settings{}, err
 	}
-	var n int
-	var b strings.Builder
-	for _, r := range q {
-		if r == '?' {
-			n++
-			b.WriteByte('$')
-			b.WriteString(strconv.Itoa(n))
-			continue
-		}
-		b.WriteRune(r)
+	return s.state.Settings, nil
+}
+
+func (s *Store) Setup(username, password string) error {
+	username = strings.TrimSpace(username)
+	if username == "" || len(password) < 8 {
+		return errors.New("管理员账号不能为空，密码至少 8 位")
 	}
-	return b.String()
-}
-
-func NewID() string {
-	return mustRandomHex(16)
-}
-
-func HashToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
-func NewToken() string {
-	return mustRandomHex(32)
-}
-
-func mustRandomHex(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.AdminPassHash != "" {
+		return errors.New("管理员已初始化")
 	}
-	return hex.EncodeToString(b)
-}
-
-func nowText() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
-}
-
-func parseTime(v string) time.Time {
-	if v == "" {
-		return time.Time{}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
 	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05", "2006-01-02 15:04:05.000Z"} {
-		if t, err := time.Parse(layout, v); err == nil {
-			return t
-		}
-	}
-	return time.Time{}
+	s.state.AdminUsername = username
+	s.state.AdminPassHash = string(hash)
+	return s.persistLocked()
 }
 
-func parseOptionalTime(v string) *time.Time {
-	t := parseTime(v)
-	if t.IsZero() {
-		return nil
-	}
-	return &t
+func (s *Store) SetupStatus() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state.AdminPassHash != ""
 }
 
-func formatOptionalTime(v *time.Time) string {
-	if v == nil || v.IsZero() {
-		return ""
+func (s *Store) Login(username, password string) (string, error) {
+	s.mu.RLock()
+	storedUsername, storedHash := s.state.AdminUsername, s.state.AdminPassHash
+	s.mu.RUnlock()
+	if storedHash == "" || username != storedUsername || bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password)) != nil {
+		return "", errors.New("账号或密码错误")
 	}
-	return v.UTC().Format(time.RFC3339Nano)
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(tokenBytes)
+	s.mu.Lock()
+	s.sessions[token] = session{Username: username, Expires: time.Now().Add(24 * time.Hour)}
+	s.mu.Unlock()
+	return token, nil
 }
 
-func boolInt(v bool) int {
-	if v {
-		return 1
+func (s *Store) Authenticated(token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.sessions[token]
+	if !ok {
+		return false
 	}
-	return 0
+	if time.Now().After(item.Expires) {
+		delete(s.sessions, token)
+		return false
+	}
+	return true
 }
 
-func boolFromInt(v int) bool { return v != 0 }
+func (s *Store) Logout(token string) {
+	s.mu.Lock()
+	delete(s.sessions, token)
+	s.mu.Unlock()
+}
+
+func (s *Store) AppendLog(item domain.EventLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(item.ID) == 0 {
+		idBytes := make([]byte, 8)
+		_, _ = rand.Read(idBytes)
+		item.ID = hex.EncodeToString(idBytes)
+	}
+	if item.CreatedAt == "" {
+		item.CreatedAt = time.Now().Format(time.RFC3339)
+	}
+	s.state.EventLogs = append([]domain.EventLog{item}, s.state.EventLogs...)
+	if len(s.state.EventLogs) > 500 {
+		s.state.EventLogs = s.state.EventLogs[:500]
+	}
+	return s.persistLocked()
+}
+
+func (s *Store) Logs(limit int) []domain.EventLog {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 || limit > len(s.state.EventLogs) {
+		limit = len(s.state.EventLogs)
+	}
+	out := append([]domain.EventLog(nil), s.state.EventLogs[:limit]...)
+	return out
+}
+
+func (s *Store) persistLocked() error {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(s.state, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".qq-status-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, s.path)
+}

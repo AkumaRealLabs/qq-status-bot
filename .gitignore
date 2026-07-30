@@ -1,8 +1,40 @@
+# 本地凭证与环境配置
+.env
+.env.*
+!.env.example
+
+# 运行时数据与敏感备份
 data/
 pb_data/
-frontend/node_modules/
-frontend/dist/*
-!frontend/dist/
-!frontend/dist/index.html
-frontend/dist/assets/
 *.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# 临时文件、日志和测试产物
+.tmp/
+tmp/
+*.log
+coverage.out
+
+# Go 构建产物
+/qq-status-bot
+/ai-upstream-monitor
+
+# 前端依赖、构建产物与缓存
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/.cache/
+frontend/*.tsbuildinfo
+frontend/**/*.tsbuildinfo
+# `tsc -b` 为 Vite 配置生成的旁产物
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# 编辑器与操作系统文件
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

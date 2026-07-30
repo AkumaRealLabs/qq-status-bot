@@ -5,14 +5,10 @@ on:
     branches: [main]
     paths-ignore:
       - "**.md"
-      - "DESIGN.md"
-      - "AGENTS.md"
       - ".gitignore"
   pull_request:
     paths-ignore:
       - "**.md"
-      - "DESIGN.md"
-      - "AGENTS.md"
       - ".gitignore"
 
 concurrency:
@@ -47,20 +43,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
-      - name: Prepare build version
-        shell: bash
-        run: echo "BUILD_VERSION=$(TZ=Asia/Shanghai date +%Y%m%d%H%M)-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-
-      # main 包 //go:embed frontend/dist，测试前需先构建前端
       - name: Build frontend
         working-directory: frontend
         run: pnpm install --frozen-lockfile && pnpm build
-        env:
-          VITE_BUILD_VERSION: ${{ env.BUILD_VERSION }}
-
-      - name: Lint frontend
-        working-directory: frontend
-        run: pnpm lint
 
       - name: Run Go tests
         run: go test ./...

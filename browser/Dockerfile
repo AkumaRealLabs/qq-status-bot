@@ -13,21 +13,14 @@ RUN rm -f /etc/apt/sources.list.d/* && \
     ca-certificates \
     chromium=${CHROMIUM_VERSION} \
     fonts-wqy-zenhei \
-    novnc \
     socat \
-    websockify \
-    x11vnc \
-    x11-utils \
-    xvfb \
     && chromium --version | grep -q "Chromium 149.0.7827.196" \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /profile
-RUN adduser --system --uid 10001 --ingroup nogroup --home /profile --no-create-home app && \
-    chown -R app:nogroup /profile
+RUN adduser --system --uid 10001 --ingroup nogroup --home /tmp/chromium --no-create-home app
 
 COPY entrypoint.sh /usr/local/bin/browser-entrypoint
 RUN chmod +x /usr/local/bin/browser-entrypoint
 
-EXPOSE 6080 9222
+EXPOSE 9222
 CMD ["browser-entrypoint"]

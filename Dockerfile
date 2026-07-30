@@ -1,7 +1,5 @@
 FROM node:24-alpine AS frontend-builder
 
-ARG VITE_BUILD_VERSION=dev
-ENV VITE_BUILD_VERSION=$VITE_BUILD_VERSION
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN corepack enable && corepack prepare pnpm@10.33.4 --activate && pnpm install --frozen-lockfile
@@ -16,15 +14,15 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
-RUN CGO_ENABLED=0 go build -buildvcs=false -o /out/ai-upstream-monitor .
+RUN CGO_ENABLED=0 go build -buildvcs=false -o /out/qq-status-bot .
 
 FROM alpine:3.22
 
-RUN apk add --no-cache wget \
+RUN apk add --no-cache ca-certificates wget \
 	&& adduser -D -H app
 WORKDIR /app
-COPY --from=builder /out/ai-upstream-monitor /app/ai-upstream-monitor
-RUN mkdir -p /app/data /app/pb_data && chown -R app:app /app
+COPY --from=builder /out/qq-status-bot /app/qq-status-bot
+RUN mkdir -p /app/data && chown -R app:app /app
 USER app
 EXPOSE 8090
-CMD ["/app/ai-upstream-monitor"]
+CMD ["/app/qq-status-bot"]

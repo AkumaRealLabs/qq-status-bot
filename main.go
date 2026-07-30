@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -12,43 +13,55 @@ import (
 
 	"ai-upstream-monitor/internal/app"
 	"ai-upstream-monitor/internal/browsercdp"
+	"ai-upstream-monitor/internal/config"
+	"ai-upstream-monitor/internal/domain"
 	"ai-upstream-monitor/internal/httpapi"
+	"ai-upstream-monitor/internal/qqbot"
 	"ai-upstream-monitor/internal/store"
 )
 
-//go:embed all:frontend/dist
+//go:embed frontend/dist
 var frontendFS embed.FS
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	dsn := os.Getenv("DATABASE_DSN")
-	if dsn == "" {
-		dsn = "/app/data/monitor.sqlite"
-	}
-	st, err := store.Open(ctx, dsn)
+	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer st.Close()
-	if err := st.Migrate(ctx); err != nil {
+	defaults := domain.Settings{
+		QQBotAppID: cfg.QQBotAppID, QQBotAppSecret: cfg.QQBotAppSecret,
+		AllowedGroups: cfg.AllowedGroups, Commands: cfg.Commands, StatusURL: cfg.StatusURL,
+		ScreenshotSelector: cfg.ScreenshotSelector, ScreenshotWidth: cfg.ScreenshotWidth,
+		ScreenshotHeight: cfg.ScreenshotHeight, ScreenshotWait: maxInt(1, int(cfg.ScreenshotWait/time.Second)),
+		ScreenshotTimeout: maxInt(15, int(cfg.ScreenshotTimeout/time.Second)), QueueSize: cfg.ScreenshotQueueSize,
+	}
+	state, err := store.Open(cfg.DataPath, defaults)
+	if err != nil {
 		log.Fatal(err)
 	}
-	if err := st.MigratePocketBase(ctx, os.Getenv("PB_DATA_DB")); err != nil {
-		log.Printf("pocketbase migration skipped: %v", err)
-	}
+	defer state.Close()
 
-	svc := app.New(st)
-	svc.Client.Browser = browsercdp.Client{
-		DebugURL:   os.Getenv("BROWSER_DEBUG_URL"),
-		HostHeader: os.Getenv("BROWSER_DEBUG_HOST_HEADER"),
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	screenshotter := browsercdp.Client{DebugURL: cfg.BrowserDebugURL, HostHeader: cfg.BrowserHostHeader, Width: cfg.ScreenshotWidth, Height: cfg.ScreenshotHeight, Wait: cfg.ScreenshotWait}
+	replier := &qqbot.Client{
+		APIBaseURL: cfg.QQBotAPIBaseURL, TokenURL: cfg.QQBotTokenURL,
+		Credentials: func() (string, string) {
+			settings := state.Settings()
+			return settings.QQBotAppID, settings.QQBotAppSecret
+		},
+		HTTP: &http.Client{Timeout: 30 * time.Second},
 	}
-	svc.StartScheduler(ctx)
+	service := app.New(state, screenshotter, replier, defaults.QueueSize)
+	service.Start(ctx)
+	staticFS, err := fs.Sub(frontendFS, "frontend/dist")
+	if err != nil {
+		log.Fatal(err)
+	}
 	server := &http.Server{
-		Addr:              env("HTTP_ADDR", "0.0.0.0:8090"),
-		Handler:           (&httpapi.Server{App: svc, Static: frontendFS}).Routes(),
-		ReadHeaderTimeout: 10 * time.Second,
+		Addr: cfg.HTTPAddr, Handler: (&httpapi.Server{App: service, Static: staticFS}).Routes(),
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second,
+		WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second,
 	}
 	go func() {
 		<-ctx.Done()
@@ -56,15 +69,15 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
-	log.Printf("listening on %s", server.Addr)
+	log.Printf("QQ 状态机器人监听 %s，回调路径 /qqbot/events", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }
 
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+func maxInt(value, minimum int) int {
+	if value < minimum {
+		return minimum
 	}
-	return fallback
+	return value
 }

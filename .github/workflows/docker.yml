@@ -1,6 +1,6 @@
 name: Docker
 
-# 仅发版：测试由 ci.yml 负责，此处不再 host 侧 pnpm/go test（避免前端双构建）
+# 仅发版：测试由 ci.yml 负责。
 on:
   push:
     branches: [main]
@@ -32,10 +32,6 @@ jobs:
         with:
           # 供 browser 变更检测对比上一提交；无需全历史
           fetch-depth: 2
-
-      - name: Prepare build version
-        shell: bash
-        run: echo "BUILD_VERSION=$(TZ=Asia/Shanghai date +%Y%m%d%H%M)-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
       - name: Detect browser image changes
         id: changes
@@ -96,8 +92,6 @@ jobs:
           context: .
           push: true
           tags: ${{ env.APP_TAGS }}
-          build-args: |
-            VITE_BUILD_VERSION=${{ env.BUILD_VERSION }}
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app,ignore-error=true
 
