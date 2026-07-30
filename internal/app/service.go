@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"ai-upstream-monitor/internal/domain"
-	"ai-upstream-monitor/internal/qqbot"
+	"qq-status-bot/internal/domain"
+	"qq-status-bot/internal/qqbot"
 )
 
 var (

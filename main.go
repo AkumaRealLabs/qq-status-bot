@@ -11,13 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"ai-upstream-monitor/internal/app"
-	"ai-upstream-monitor/internal/browsercdp"
-	"ai-upstream-monitor/internal/config"
-	"ai-upstream-monitor/internal/domain"
-	"ai-upstream-monitor/internal/httpapi"
-	"ai-upstream-monitor/internal/qqbot"
-	"ai-upstream-monitor/internal/store"
+	"qq-status-bot/internal/app"
+	"qq-status-bot/internal/browsercdp"
+	"qq-status-bot/internal/config"
+	"qq-status-bot/internal/domain"
+	"qq-status-bot/internal/httpapi"
+	"qq-status-bot/internal/qqbot"
+	"qq-status-bot/internal/store"
 )
 
 //go:embed frontend/dist

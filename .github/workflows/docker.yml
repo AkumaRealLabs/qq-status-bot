@@ -20,8 +20,8 @@ permissions:
   packages: write
 
 env:
-  APP_IMAGE: ghcr.io/akumareallabs/ai-upstream-monitor
-  BROWSER_IMAGE: ghcr.io/akumareallabs/ai-upstream-monitor-browser
+  APP_IMAGE: ghcr.io/akumareallabs/qq-status-bot
+  BROWSER_IMAGE: ghcr.io/akumareallabs/qq-status-bot-browser
 
 jobs:
   build:

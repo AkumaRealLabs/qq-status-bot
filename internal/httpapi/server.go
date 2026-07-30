@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"ai-upstream-monitor/internal/app"
-	"ai-upstream-monitor/internal/domain"
-	"ai-upstream-monitor/internal/qqbot"
+	"qq-status-bot/internal/app"
+	"qq-status-bot/internal/domain"
+	"qq-status-bot/internal/qqbot"
 )
 
 const (

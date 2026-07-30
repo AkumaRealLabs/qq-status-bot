@@ -1,4 +1,4 @@
-module ai-upstream-monitor
+module qq-status-bot
 
 go 1.26.4
 

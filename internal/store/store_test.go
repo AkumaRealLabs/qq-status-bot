@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"ai-upstream-monitor/internal/domain"
+	"qq-status-bot/internal/domain"
 )
 
 func TestStorePersistsSettingsLogsAndAdmin(t *testing.T) {

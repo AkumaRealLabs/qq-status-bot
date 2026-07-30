@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"ai-upstream-monitor/internal/domain"
 	"golang.org/x/crypto/bcrypt"
+	"qq-status-bot/internal/domain"
 )
 
 type diskState struct {
