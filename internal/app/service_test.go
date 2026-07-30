@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"qq-status-bot/internal/domain"
+	"qq-status-bot/internal/qqbot"
 )
 
 type fakeSettingsStore struct {
@@ -79,5 +81,39 @@ func TestProcessMessageLogsFailureAndRepliesText(t *testing.T) {
 	}
 	if len(store.logs) != 1 || store.logs[0].Status != "failed" || store.logs[0].Message != "upstream failed" {
 		t.Fatalf("失败日志错误: %+v", store.logs)
+	}
+}
+
+func TestHandleWebhookValidationDoesNotRequireEventSignature(t *testing.T) {
+	store := &fakeSettingsStore{settings: domain.Settings{QQBotAppSecret: "test-secret"}}
+	service := New(store, &fakeGenerator{}, &fakeReplier{}, 3)
+	body := []byte(`{"op":13,"d":{"plain_token":"plain","event_ts":"1725442341"}}`)
+
+	response, err := service.HandleWebhook("", "", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		PlainToken string `json:"plain_token"`
+		Signature  string `json:"signature"`
+	}
+	if err := json.Unmarshal(response, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.PlainToken != "plain" || decoded.Signature == "" {
+		t.Fatalf("回调验证响应错误: %+v", decoded)
+	}
+	if len(store.logs) != 1 || store.logs[0].EventType != "CALLBACK_VALIDATION" {
+		t.Fatalf("回调验证日志错误: %+v", store.logs)
+	}
+}
+
+func TestHandleWebhookDispatchStillRequiresEventSignature(t *testing.T) {
+	store := &fakeSettingsStore{settings: domain.Settings{QQBotAppSecret: "test-secret"}}
+	service := New(store, &fakeGenerator{}, &fakeReplier{}, 3)
+	body := []byte(`{"op":0,"d":{},"t":"` + qqbot.EventGroupAtMessage + `"}`)
+
+	if _, err := service.HandleWebhook("", "", body); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("未签名事件应被拒绝: %v", err)
 	}
 }

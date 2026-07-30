@@ -73,16 +73,12 @@ func (s *Service) Start(ctx context.Context) {
 }
 
 func (s *Service) HandleWebhook(timestamp, signature string, body []byte) ([]byte, error) {
-	settings := s.settings.Settings()
-	if !qqbot.VerifyWebhook(settings.QQBotAppSecret, timestamp, signature, body) {
-		return nil, ErrUnauthorized
-	}
 	var payload qqbot.Payload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, ErrBadPayload
 	}
-	switch payload.Op {
-	case qqbot.OpValidation:
+	settings := s.settings.Settings()
+	if payload.Op == qqbot.OpValidation {
 		var request qqbot.ValidationRequest
 		if err := json.Unmarshal(payload.Data, &request); err != nil {
 			return nil, ErrBadPayload
@@ -93,6 +89,11 @@ func (s *Service) HandleWebhook(timestamp, signature string, body []byte) ([]byt
 		}
 		_ = s.settings.AppendLog(domain.EventLog{Direction: "receive", EventType: "CALLBACK_VALIDATION", Status: "ok"})
 		return response, nil
+	}
+	if !qqbot.VerifyWebhook(settings.QQBotAppSecret, timestamp, signature, body) {
+		return nil, ErrUnauthorized
+	}
+	switch payload.Op {
 	case qqbot.OpHeartbeat:
 		var seq uint64
 		if err := json.Unmarshal(payload.Data, &seq); err != nil {
