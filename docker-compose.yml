@@ -20,7 +20,7 @@ services:
       SCREENSHOT_QUEUE_SIZE: ${SCREENSHOT_QUEUE_SIZE:-3}
       TZ: Asia/Shanghai
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data:Z
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
       interval: 30s
