@@ -18,12 +18,8 @@ var (
 	ErrBadPayload   = errors.New("QQ Webhook 请求无效")
 )
 
-type Screenshotter interface {
-	Capture(ctx context.Context, rawURL, selector string) ([]byte, error)
-}
-
-type configurableScreenshotter interface {
-	CaptureWithOptions(ctx context.Context, rawURL, selector string, width, height int, wait time.Duration) ([]byte, error)
+type StatusImageGenerator interface {
+	Generate(ctx context.Context, baseURL, pageID, period string) ([]byte, error)
 }
 
 type GroupReplier interface {
@@ -44,21 +40,21 @@ type SettingsStore interface {
 }
 
 type Service struct {
-	settings   SettingsStore
-	screenshot Screenshotter
-	replier    GroupReplier
-	jobs       chan domain.GroupMessage
+	settings  SettingsStore
+	generator StatusImageGenerator
+	replier   GroupReplier
+	jobs      chan domain.GroupMessage
 
 	dedupMu sync.Mutex
 	seen    map[string]time.Time
 }
 
-func New(settings SettingsStore, screenshot Screenshotter, replier GroupReplier, queueSize int) *Service {
+func New(settings SettingsStore, generator StatusImageGenerator, replier GroupReplier, queueSize int) *Service {
 	if queueSize < 1 {
 		queueSize = 3
 	}
 	return &Service{
-		settings: settings, screenshot: screenshot, replier: replier,
+		settings: settings, generator: generator, replier: replier,
 		jobs: make(chan domain.GroupMessage, queueSize), seen: make(map[string]time.Time),
 	}
 }
@@ -137,10 +133,10 @@ func (s *Service) handleDispatch(payload qqbot.Payload, settings domain.Settings
 	select {
 	case s.jobs <- message:
 		s.markSeen(message.ID)
-		s.logEvent(payload.Type, message, "queued", "已加入截图队列")
+		s.logEvent(payload.Type, message, "queued", "已加入状态图队列")
 		return qqbot.CallbackACK(true)
 	default:
-		s.logEvent(payload.Type, message, "busy", "截图队列已满")
+		s.logEvent(payload.Type, message, "busy", "状态图队列已满")
 		return qqbot.CallbackACK(false)
 	}
 }
@@ -154,27 +150,32 @@ func (s *Service) processMessage(parent context.Context, message domain.GroupMes
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	var image []byte
-	var err error
-	if configurable, ok := s.screenshot.(configurableScreenshotter); ok {
-		image, err = configurable.CaptureWithOptions(ctx, settings.StatusURL, settings.ScreenshotSelector, settings.ScreenshotWidth, settings.ScreenshotHeight, time.Duration(settings.ScreenshotWait)*time.Second)
-	} else {
-		image, err = s.screenshot.Capture(ctx, settings.StatusURL, settings.ScreenshotSelector)
-	}
+	image, err := s.generator.Generate(ctx, settings.StatusURL, settings.StatusPageID, settings.StatusPeriod)
 	if err == nil {
 		err = s.replier.ReplyGroupImage(ctx, message.GroupOpenID, message.ID, image)
 	}
 	if err == nil {
-		s.logEventDirection("send", qqbot.EventGroupAtMessage, message, "sent", "截图已回复")
+		s.logEventDirection("send", qqbot.EventGroupAtMessage, message, "sent", "状态图已回复")
 		return
 	}
-	log.Printf("状态截图回复失败 group=%s: %v", message.GroupOpenID, err)
+	log.Printf("状态图回复失败 group=%s: %v", message.GroupOpenID, err)
 	s.logEventDirection("send", qqbot.EventGroupAtMessage, message, "failed", err.Error())
 	errorCtx, errorCancel := context.WithTimeout(parent, 15*time.Second)
 	defer errorCancel()
-	if replyErr := s.replier.ReplyGroupText(errorCtx, message.GroupOpenID, message.ID, "状态截图失败，请稍后再试。", 2); replyErr != nil {
-		log.Printf("状态截图错误提示发送失败 group=%s: %v", message.GroupOpenID, replyErr)
+	if replyErr := s.replier.ReplyGroupText(errorCtx, message.GroupOpenID, message.ID, "状态图生成失败，请稍后再试。", 2); replyErr != nil {
+		log.Printf("状态图错误提示发送失败 group=%s: %v", message.GroupOpenID, replyErr)
 	}
+}
+
+func (s *Service) StatusPreview(parent context.Context) ([]byte, error) {
+	settings := s.settings.Settings()
+	timeout := time.Duration(settings.ScreenshotTimeout) * time.Second
+	if timeout < 15*time.Second {
+		timeout = 90 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	return s.generator.Generate(ctx, settings.StatusURL, settings.StatusPageID, settings.StatusPeriod)
 }
 
 func (s *Service) logEvent(eventType string, message domain.GroupMessage, status, detail string) {
@@ -193,7 +194,11 @@ func (s *Service) logEventDirection(direction, eventType string, message domain.
 func (s *Service) Settings() domain.Settings { return s.settings.Settings().Public() }
 
 func (s *Service) UpdateSettings(settings domain.Settings) (domain.Settings, error) {
-	updated, err := s.settings.UpdateSettings(settings)
+	merged := settings.MergeUpdate(s.settings.Settings())
+	if err := merged.Validate(); err != nil {
+		return domain.Settings{}, err
+	}
+	updated, err := s.settings.UpdateSettings(merged)
 	return updated.Public(), err
 }
 

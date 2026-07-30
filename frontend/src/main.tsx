@@ -9,10 +9,8 @@ type Settings = {
   qqbot_allowed_groups: string[]
   status_commands: string[]
   status_url: string
-  screenshot_selector: string
-  screenshot_width: number
-  screenshot_height: number
-  screenshot_wait_seconds: number
+  status_page_id: string
+  status_period: string
   screenshot_timeout_seconds: number
   screenshot_queue_size: number
 }
@@ -68,16 +66,38 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [logs, setLogs] = useState<Log[]>([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+	const [previewURL, setPreviewURL] = useState('')
+	const [previewBusy, setPreviewBusy] = useState(false)
   const load = async () => { try { setSettings(await api<Settings>('/api/settings')); setLogs(await api<Log[]>('/api/logs?limit=100')) } catch (reason) { setError(reason instanceof Error ? reason.message : '加载失败') } }
   useEffect(() => { void load() }, [])
   const status = useMemo(() => logs.filter((item) => item.status === 'failed').length, [logs])
   async function save() { if (!settings) return; setMessage(''); setError(''); try { setSettings(await api<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(settings) })); setMessage('配置已保存') } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败') } }
-  return <main className="shell"><header><div className="brand"><span className="brand-mark">Q</span><div><strong>QQ 状态机器人</strong><small>官方机器人控制台</small></div></div><div className="header-actions"><span className={status ? 'health bad' : 'health'}>{status ? `${status} 条失败` : '运行正常'}</span><button className="ghost" onClick={onLogout}>退出</button></div></header><nav className="tabs"><button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>机器人配置</button><button className={tab === 'logs' ? 'active' : ''} onClick={() => { setTab('logs'); void load() }}>收发日志</button></nav>{error && <p className="error banner">{error}</p>}{message && <p className="success banner">{message}</p>}{tab === 'settings' && settings && <SettingsPanel value={settings} setValue={setSettings} save={() => void save()} />}{tab === 'logs' && <Logs logs={logs} refresh={() => void load()} />}</main>
+	async function preview() {
+		if (!settings) return
+		setPreviewBusy(true); setMessage(''); setError('')
+		try {
+			const updated = await api<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(settings) })
+			setSettings(updated)
+			const response = await fetch('/api/status-preview', { credentials: 'same-origin', cache: 'no-store' })
+			if (!response.ok) {
+				const body = await response.json().catch(() => ({})) as { error?: string }
+				throw new Error(body.error ?? `HTTP ${response.status}`)
+			}
+			const objectURL = URL.createObjectURL(await response.blob())
+			setPreviewURL((current) => { if (current) URL.revokeObjectURL(current); return objectURL })
+			setMessage('状态图已生成')
+		} catch (reason) {
+			setError(reason instanceof Error ? reason.message : '预览失败')
+		} finally {
+			setPreviewBusy(false)
+		}
+	}
+	return <main className="shell"><header><div className="brand"><span className="brand-mark">Q</span><div><strong>QQ 状态机器人</strong><small>官方机器人控制台</small></div></div><div className="header-actions"><span className={status ? 'health bad' : 'health'}>{status ? `${status} 条失败` : '运行正常'}</span><button className="ghost" onClick={onLogout}>退出</button></div></header><nav className="tabs"><button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>机器人配置</button><button className={tab === 'logs' ? 'active' : ''} onClick={() => { setTab('logs'); void load() }}>收发日志</button></nav>{error && <p className="error banner">{error}</p>}{message && <p className="success banner">{message}</p>}{tab === 'settings' && settings && <SettingsPanel value={settings} setValue={setSettings} save={() => void save()} preview={() => void preview()} previewBusy={previewBusy} previewURL={previewURL} />}{tab === 'logs' && <Logs logs={logs} refresh={() => void load()} />}</main>
 }
 
-function SettingsPanel({ value, setValue, save }: { value: Settings; setValue: (value: Settings) => void; save: () => void }) {
+function SettingsPanel({ value, setValue, save, preview, previewBusy, previewURL }: { value: Settings; setValue: (value: Settings) => void; save: () => void; preview: () => void; previewBusy: boolean; previewURL: string }) {
   const set = <K extends keyof Settings>(key: K, next: Settings[K]) => setValue({ ...value, [key]: next })
-  return <section className="content"><div className="title-row"><div><h1>机器人配置</h1><p>配置官方凭证、状态页和群命令，保存后立即生效。</p></div><button onClick={save}>保存配置</button></div><div className="grid"><article className="card"><h2>QQ 开放平台</h2><p className="muted">回调地址：当前域名 /qqbot/events</p><label>AppID<input value={value.qqbot_app_id} onChange={(event) => set('qqbot_app_id', event.target.value)} /></label><label>AppSecret<input type="password" placeholder={value.qqbot_app_secret_set ? '已保存，留空表示不修改' : '请输入 AppSecret'} value={value.qqbot_app_secret ?? ''} onChange={(event) => set('qqbot_app_secret', event.target.value)} /></label><label>允许的群 OpenID< textarea value={value.qqbot_allowed_groups.join('\n')} onChange={(event) => set('qqbot_allowed_groups', event.target.value.split(/\n|,/))} placeholder="留空表示允许全部群，每行一个" /></label><label>状态命令<input value={value.status_commands.join(',')} onChange={(event) => set('status_commands', event.target.value.split(','))} /></label></article><article className="card"><h2>状态页截图</h2><label>状态页 URL<input value={value.status_url} onChange={(event) => set('status_url', event.target.value)} /></label><label>截图区域 CSS selector<textarea value={value.screenshot_selector} onChange={(event) => set('screenshot_selector', event.target.value)} /></label><div className="row"><label>宽度<input type="number" min="640" max="1920" value={value.screenshot_width} onChange={(event) => set('screenshot_width', Number(event.target.value))} /></label><label>高度<input type="number" min="480" max="2160" value={value.screenshot_height} onChange={(event) => set('screenshot_height', Number(event.target.value))} /></label></div><div className="row"><label>等待秒数<input type="number" min="0" max="30" value={value.screenshot_wait_seconds} onChange={(event) => set('screenshot_wait_seconds', Number(event.target.value))} /></label><label>队列长度<input type="number" min="1" max="20" value={value.screenshot_queue_size} onChange={(event) => set('screenshot_queue_size', Number(event.target.value))} /></label></div></article></div></section>
+  return <section className="content"><div className="title-row"><div><h1>机器人配置</h1><p>配置官方凭证、状态图数据源和群命令，保存后立即生效。</p></div><div className="title-actions"><button className="secondary" disabled={previewBusy} onClick={preview}>{previewBusy ? '生成中...' : '生成预览'}</button><button onClick={save}>保存配置</button></div></div><div className="grid"><article className="card"><h2>QQ 开放平台</h2><p className="muted">回调地址：当前域名 /qqbot/events</p><label>AppID<input value={value.qqbot_app_id} onChange={(event) => set('qqbot_app_id', event.target.value)} /></label><label>AppSecret<input type="password" placeholder={value.qqbot_app_secret_set ? '已保存，留空表示不修改' : '请输入 AppSecret'} value={value.qqbot_app_secret ?? ''} onChange={(event) => set('qqbot_app_secret', event.target.value)} /></label><label>允许的群 OpenID< textarea value={value.qqbot_allowed_groups.join('\n')} onChange={(event) => set('qqbot_allowed_groups', event.target.value.split(/\n|,/))} placeholder="留空表示允许全部群，每行一个" /></label><label>状态命令<input value={value.status_commands.join(',')} onChange={(event) => set('status_commands', event.target.value.split(','))} /></label></article><article className="card"><h2>状态图数据源</h2><label>URL<input value={value.status_url} onChange={(event) => set('status_url', event.target.value)} /></label><div className="row"><label>Page ID<input value={value.status_page_id} onChange={(event) => set('status_page_id', event.target.value)} /></label><label>统计周期<select value={value.status_period} onChange={(event) => set('status_period', event.target.value)}><option value="24h">近 24 小时</option><option value="7d">近 7 天</option><option value="30d">近 30 天</option><option value="90d">近 90 天</option><option value="1y">近 1 年</option></select></label></div><div className="row"><label>总超时（秒）<input type="number" min="15" max="240" value={value.screenshot_timeout_seconds} onChange={(event) => set('screenshot_timeout_seconds', Number(event.target.value))} /></label><label>队列长度<input type="number" min="1" max="20" value={value.screenshot_queue_size} onChange={(event) => set('screenshot_queue_size', Number(event.target.value))} /></label></div></article>{previewURL && <article className="card preview-card"><h2>状态图预览</h2><img src={previewURL} alt="状态图预览" /></article>}</div></section>
 }
 
 function Logs({ logs, refresh }: { logs: Log[]; refresh: () => void }) {

@@ -36,10 +36,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/auth/me", s.auth(s.me))
 	mux.HandleFunc("GET /api/settings", s.auth(s.settings))
 	mux.HandleFunc("PATCH /api/settings", s.auth(s.updateSettings))
+	mux.HandleFunc("GET /api/status-preview", s.auth(s.statusPreview))
 	mux.HandleFunc("GET /api/logs", s.auth(s.logs))
 	mux.HandleFunc("POST /qqbot/events", s.qqBotEvents)
-	mux.Handle("/admin/", s.static())
-	mux.Handle("/assets/", s.static())
+	mux.Handle("GET /admin/", s.static())
+	mux.Handle("GET /assets/", s.static())
 	return mux
 }
 
@@ -135,6 +136,18 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, updated)
 }
 
+func (s *Server) statusPreview(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	image, err := s.App.StatusPreview(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(image)
+}
+
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 200 {
@@ -179,7 +192,7 @@ func (s *Server) static() http.Handler {
 			path = strings.TrimPrefix(path, "admin/")
 		}
 		if path == "" || path == "admin" {
-			path = "index.html"
+			path = ""
 		}
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = "/" + path

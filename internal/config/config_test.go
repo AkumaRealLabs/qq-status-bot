@@ -16,8 +16,8 @@ func TestLoadDefaultsAndLists(t *testing.T) {
 	if cfg.QQBotAppID != "123" || len(cfg.AllowedGroups) != 2 || len(cfg.Commands) != 2 {
 		t.Fatalf("配置未规范化: %+v", cfg)
 	}
-	if cfg.ScreenshotSelector != defaultScreenshotSelector || cfg.StatusURL != "https://status.ggapi.cc" {
-		t.Fatalf("默认截图配置错误: %+v", cfg)
+	if cfg.StatusPageID != "default" || cfg.StatusPeriod != "1y" || cfg.StatusURL != "https://status.ggapi.cc" {
+		t.Fatalf("默认状态图配置错误: %+v", cfg)
 	}
 }
 

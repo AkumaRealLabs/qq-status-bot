@@ -19,7 +19,6 @@ coverage.out
 
 # Go 构建产物
 /qq-status-bot
-/qq-status-bot
 
 # 前端依赖、构建产物与缓存
 frontend/node_modules/

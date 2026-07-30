@@ -1,20 +1,22 @@
 package domain
 
-import "strings"
+import (
+	"errors"
+	"net/url"
+	"strings"
+)
 
 type Settings struct {
-	QQBotAppID         string   `json:"qqbot_app_id"`
-	QQBotAppSecret     string   `json:"qqbot_app_secret,omitempty"`
-	QQBotAppSecretSet  bool     `json:"qqbot_app_secret_set,omitempty"`
-	AllowedGroups      []string `json:"qqbot_allowed_groups"`
-	Commands           []string `json:"status_commands"`
-	StatusURL          string   `json:"status_url"`
-	ScreenshotSelector string   `json:"screenshot_selector"`
-	ScreenshotWidth    int      `json:"screenshot_width"`
-	ScreenshotHeight   int      `json:"screenshot_height"`
-	ScreenshotWait     int      `json:"screenshot_wait_seconds"`
-	ScreenshotTimeout  int      `json:"screenshot_timeout_seconds"`
-	QueueSize          int      `json:"screenshot_queue_size"`
+	QQBotAppID        string   `json:"qqbot_app_id"`
+	QQBotAppSecret    string   `json:"qqbot_app_secret,omitempty"`
+	QQBotAppSecretSet bool     `json:"qqbot_app_secret_set,omitempty"`
+	AllowedGroups     []string `json:"qqbot_allowed_groups"`
+	Commands          []string `json:"status_commands"`
+	StatusURL         string   `json:"status_url"`
+	StatusPageID      string   `json:"status_page_id"`
+	StatusPeriod      string   `json:"status_period"`
+	ScreenshotTimeout int      `json:"screenshot_timeout_seconds"`
+	QueueSize         int      `json:"screenshot_queue_size"`
 }
 
 type EventLog struct {
@@ -58,17 +60,15 @@ func (s Settings) MergeUpdate(old Settings) Settings {
 	} else {
 		out.StatusURL = strings.TrimRight(strings.TrimSpace(s.StatusURL), "/")
 	}
-	if strings.TrimSpace(s.ScreenshotSelector) == "" {
-		out.ScreenshotSelector = old.ScreenshotSelector
+	if strings.TrimSpace(s.StatusPageID) == "" {
+		out.StatusPageID = old.StatusPageID
+	} else {
+		out.StatusPageID = strings.TrimSpace(s.StatusPageID)
 	}
-	if s.ScreenshotWidth <= 0 {
-		out.ScreenshotWidth = old.ScreenshotWidth
-	}
-	if s.ScreenshotHeight <= 0 {
-		out.ScreenshotHeight = old.ScreenshotHeight
-	}
-	if s.ScreenshotWait <= 0 {
-		out.ScreenshotWait = old.ScreenshotWait
+	if strings.TrimSpace(s.StatusPeriod) == "" {
+		out.StatusPeriod = old.StatusPeriod
+	} else {
+		out.StatusPeriod = strings.TrimSpace(s.StatusPeriod)
 	}
 	if s.ScreenshotTimeout <= 0 {
 		out.ScreenshotTimeout = old.ScreenshotTimeout
@@ -77,6 +77,26 @@ func (s Settings) MergeUpdate(old Settings) Settings {
 		out.QueueSize = old.QueueSize
 	}
 	return out
+}
+
+func (s Settings) Validate() error {
+	parsed, err := url.Parse(strings.TrimSpace(s.StatusURL))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return errors.New("状态图数据源必须是完整的 HTTP/HTTPS URL")
+	}
+	if strings.TrimSpace(s.StatusPageID) == "" {
+		return errors.New("Page ID 不能为空")
+	}
+	if strings.TrimSpace(s.StatusPeriod) == "" {
+		return errors.New("统计周期不能为空")
+	}
+	if s.ScreenshotTimeout < 15 || s.ScreenshotTimeout > 240 {
+		return errors.New("状态图超时必须在 15 到 240 秒之间")
+	}
+	if s.QueueSize < 1 || s.QueueSize > 20 {
+		return errors.New("队列长度必须在 1 到 20 之间")
+	}
+	return nil
 }
 
 func normalizeList(in []string) []string {

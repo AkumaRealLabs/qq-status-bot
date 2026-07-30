@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-const defaultScreenshotSelector = "main > div:not(.sticky)"
-
 type Config struct {
 	HTTPAddr            string
 	QQBotAppID          string
@@ -21,13 +19,9 @@ type Config struct {
 	DataPath            string
 	AllowedGroups       []string
 	Commands            []string
-	BrowserDebugURL     string
-	BrowserHostHeader   string
 	StatusURL           string
-	ScreenshotSelector  string
-	ScreenshotWidth     int
-	ScreenshotHeight    int
-	ScreenshotWait      time.Duration
+	StatusPageID        string
+	StatusPeriod        string
 	ScreenshotTimeout   time.Duration
 	ScreenshotQueueSize int
 }
@@ -45,13 +39,9 @@ func load(getenv func(string) string) (Config, error) {
 		QQBotTokenURL:       value(getenv, "QQBOT_TOKEN_URL", "https://bots.qq.com/app/getAppAccessToken"),
 		AllowedGroups:       splitList(getenv("QQBOT_ALLOWED_GROUPS")),
 		Commands:            splitList(value(getenv, "STATUS_COMMANDS", "状态,status")),
-		BrowserDebugURL:     value(getenv, "BROWSER_DEBUG_URL", "http://127.0.0.1:9222"),
-		BrowserHostHeader:   strings.TrimSpace(getenv("BROWSER_DEBUG_HOST_HEADER")),
 		StatusURL:           value(getenv, "STATUS_URL", "https://status.ggapi.cc"),
-		ScreenshotSelector:  value(getenv, "SCREENSHOT_SELECTOR", defaultScreenshotSelector),
-		ScreenshotWidth:     intValue(getenv, "SCREENSHOT_WIDTH", 1280),
-		ScreenshotHeight:    intValue(getenv, "SCREENSHOT_HEIGHT", 900),
-		ScreenshotWait:      durationValue(getenv, "SCREENSHOT_WAIT", 5*time.Second),
+		StatusPageID:        value(getenv, "STATUS_PAGE_ID", "default"),
+		StatusPeriod:        value(getenv, "STATUS_PERIOD", "1y"),
 		ScreenshotTimeout:   durationValue(getenv, "SCREENSHOT_TIMEOUT", 90*time.Second),
 		ScreenshotQueueSize: intValue(getenv, "SCREENSHOT_QUEUE_SIZE", 3),
 	}
@@ -59,8 +49,11 @@ func load(getenv func(string) string) (Config, error) {
 	if len(cfg.Commands) == 0 {
 		cfg.Commands = []string{"状态"}
 	}
-	if strings.TrimSpace(cfg.ScreenshotSelector) == "" {
-		return Config{}, errors.New("SCREENSHOT_SELECTOR 不能为空")
+	if strings.TrimSpace(cfg.StatusPageID) == "" {
+		return Config{}, errors.New("STATUS_PAGE_ID 不能为空")
+	}
+	if strings.TrimSpace(cfg.StatusPeriod) == "" {
+		return Config{}, errors.New("STATUS_PERIOD 不能为空")
 	}
 	for name, rawURL := range map[string]string{
 		"QQBOT_API_BASE_URL": cfg.QQBotAPIBaseURL,
@@ -70,18 +63,6 @@ func load(getenv func(string) string) (Config, error) {
 		if err := validateHTTPURL(rawURL, true); err != nil {
 			return Config{}, fmt.Errorf("%s: %w", name, err)
 		}
-	}
-	if err := validateHTTPURL(cfg.BrowserDebugURL, false); err != nil {
-		return Config{}, fmt.Errorf("BROWSER_DEBUG_URL: %w", err)
-	}
-	if cfg.ScreenshotWidth < 640 || cfg.ScreenshotWidth > 1920 {
-		return Config{}, errors.New("SCREENSHOT_WIDTH 必须在 640 到 1920 之间")
-	}
-	if cfg.ScreenshotHeight < 480 || cfg.ScreenshotHeight > 2160 {
-		return Config{}, errors.New("SCREENSHOT_HEIGHT 必须在 480 到 2160 之间")
-	}
-	if cfg.ScreenshotWait < 0 || cfg.ScreenshotWait > 30*time.Second {
-		return Config{}, errors.New("SCREENSHOT_WAIT 必须在 0 到 30 秒之间")
 	}
 	if cfg.ScreenshotTimeout < 15*time.Second || cfg.ScreenshotTimeout > 4*time.Minute {
 		return Config{}, errors.New("SCREENSHOT_TIMEOUT 必须在 15 秒到 4 分钟之间")

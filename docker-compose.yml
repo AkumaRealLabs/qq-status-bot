@@ -1,5 +1,8 @@
+name: qq-status-bot
+
 services:
   app:
+    container_name: qq-status-bot
     image: ${APP_IMAGE:-ghcr.io/akumareallabs/qq-status-bot:latest}
     build: .
     ports:
@@ -11,27 +14,17 @@ services:
       QQBOT_ALLOWED_GROUPS: ${QQBOT_ALLOWED_GROUPS:-}
       STATUS_COMMANDS: ${STATUS_COMMANDS:-状态,status}
       STATUS_URL: ${STATUS_URL:-https://status.ggapi.cc}
-      SCREENSHOT_SELECTOR: ${SCREENSHOT_SELECTOR:-main > div:not(.sticky)}
-      SCREENSHOT_WIDTH: ${SCREENSHOT_WIDTH:-1280}
-      SCREENSHOT_HEIGHT: ${SCREENSHOT_HEIGHT:-900}
-      SCREENSHOT_WAIT: ${SCREENSHOT_WAIT:-5s}
-      BROWSER_DEBUG_URL: http://browser:9222
+      STATUS_PAGE_ID: ${STATUS_PAGE_ID:-default}
+      STATUS_PERIOD: ${STATUS_PERIOD:-1y}
+      SCREENSHOT_TIMEOUT: ${SCREENSHOT_TIMEOUT:-90s}
+      SCREENSHOT_QUEUE_SIZE: ${SCREENSHOT_QUEUE_SIZE:-3}
       TZ: Asia/Shanghai
     volumes:
       - ./data:/app/data
-    depends_on:
-      - browser
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-    restart: unless-stopped
-
-  browser:
-    image: ${BROWSER_IMAGE:-ghcr.io/akumareallabs/qq-status-bot-browser:latest}
-    build:
-      context: browser
-    shm_size: 512mb
     restart: unless-stopped
