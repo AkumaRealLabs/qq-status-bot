@@ -15,3 +15,11 @@ func TestIsCommandMatchesExactTrimmedText(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeContentRemovesLeadingBotMention(t *testing.T) {
+	for _, input := range []string{"@机器人 绑定", "<@bot> 绑定", "<@!123> 状态"} {
+		if got := NormalizeContent(input); got == "" || (got != "绑定" && got != "状态") {
+			t.Fatalf("提及正文规范化错误: input=%q got=%q", input, got)
+		}
+	}
+}

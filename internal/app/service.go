@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"qq-status-bot/internal/domain"
+	"qq-status-bot/internal/mailer"
 	"qq-status-bot/internal/qqbot"
 )
 
@@ -60,6 +61,9 @@ type Service struct {
 	generator     StatusImageGenerator
 	replier       GroupReplier
 	jobs          chan domain.GroupMessage
+	accountJobs   chan domain.GroupMessage
+	accountMu     sync.Mutex
+	account       *AccountService
 	alertFetcher  StatusFetcher
 	alertInterval time.Duration
 	alertStateMu  sync.Mutex
@@ -80,6 +84,10 @@ func New(settings SettingsStore, generator StatusImageGenerator, replier GroupRe
 		jobs: make(chan domain.GroupMessage, queueSize), seen: make(map[string]time.Time),
 		alertInterval: alertPollInterval,
 	}
+	if bindingStore, ok := settings.(AccountBindingStore); ok {
+		service.account = NewAccountService(settings, bindingStore, nil, nil)
+		service.accountJobs = make(chan domain.GroupMessage, queueSize)
+	}
 	if len(fetcher) > 0 {
 		service.alertFetcher = fetcher[0]
 	}
@@ -97,6 +105,21 @@ func (s *Service) Start(ctx context.Context) {
 			}
 		}
 	}()
+	s.accountMu.Lock()
+	accountJobs := s.accountJobs
+	s.accountMu.Unlock()
+	if accountJobs != nil {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case message := <-accountJobs:
+					s.processAccountMessage(ctx, message)
+				}
+			}
+		}()
+	}
 	s.startAlerts(ctx)
 }
 
@@ -225,16 +248,47 @@ func (s *Service) handleDispatch(payload qqbot.Payload, settings domain.Settings
 	if err := json.Unmarshal(payload.Data, &message); err != nil || message.ID == "" || message.GroupOpenID == "" {
 		return qqbot.CallbackACK(true)
 	}
+	message.Content = domain.NormalizeContent(message.Content)
 	if message.Author.Bot {
 		s.logEvent(payload.Type, message, "ignored", "机器人消息")
 		return qqbot.CallbackACK(true)
 	}
-	if !domain.IsCommand(message.Content, settings.Commands) {
-		s.logEvent(payload.Type, message, "ignored", "非状态命令")
-		return qqbot.CallbackACK(true)
-	}
 	if !groupAllowed(message.GroupOpenID, settings.AllowedGroups) {
 		s.logEvent(payload.Type, message, "ignored", "群不在白名单")
+		return qqbot.CallbackACK(true)
+	}
+	if payload.Type == qqbot.EventGroupAtMessage && strings.TrimSpace(message.Author.MemberOpenID) != "" {
+		s.accountMu.Lock()
+		account := s.account
+		s.accountMu.Unlock()
+		accountInput := account != nil && domain.IsAccountCommand(strings.TrimSpace(message.Content))
+		if account != nil && account.HasPending(message.GroupOpenID, message.Author.MemberOpenID) {
+			accountInput = true
+		}
+		if accountInput {
+			if s.duplicate(message.ID) {
+				s.logEvent(payload.Type, message, "duplicate", "重复消息")
+				return qqbot.CallbackACK(true)
+			}
+			s.accountMu.Lock()
+			if s.accountJobs == nil {
+				s.accountJobs = make(chan domain.GroupMessage, cap(s.jobs))
+			}
+			accountJobs := s.accountJobs
+			s.accountMu.Unlock()
+			select {
+			case accountJobs <- message:
+				s.markSeen(message.ID)
+				s.logEvent(payload.Type, message, "queued", "已加入账号功能队列")
+				return qqbot.CallbackACK(true)
+			default:
+				s.logEvent(payload.Type, message, "busy", "账号功能队列已满")
+				return qqbot.CallbackACK(false)
+			}
+		}
+	}
+	if !domain.IsCommand(message.Content, settings.Commands) {
+		s.logEvent(payload.Type, message, "ignored", "非状态命令")
 		return qqbot.CallbackACK(true)
 	}
 	if s.duplicate(message.ID) {
@@ -273,8 +327,30 @@ func (s *Service) processMessage(parent context.Context, message domain.GroupMes
 	s.logEventDirection("send", qqbot.EventGroupAtMessage, message, "failed", err.Error())
 	errorCtx, errorCancel := context.WithTimeout(parent, 15*time.Second)
 	defer errorCancel()
-	if replyErr := s.replier.ReplyGroupText(errorCtx, message.GroupOpenID, message.ID, "状态图生成失败，请稍后再试。", 2); replyErr != nil {
+	errorText := "状态图生成失败，请稍后再试。"
+	if strings.TrimSpace(message.Author.MemberOpenID) != "" || domain.NormalizeContent(message.Content) != "" {
+		errorText += "重试示例：@机器人 状态"
+	}
+	if replyErr := s.replier.ReplyGroupText(errorCtx, message.GroupOpenID, message.ID, errorText, 2); replyErr != nil {
 		log.Printf("状态图错误提示发送失败 group=%s: %v", message.GroupOpenID, replyErr)
+	}
+}
+
+func (s *Service) processAccountMessage(parent context.Context, message domain.GroupMessage) {
+	s.accountMu.Lock()
+	account := s.account
+	s.accountMu.Unlock()
+	if account == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+	handled, reply := account.Handle(ctx, message)
+	if !handled || reply == "" {
+		return
+	}
+	if err := s.replier.ReplyGroupText(ctx, message.GroupOpenID, message.ID, reply, 1); err != nil {
+		log.Printf("账号功能回复失败 group=%s: %v", message.GroupOpenID, err)
 	}
 }
 
@@ -336,6 +412,23 @@ func (s *Service) UpdateSettings(settings domain.Settings) (domain.Settings, err
 	return updated.Public(), err
 }
 
+func (s *Service) ConfigureAccounts(verifier AccountVerifier, sender mailer.Mailer) {
+	store, ok := s.settings.(AccountBindingStore)
+	if !ok {
+		return
+	}
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
+	if s.account == nil {
+		s.account = NewAccountService(s.settings, store, verifier, sender)
+	} else {
+		s.account.Configure(verifier, sender)
+	}
+	if s.accountJobs == nil {
+		s.accountJobs = make(chan domain.GroupMessage, cap(s.jobs))
+	}
+}
+
 func (s *Service) SetupStatus() bool                     { return s.settings.SetupStatus() }
 func (s *Service) Setup(username, password string) error { return s.settings.Setup(username, password) }
 func (s *Service) Login(username, password string) (string, error) {
@@ -362,6 +455,52 @@ func (s *Service) DiscoveredGroups() []string {
 		groups = append(groups, group)
 	}
 	return groups
+}
+
+func (s *Service) AccountBindings() []domain.AccountBindingView {
+	s.accountMu.Lock()
+	account := s.account
+	s.accountMu.Unlock()
+	if account != nil {
+		return account.Bindings()
+	}
+	if store, ok := s.settings.(AccountBindingStore); ok {
+		items := store.AccountBindings()
+		views := make([]domain.AccountBindingView, 0, len(items))
+		for _, item := range items {
+			views = append(views, item.PublicView())
+		}
+		return views
+	}
+	return []domain.AccountBindingView{}
+}
+
+func (s *Service) DeleteAccountBinding(id string) error {
+	s.accountMu.Lock()
+	account := s.account
+	s.accountMu.Unlock()
+	if account != nil {
+		deleted, err := account.Revoke(id)
+		if err != nil {
+			return err
+		}
+		if !deleted {
+			return ErrAccountBindingNotFound
+		}
+		return nil
+	}
+	store, ok := s.settings.(AccountBindingStore)
+	if !ok {
+		return ErrAccountNotConfigured
+	}
+	deleted, err := store.DeleteAccountBinding(id)
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return ErrAccountBindingNotFound
+	}
+	return nil
 }
 func (s *Service) Health() map[string]string {
 	return map[string]string{"status": "ok", "service": "qq-status-bot"}

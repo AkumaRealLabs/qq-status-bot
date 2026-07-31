@@ -10,6 +10,8 @@
 | `qqbot` | QQ 官方 Ed25519 验签、Access Token、分片上传与消息 API |
 | `statusapi` | 并发读取状态页公开 JSON API，并限制协议、超时与响应大小 |
 | `statusimage` | 使用内嵌中文字体和 Go 图形库生成 PNG |
+| `ggapi` | 只读调用 GGAPI 管理用户、状态和余额接口 |
+| `mailer` | 通过 SMTP STARTTLS 或隐式 TLS 发送绑定验证码 |
 | `store` | 原子持久化配置、管理员哈希、内存会话与摘要日志 |
 | `httpapi` | Webhook、健康检查、管理 API 与已鉴权 PNG 预览 |
 

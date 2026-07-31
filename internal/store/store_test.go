@@ -1,6 +1,7 @@
 package store
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -30,6 +31,13 @@ func TestStorePersistsSettingsLogsAndAdmin(t *testing.T) {
 	}
 	if s2.Settings().QQBotAppSecret != "secret" || len(s2.Logs(10)) != 1 || s2.SetupStatus() != true {
 		t.Fatalf("持久化结果错误: settings=%+v logs=%+v", s2.Settings(), s2.Logs(10))
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if permission := info.Mode().Perm(); permission != 0o600 {
+		t.Fatalf("JSON 文件权限 = %o，期望 600", permission)
 	}
 }
 
@@ -105,5 +113,34 @@ func TestStorePersistsAlertStateAndDefaultsNewSettings(t *testing.T) {
 	loaded := s2.AlertState()
 	if loaded.SourceKey != "source" || loaded.Nodes["7"].OfflineAttempts["group"] != 2 {
 		t.Fatalf("告警状态未持久化: %+v", loaded)
+	}
+}
+
+func TestStorePersistsAccountBindingsAndSupportsCRUD(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s, err := Open(path, domain.Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := domain.AccountBinding{ID: "binding-1", MemberOpenID: "member-1", Email: "Name@Example.com", GGAPIUserID: "7", Username: "name", FirstGroupOpenID: "group-1"}
+	if err := s.UpsertAccountBinding(binding); err != nil {
+		t.Fatal(err)
+	}
+	loaded, ok := s.AccountBinding("member-1")
+	if !ok || loaded.Email != "name@example.com" || loaded.ID != "binding-1" {
+		t.Fatalf("绑定规范化或读取错误: %+v ok=%v", loaded, ok)
+	}
+	reopened, err := Open(path, domain.Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items := reopened.AccountBindings(); len(items) != 1 || items[0].GGAPIUserID != "7" {
+		t.Fatalf("绑定未持久化: %+v", items)
+	}
+	if deleted, err := reopened.DeleteAccountBindingForMember("member-1"); err != nil || !deleted {
+		t.Fatalf("按成员删除失败: deleted=%v err=%v", deleted, err)
+	}
+	if _, ok := reopened.AccountBinding("member-1"); ok {
+		t.Fatal("绑定删除后仍存在")
 	}
 }

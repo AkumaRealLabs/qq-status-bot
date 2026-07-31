@@ -280,6 +280,51 @@ func TestStatusPreviewReturnsJSONForGeneratorError(t *testing.T) {
 	}
 }
 
+func TestAccountBindingsRequireAuthenticationAndReturnMaskedEmail(t *testing.T) {
+	defaults := domain.Settings{Commands: []string{"状态"}, StatusURL: "https://status.example", StatusPageID: "default", StatusPeriod: "1y", ScreenshotTimeout: 90, QueueSize: 3}
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.json"), defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.UpsertAccountBinding(domain.AccountBinding{ID: "binding-1", MemberOpenID: "member-1", Email: "name@example.com", GGAPIUserID: "7", Username: "name", FirstGroupOpenID: "group-1"}); err != nil {
+		t.Fatal(err)
+	}
+	service := app.New(state, previewGenerator{}, noopReplier{}, 3)
+	handler := (&Server{App: service}).Routes()
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/account-bindings", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("账号绑定列表应要求鉴权: %d", unauthenticated.Code)
+	}
+	unauthenticatedDelete := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedDelete, httptest.NewRequest(http.MethodDelete, "/api/account-bindings/binding-1", nil))
+	if unauthenticatedDelete.Code != http.StatusUnauthorized {
+		t.Fatalf("撤销绑定应要求鉴权: %d", unauthenticatedDelete.Code)
+	}
+	setup := httptest.NewRequest(http.MethodPost, "/api/setup", bytes.NewBufferString(`{"password":"password8"}`))
+	setup.Header.Set("Content-Type", "application/json")
+	setupResponse := httptest.NewRecorder()
+	handler.ServeHTTP(setupResponse, setup)
+	cookies := setupResponse.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("初始化未返回 Cookie: %v", cookies)
+	}
+	list := httptest.NewRequest(http.MethodGet, "/api/account-bindings", nil)
+	list.AddCookie(cookies[0])
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	if listResponse.Code != http.StatusOK || strings.Contains(listResponse.Body.String(), "name@example.com") || !strings.Contains(listResponse.Body.String(), "n***@example.com") {
+		t.Fatalf("绑定列表脱敏错误: code=%d body=%s", listResponse.Code, listResponse.Body.String())
+	}
+	remove := httptest.NewRequest(http.MethodDelete, "/api/account-bindings/binding-1", nil)
+	remove.AddCookie(cookies[0])
+	removeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(removeResponse, remove)
+	if removeResponse.Code != http.StatusOK {
+		t.Fatalf("撤销绑定失败: %d %s", removeResponse.Code, removeResponse.Body.String())
+	}
+}
+
 func previewHarness(t *testing.T, generator previewGenerator) (http.Handler, *http.Cookie) {
 	t.Helper()
 	defaults := domain.Settings{

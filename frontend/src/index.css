@@ -33,6 +33,7 @@ p { margin: 7px 0 0; } .muted { color: #7d899d; font-size: 13px; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .card { background: #fff; border: 1px solid #e3e9f2; border-radius: 12px; padding: 24px; box-shadow: 0 8px 26px #2438580a; }
 .alert-card { grid-column: 1 / -1; }
+.ggapi-card { grid-column: 1 / -1; }
 .action-card { grid-column: 1 / -1; }
 .section-heading { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
 .switch { display: flex; align-items: center; gap: 8px; margin: 0; white-space: nowrap; }
@@ -62,4 +63,12 @@ p { margin: 7px 0 0; } .muted { color: #7d899d; font-size: 13px; }
 .state.retry { color: #9a6400; background: #fff6df; } .state.permission_denied { color: #a53c3c; background: #fff0ef; } .state.recovered { color: #15805a; background: #e6f8f0; }
 .log-detail { margin-top: 8px; color: #76839a; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
 .empty { padding: 48px 20px; color: #8792a5; text-align: center; }
+.binding-list { background: #fff; border: 1px solid #e3e9f2; border-radius: 12px; overflow: hidden; }
+.binding { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; border-bottom: 1px solid #edf0f5; }
+.binding:last-child { border-bottom: 0; }
+.binding strong { font-size: 14px; }
+.binding p { margin: 6px 0 0; }
+.binding time { display: block; margin-top: 7px; color: #8792a5; font-size: 12px; }
+.danger { background: #b33b3b; white-space: nowrap; }
 @media (max-width: 760px) { header { padding: 0 18px; } .header-actions .health { display: none; } .tabs { padding: 0 18px; } .content { width: min(100% - 28px, 1160px); margin: 24px auto; } .grid { grid-template-columns: 1fr; } .title-row { align-items: start; flex-direction: column; } .title-actions { width: 100%; } .title-actions button { flex: 1; } .discovered-picker { grid-template-columns: 1fr 1fr; } .discovered-picker select { grid-column: 1 / -1; } .action-buttons { display: grid; grid-template-columns: 1fr; } .log-top time { margin-left: 0; width: 100%; } .card { padding: 18px; } }
+@media (max-width: 560px) { .binding { align-items: start; flex-direction: column; } .binding button { width: 100%; } }

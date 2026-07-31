@@ -104,6 +104,19 @@ func TestProcessMessageLogsFailureAndRepliesText(t *testing.T) {
 	}
 }
 
+func TestProcessMessageFailureIncludesRetryExampleForStatusCommand(t *testing.T) {
+	store := &fakeSettingsStore{settings: domain.Settings{StatusURL: "https://status.example", StatusPageID: "default", StatusPeriod: "1y", ScreenshotTimeout: 15}}
+	generator := &fakeGenerator{err: errors.New("upstream failed")}
+	replier := &fakeReplier{}
+	service := New(store, generator, replier, 3)
+	message := domain.GroupMessage{ID: "message", GroupOpenID: "group", Content: "状态"}
+	message.Author.MemberOpenID = "member"
+	service.processMessage(t.Context(), message)
+	if !strings.Contains(replier.text, "重试示例：@机器人 状态") {
+		t.Fatalf("状态命令错误提示缺少重试示例: %q", replier.text)
+	}
+}
+
 func TestSendStatusRequiresKnownGroupAndSendsGeneratedImage(t *testing.T) {
 	store := &fakeSettingsStore{settings: domain.Settings{
 		AlertGroups: []string{"alert-group"}, StatusURL: "https://status.example", StatusPageID: "default", StatusPeriod: "1y", ScreenshotTimeout: 15,

@@ -40,6 +40,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/status/send", s.auth(s.statusSend))
 	mux.HandleFunc("GET /api/logs", s.auth(s.logs))
 	mux.HandleFunc("GET /api/groups/discovered", s.auth(s.discoveredGroups))
+	mux.HandleFunc("GET /api/account-bindings", s.auth(s.accountBindings))
+	mux.HandleFunc("DELETE /api/account-bindings/{id}", s.auth(s.deleteAccountBinding))
 	mux.HandleFunc("POST /api/alerts/test", s.auth(s.alertTest))
 	mux.HandleFunc("POST /api/alerts/simulate", s.auth(s.alertSimulate))
 	mux.HandleFunc("POST /qqbot/events", s.qqBotEvents)
@@ -176,6 +178,29 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) discoveredGroups(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.App.DiscoveredGroups())
+}
+
+func (s *Server) accountBindings(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.App.AccountBindings())
+}
+
+func (s *Server) deleteAccountBinding(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "绑定 ID 不能为空")
+		return
+	}
+	if err := s.App.DeleteAccountBinding(id); err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, app.ErrAccountBindingNotFound) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, app.ErrAccountNotConfigured) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) alertTest(w http.ResponseWriter, r *http.Request) {

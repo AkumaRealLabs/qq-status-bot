@@ -2,6 +2,8 @@ package domain
 
 import (
 	"errors"
+	"fmt"
+	"net/mail"
 	"net/url"
 	"strings"
 )
@@ -21,6 +23,54 @@ type Settings struct {
 	AlertGroups          []string `json:"alert_groups"`
 	AlertFailureSamples  int      `json:"alert_failure_samples"`
 	AlertRecoverySamples int      `json:"alert_recovery_samples"`
+	GGAPIBalanceEnabled  bool     `json:"ggapi_balance_enabled"`
+	GGAPIBaseURL         string   `json:"ggapi_base_url"`
+	GGAPIAdminToken      string   `json:"ggapi_admin_token,omitempty"`
+	GGAPIAdminTokenSet   bool     `json:"ggapi_admin_token_set,omitempty"`
+	GGAPISmtpHost        string   `json:"ggapi_smtp_host"`
+	GGAPISmtpPort        int      `json:"ggapi_smtp_port"`
+	GGAPISmtpUsername    string   `json:"ggapi_smtp_username"`
+	GGAPISmtpPassword    string   `json:"ggapi_smtp_password,omitempty"`
+	GGAPISmtpPasswordSet bool     `json:"ggapi_smtp_password_set,omitempty"`
+	GGAPISmtpFrom        string   `json:"ggapi_smtp_from"`
+	GGAPISmtpFromName    string   `json:"ggapi_smtp_from_name"`
+	GGAPISmtpTLSMode     string   `json:"ggapi_smtp_tls_mode"`
+}
+
+// AccountBinding 是成员与 GGAPI 用户之间的持久绑定。Email 和 MemberOpenID
+// 只在服务端内部使用，管理接口通过 PublicView 返回脱敏数据。
+type AccountBinding struct {
+	ID               string `json:"id"`
+	MemberOpenID     string `json:"member_openid"`
+	Email            string `json:"email"`
+	GGAPIUserID      string `json:"ggapi_user_id"`
+	Username         string `json:"username"`
+	FirstGroupOpenID string `json:"first_group_openid"`
+	BoundAt          string `json:"bound_at"`
+}
+
+type AccountBindingView struct {
+	ID               string `json:"id"`
+	Email            string `json:"email"`
+	GGAPIUserID      string `json:"ggapi_user_id"`
+	Username         string `json:"username"`
+	FirstGroupOpenID string `json:"first_group_openid"`
+	BoundAt          string `json:"bound_at"`
+}
+
+func (b AccountBinding) PublicView() AccountBindingView {
+	return AccountBindingView{ID: b.ID, Email: MaskEmail(b.Email), GGAPIUserID: b.GGAPIUserID,
+		Username: b.Username, FirstGroupOpenID: b.FirstGroupOpenID, BoundAt: b.BoundAt}
+}
+
+func MaskEmail(raw string) string {
+	email := strings.TrimSpace(strings.ToLower(raw))
+	at := strings.LastIndexByte(email, '@')
+	if at <= 0 || at == len(email)-1 {
+		return "***"
+	}
+	local, host := email[:at], email[at+1:]
+	return local[:1] + "***@" + host
 }
 
 // AlertState 保存告警状态，避免进程或容器重启后重复通知。
@@ -59,6 +109,10 @@ func (s Settings) Public() Settings {
 	out := s
 	out.QQBotAppSecretSet = strings.TrimSpace(s.QQBotAppSecret) != ""
 	out.QQBotAppSecret = ""
+	out.GGAPIAdminTokenSet = strings.TrimSpace(s.GGAPIAdminToken) != ""
+	out.GGAPIAdminToken = ""
+	out.GGAPISmtpPasswordSet = strings.TrimSpace(s.GGAPISmtpPassword) != ""
+	out.GGAPISmtpPassword = ""
 	out.AllowedGroups = append([]string{}, s.AllowedGroups...)
 	out.Commands = append([]string{}, s.Commands...)
 	out.AlertGroups = append([]string{}, s.AlertGroups...)
@@ -67,6 +121,9 @@ func (s Settings) Public() Settings {
 	}
 	if out.AlertRecoverySamples <= 0 {
 		out.AlertRecoverySamples = 2
+	}
+	if out.GGAPISmtpTLSMode == "" {
+		out.GGAPISmtpTLSMode = "starttls"
 	}
 	return out
 }
@@ -81,6 +138,16 @@ func (s Settings) MergeUpdate(old Settings) Settings {
 		out.QQBotAppSecret = old.QQBotAppSecret
 	} else {
 		out.QQBotAppSecret = strings.TrimSpace(s.QQBotAppSecret)
+	}
+	if strings.TrimSpace(s.GGAPIAdminToken) == "" {
+		out.GGAPIAdminToken = old.GGAPIAdminToken
+	} else {
+		out.GGAPIAdminToken = strings.TrimSpace(s.GGAPIAdminToken)
+	}
+	if strings.TrimSpace(s.GGAPISmtpPassword) == "" {
+		out.GGAPISmtpPassword = old.GGAPISmtpPassword
+	} else {
+		out.GGAPISmtpPassword = strings.TrimSpace(s.GGAPISmtpPassword)
 	}
 	out.AllowedGroups = normalizeList(s.AllowedGroups)
 	out.AlertGroups = normalizeList(s.AlertGroups)
@@ -103,6 +170,39 @@ func (s Settings) MergeUpdate(old Settings) Settings {
 	} else {
 		out.StatusPeriod = strings.TrimSpace(s.StatusPeriod)
 	}
+	if strings.TrimSpace(s.GGAPIBaseURL) == "" {
+		out.GGAPIBaseURL = old.GGAPIBaseURL
+	} else {
+		out.GGAPIBaseURL = strings.TrimRight(strings.TrimSpace(s.GGAPIBaseURL), "/")
+	}
+	if strings.TrimSpace(s.GGAPISmtpHost) == "" {
+		out.GGAPISmtpHost = old.GGAPISmtpHost
+	} else {
+		out.GGAPISmtpHost = strings.TrimSpace(s.GGAPISmtpHost)
+	}
+	if strings.TrimSpace(s.GGAPISmtpUsername) == "" {
+		out.GGAPISmtpUsername = old.GGAPISmtpUsername
+	} else {
+		out.GGAPISmtpUsername = strings.TrimSpace(s.GGAPISmtpUsername)
+	}
+	if strings.TrimSpace(s.GGAPISmtpFrom) == "" {
+		out.GGAPISmtpFrom = old.GGAPISmtpFrom
+	} else {
+		out.GGAPISmtpFrom = strings.TrimSpace(s.GGAPISmtpFrom)
+	}
+	if strings.TrimSpace(s.GGAPISmtpFromName) == "" {
+		out.GGAPISmtpFromName = old.GGAPISmtpFromName
+	} else {
+		out.GGAPISmtpFromName = strings.TrimSpace(s.GGAPISmtpFromName)
+	}
+	if strings.TrimSpace(s.GGAPISmtpTLSMode) == "" {
+		out.GGAPISmtpTLSMode = old.GGAPISmtpTLSMode
+	} else {
+		out.GGAPISmtpTLSMode = strings.ToLower(strings.TrimSpace(s.GGAPISmtpTLSMode))
+	}
+	if s.GGAPISmtpPort <= 0 {
+		out.GGAPISmtpPort = old.GGAPISmtpPort
+	}
 	if s.ScreenshotTimeout <= 0 {
 		out.ScreenshotTimeout = old.ScreenshotTimeout
 	}
@@ -121,6 +221,9 @@ func (s Settings) MergeUpdate(old Settings) Settings {
 	if out.AlertRecoverySamples <= 0 {
 		out.AlertRecoverySamples = 2
 	}
+	out.QQBotAppSecretSet = strings.TrimSpace(out.QQBotAppSecret) != ""
+	out.GGAPIAdminTokenSet = strings.TrimSpace(out.GGAPIAdminToken) != ""
+	out.GGAPISmtpPasswordSet = strings.TrimSpace(out.GGAPISmtpPassword) != ""
 	return out
 }
 
@@ -149,6 +252,40 @@ func (s Settings) Validate() error {
 	}
 	if s.AlertsEnabled && len(normalizeList(s.AlertGroups)) == 0 {
 		return errors.New("启用故障通知时至少配置一个告警群")
+	}
+	if s.GGAPIBalanceEnabled {
+		base, err := url.Parse(strings.TrimSpace(s.GGAPIBaseURL))
+		if err != nil || base.Host == "" || base.Scheme != "https" || base.User != nil {
+			return errors.New("启用 GGAPI 余额时，GGAPI 地址必须是 HTTPS URL")
+		}
+		if strings.TrimSpace(s.GGAPIAdminToken) == "" {
+			return errors.New("启用 GGAPI 余额时必须配置管理令牌")
+		}
+		if strings.TrimSpace(s.GGAPISmtpHost) == "" {
+			return errors.New("启用 GGAPI 余额时必须配置 SMTP 主机")
+		}
+		if s.GGAPISmtpPort < 1 || s.GGAPISmtpPort > 65535 {
+			return errors.New("SMTP 端口必须在 1 到 65535 之间")
+		}
+		if strings.TrimSpace(s.GGAPISmtpUsername) == "" || strings.TrimSpace(s.GGAPISmtpPassword) == "" {
+			return errors.New("启用 GGAPI 余额时必须配置 SMTP 凭证")
+		}
+		from := strings.TrimSpace(s.GGAPISmtpFrom)
+		if from == "" {
+			return errors.New("SMTP 发件人不能为空")
+		}
+		if _, err := mail.ParseAddress(from); err != nil {
+			return fmt.Errorf("SMTP 发件人格式无效: %w", err)
+		}
+		mode := strings.ToLower(strings.TrimSpace(s.GGAPISmtpTLSMode))
+		if mode == "" {
+			mode = "starttls"
+		}
+		switch mode {
+		case "implicit_tls", "implicit-tls", "tls", "starttls":
+		default:
+			return errors.New("SMTP TLS 模式只支持 implicit_tls 或 starttls")
+		}
 	}
 	return nil
 }

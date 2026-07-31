@@ -16,12 +16,13 @@ import (
 )
 
 type diskState struct {
-	Settings         domain.Settings   `json:"settings"`
-	AdminUsername    string            `json:"admin_username"`
-	AdminPassHash    string            `json:"admin_password_hash"`
-	EventLogs        []domain.EventLog `json:"event_logs"`
-	AlertState       domain.AlertState `json:"alert_state"`
-	DiscoveredGroups []string          `json:"discovered_groups"`
+	Settings         domain.Settings         `json:"settings"`
+	AdminUsername    string                  `json:"admin_username"`
+	AdminPassHash    string                  `json:"admin_password_hash"`
+	EventLogs        []domain.EventLog       `json:"event_logs"`
+	AlertState       domain.AlertState       `json:"alert_state"`
+	DiscoveredGroups []string                `json:"discovered_groups"`
+	AccountBindings  []domain.AccountBinding `json:"account_bindings"`
 }
 
 type session struct {
@@ -52,6 +53,7 @@ func Open(path string, defaults domain.Settings) (*Store, error) {
 	}
 	s.state.AlertState.Nodes = map[string]domain.AlertNodeState{}
 	s.state.DiscoveredGroups = []string{}
+	s.state.AccountBindings = []domain.AccountBinding{}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := s.persistLocked(); err != nil {
@@ -60,6 +62,9 @@ func Open(path string, defaults domain.Settings) (*Store, error) {
 		return s, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(data, &s.state); err != nil {
@@ -77,6 +82,9 @@ func Open(path string, defaults domain.Settings) (*Store, error) {
 	}
 	if s.state.AlertState.Nodes == nil {
 		s.state.AlertState.Nodes = map[string]domain.AlertNodeState{}
+	}
+	if s.state.AccountBindings == nil {
+		s.state.AccountBindings = []domain.AccountBinding{}
 	}
 	s.state.DiscoveredGroups = mergeDiscoveredGroups(s.state.DiscoveredGroups, s.state.EventLogs)
 	return s, nil
@@ -245,6 +253,95 @@ func (s *Store) UpdateAlertState(next domain.AlertState) error {
 	}
 	s.state.AlertState = cloneAlertState(next)
 	return s.persistLocked()
+}
+
+func (s *Store) AccountBindings() []domain.AccountBinding {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]domain.AccountBinding, len(s.state.AccountBindings))
+	copy(out, s.state.AccountBindings)
+	return out
+}
+
+func (s *Store) AccountBinding(memberOpenID string) (domain.AccountBinding, bool) {
+	memberOpenID = strings.TrimSpace(memberOpenID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, binding := range s.state.AccountBindings {
+		if binding.MemberOpenID == memberOpenID {
+			return binding, true
+		}
+	}
+	return domain.AccountBinding{}, false
+}
+
+func (s *Store) UpsertAccountBinding(binding domain.AccountBinding) error {
+	binding.MemberOpenID = strings.TrimSpace(binding.MemberOpenID)
+	binding.Email = strings.ToLower(strings.TrimSpace(binding.Email))
+	binding.GGAPIUserID = strings.TrimSpace(binding.GGAPIUserID)
+	binding.Username = strings.TrimSpace(binding.Username)
+	binding.FirstGroupOpenID = strings.TrimSpace(binding.FirstGroupOpenID)
+	if binding.MemberOpenID == "" || binding.Email == "" || binding.GGAPIUserID == "" {
+		return errors.New("账号绑定数据不完整")
+	}
+	if binding.ID == "" {
+		idBytes := make([]byte, 12)
+		if _, err := rand.Read(idBytes); err != nil {
+			return err
+		}
+		binding.ID = hex.EncodeToString(idBytes)
+	}
+	if binding.BoundAt == "" {
+		binding.BoundAt = time.Now().Format(time.RFC3339)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	updated := false
+	for index := range s.state.AccountBindings {
+		if s.state.AccountBindings[index].MemberOpenID == binding.MemberOpenID || s.state.AccountBindings[index].ID == binding.ID {
+			s.state.AccountBindings[index] = binding
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		s.state.AccountBindings = append(s.state.AccountBindings, binding)
+	}
+	return s.persistLocked()
+}
+
+func (s *Store) DeleteAccountBinding(id string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index, binding := range s.state.AccountBindings {
+		if binding.ID != id {
+			continue
+		}
+		s.state.AccountBindings = append(s.state.AccountBindings[:index], s.state.AccountBindings[index+1:]...)
+		return true, s.persistLocked()
+	}
+	return false, nil
+}
+
+func (s *Store) DeleteAccountBindingForMember(memberOpenID string) (bool, error) {
+	memberOpenID = strings.TrimSpace(memberOpenID)
+	if memberOpenID == "" {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index, binding := range s.state.AccountBindings {
+		if binding.MemberOpenID != memberOpenID {
+			continue
+		}
+		s.state.AccountBindings = append(s.state.AccountBindings[:index], s.state.AccountBindings[index+1:]...)
+		return true, s.persistLocked()
+	}
+	return false, nil
 }
 
 func cloneAlertState(in domain.AlertState) domain.AlertState {
