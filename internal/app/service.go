@@ -17,6 +17,8 @@ var (
 	ErrUnauthorized            = errors.New("QQ Webhook 签名无效")
 	ErrBadPayload              = errors.New("QQ Webhook 请求无效")
 	ErrAlertGroupNotConfigured = errors.New("只能测试已保存的告警群")
+	ErrActiveGroupNotAvailable = errors.New("只能发送到已发现或已配置的群")
+	ErrInvalidAlertSimulation  = errors.New("模拟类型只支持 offline 或 recovery")
 )
 
 type StatusImageGenerator interface {
@@ -26,6 +28,10 @@ type StatusImageGenerator interface {
 type GroupReplier interface {
 	ReplyGroupImage(ctx context.Context, groupOpenID, messageID string, image []byte) error
 	ReplyGroupText(ctx context.Context, groupOpenID, messageID, content string, messageSeq int) error
+}
+
+type ActiveImageSender interface {
+	SendGroupImage(context.Context, string, []byte) error
 }
 
 type SettingsStore interface {
@@ -109,6 +115,61 @@ func (s *Service) TestAlert(ctx context.Context, groupOpenID string) error {
 		status = "failed"
 	}
 	s.appendAlertLog("send", "ALERT_TEST", status, trimLog(errorOrMessage(err, content)), groupOpenID)
+	return err
+}
+
+func (s *Service) SendStatus(ctx context.Context, groupOpenID string) error {
+	groupOpenID = strings.TrimSpace(groupOpenID)
+	if !s.activeGroupAvailable(groupOpenID) {
+		return ErrActiveGroupNotAvailable
+	}
+	sender, ok := s.replier.(ActiveImageSender)
+	if !ok {
+		return errors.New("QQ 客户端不支持主动图片消息")
+	}
+	image, err := s.generateStatusImage(ctx)
+	if err == nil {
+		err = sender.SendGroupImage(ctx, groupOpenID, image)
+	}
+	status := "sent"
+	message := "状态图已主动发送"
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	s.appendAlertLog("send", "STATUS_ACTIVE", status, trimLog(message), groupOpenID)
+	return err
+}
+
+func (s *Service) SimulateAlert(ctx context.Context, groupOpenID, kind string) error {
+	groupOpenID = strings.TrimSpace(groupOpenID)
+	if !s.activeGroupAvailable(groupOpenID) {
+		return ErrActiveGroupNotAvailable
+	}
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind != "offline" && kind != "recovery" {
+		return ErrInvalidAlertSimulation
+	}
+	sender, ok := s.replier.(ActiveMessageSender)
+	if !ok {
+		return errors.New("QQ 客户端不支持主动消息")
+	}
+	now := time.Now()
+	sample := alertSample{
+		key: "simulation", groupName: "控制台测试", nodeName: "模拟节点",
+		incident: now.Add(-5 * time.Minute).Format(time.RFC3339), recovery: now.Format(time.RFC3339),
+	}
+	content := "[模拟测试] " + formatAlertMessage(kind, []alertSample{sample})
+	err := sender.SendGroupText(ctx, groupOpenID, content)
+	status := "sent"
+	if err != nil {
+		status = "failed"
+	}
+	eventType := "ALERT_SIMULATED_OFFLINE"
+	if kind == "recovery" {
+		eventType = "ALERT_SIMULATED_RECOVERY"
+	}
+	s.appendAlertLog("send", eventType, status, trimLog(errorOrMessage(err, content)), groupOpenID)
 	return err
 }
 
@@ -216,6 +277,10 @@ func (s *Service) processMessage(parent context.Context, message domain.GroupMes
 }
 
 func (s *Service) StatusPreview(parent context.Context) ([]byte, error) {
+	return s.generateStatusImage(parent)
+}
+
+func (s *Service) generateStatusImage(parent context.Context) ([]byte, error) {
 	settings := s.settings.Settings()
 	timeout := time.Duration(settings.ScreenshotTimeout) * time.Second
 	if timeout < 15*time.Second {
@@ -224,6 +289,21 @@ func (s *Service) StatusPreview(parent context.Context) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	return s.generator.Generate(ctx, settings.StatusURL, settings.StatusPageID, settings.StatusPeriod)
+}
+
+func (s *Service) activeGroupAvailable(group string) bool {
+	if group == "" {
+		return false
+	}
+	settings := s.settings.Settings()
+	for _, groups := range [][]string{settings.AlertGroups, settings.AllowedGroups, s.DiscoveredGroups()} {
+		for _, candidate := range groups {
+			if strings.TrimSpace(candidate) == group {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Service) logEvent(eventType string, message domain.GroupMessage, status, detail string) {

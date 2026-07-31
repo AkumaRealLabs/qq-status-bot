@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -35,10 +36,18 @@ func (noopReplier) ReplyGroupText(context.Context, string, string, string, int) 
 type activeNoopReplier struct {
 	noopReplier
 	groups []string
+	images []string
+	texts  []string
 }
 
-func (r *activeNoopReplier) SendGroupText(_ context.Context, group, _ string) error {
+func (r *activeNoopReplier) SendGroupText(_ context.Context, group, content string) error {
 	r.groups = append(r.groups, group)
+	r.texts = append(r.texts, content)
+	return nil
+}
+
+func (r *activeNoopReplier) SendGroupImage(_ context.Context, group string, _ []byte) error {
+	r.images = append(r.images, group)
 	return nil
 }
 
@@ -84,6 +93,81 @@ func TestAlertTestRequiresAuthenticationAndSavedGroup(t *testing.T) {
 	handler.ServeHTTP(validResponse, valid)
 	if validResponse.Code != http.StatusOK || len(replier.groups) != 1 || len(state.Logs(10)) != 1 || state.Logs(10)[0].EventType != "ALERT_TEST" {
 		t.Fatalf("测试发送错误: code=%d groups=%v logs=%v", validResponse.Code, replier.groups, state.Logs(10))
+	}
+}
+
+func TestActiveStatusAndAlertSimulationRequireAuthentication(t *testing.T) {
+	defaults := domain.Settings{
+		Commands: []string{"状态"}, StatusURL: "https://status.example", StatusPageID: "default",
+		StatusPeriod: "1y", ScreenshotTimeout: 90, QueueSize: 3, AlertGroups: []string{"alert-group"},
+		AlertFailureSamples: 2, AlertRecoverySamples: 2,
+	}
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.json"), defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = state.Close() })
+	replier := &activeNoopReplier{}
+	service := app.New(state, previewGenerator{image: []byte("png")}, replier, 3)
+	handler := (&Server{App: service}).Routes()
+	setup := httptest.NewRequest(http.MethodPost, "/api/setup", bytes.NewBufferString(`{"password":"password8"}`))
+	setup.Header.Set("Content-Type", "application/json")
+	setupResponse := httptest.NewRecorder()
+	handler.ServeHTTP(setupResponse, setup)
+	cookies := setupResponse.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("初始化 Cookie 错误: %v", cookies)
+	}
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodPost, "/api/status/send", bytes.NewBufferString(`{"group_openid":"alert-group"}`)))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("主动状态接口应要求登录: %d", unauthenticated.Code)
+	}
+	unauthenticatedSimulation := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedSimulation, httptest.NewRequest(http.MethodPost, "/api/alerts/simulate", bytes.NewBufferString(`{"group_openid":"alert-group","kind":"offline"}`)))
+	if unauthenticatedSimulation.Code != http.StatusUnauthorized {
+		t.Fatalf("告警模拟接口应要求登录: %d", unauthenticatedSimulation.Code)
+	}
+	unknownStatusRequest := httptest.NewRequest(http.MethodPost, "/api/status/send", bytes.NewBufferString(`{"group_openid":"unknown-group"}`))
+	unknownStatusRequest.Header.Set("Content-Type", "application/json")
+	unknownStatusRequest.AddCookie(cookies[0])
+	unknownStatusResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unknownStatusResponse, unknownStatusRequest)
+	if unknownStatusResponse.Code != http.StatusBadRequest {
+		t.Fatalf("未知目标群应返回 400: %d", unknownStatusResponse.Code)
+	}
+	statusRequest := httptest.NewRequest(http.MethodPost, "/api/status/send", bytes.NewBufferString(`{"group_openid":"alert-group"}`))
+	statusRequest.Header.Set("Content-Type", "application/json")
+	statusRequest.AddCookie(cookies[0])
+	statusResponse := httptest.NewRecorder()
+	handler.ServeHTTP(statusResponse, statusRequest)
+	if statusResponse.Code != http.StatusOK || len(replier.images) != 1 {
+		t.Fatalf("主动状态发送错误: code=%d images=%v", statusResponse.Code, replier.images)
+	}
+	invalidSimulation := httptest.NewRequest(http.MethodPost, "/api/alerts/simulate", bytes.NewBufferString(`{"group_openid":"alert-group","kind":"other"}`))
+	invalidSimulation.Header.Set("Content-Type", "application/json")
+	invalidSimulation.AddCookie(cookies[0])
+	invalidSimulationResponse := httptest.NewRecorder()
+	handler.ServeHTTP(invalidSimulationResponse, invalidSimulation)
+	if invalidSimulationResponse.Code != http.StatusBadRequest {
+		t.Fatalf("无效模拟类型应返回 400: %d", invalidSimulationResponse.Code)
+	}
+	for _, kind := range []string{"offline", "recovery"} {
+		request := httptest.NewRequest(http.MethodPost, "/api/alerts/simulate", bytes.NewBufferString(`{"group_openid":"alert-group","kind":"`+kind+`"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(cookies[0])
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("模拟 %s 失败: %d %s", kind, response.Code, response.Body.String())
+		}
+	}
+	if len(replier.groups) != 2 || len(replier.texts) != 2 || !strings.Contains(replier.texts[0], "[模拟测试] [故障通知]") || !strings.Contains(replier.texts[1], "[模拟测试] [恢复通知]") {
+		t.Fatalf("模拟通知内容错误: groups=%v texts=%v", replier.groups, replier.texts)
+	}
+	logs := state.Logs(10)
+	if len(logs) != 3 || logs[0].EventType != "ALERT_SIMULATED_RECOVERY" || logs[1].EventType != "ALERT_SIMULATED_OFFLINE" || logs[2].EventType != "STATUS_ACTIVE" {
+		t.Fatalf("主动操作日志错误: %v", logs)
 	}
 }
 

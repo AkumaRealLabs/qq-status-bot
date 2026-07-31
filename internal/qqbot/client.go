@@ -76,6 +76,21 @@ type uploadPart struct {
 }
 
 func (c *Client) ReplyGroupImage(ctx context.Context, groupOpenID, messageID string, image []byte) error {
+	return c.sendGroupImage(ctx, groupOpenID, messageID, image)
+}
+
+// SendGroupImage 上传并发送主动群图片，不携带被动回复字段。
+func (c *Client) SendGroupImage(ctx context.Context, groupOpenID string, image []byte) error {
+	if strings.TrimSpace(groupOpenID) == "" {
+		return errors.New("目标群 OpenID 不能为空")
+	}
+	if err := c.waitActiveRate(ctx, groupOpenID); err != nil {
+		return err
+	}
+	return c.sendGroupImage(ctx, groupOpenID, "", image)
+}
+
+func (c *Client) sendGroupImage(ctx context.Context, groupOpenID, messageID string, image []byte) error {
 	if len(image) == 0 || len(image) > maxImageBytes {
 		return errors.New("截图大小不符合 QQ 图片限制")
 	}
@@ -89,12 +104,15 @@ func (c *Client) ReplyGroupImage(ctx context.Context, groupOpenID, messageID str
 	}
 	payload := struct {
 		MessageType int    `json:"msg_type"`
-		MessageID   string `json:"msg_id"`
-		MessageSeq  int    `json:"msg_seq"`
+		MessageID   string `json:"msg_id,omitempty"`
+		MessageSeq  int    `json:"msg_seq,omitempty"`
 		Media       struct {
 			FileInfo string `json:"file_info"`
 		} `json:"media"`
-	}{MessageType: 7, MessageID: messageID, MessageSeq: 1}
+	}{MessageType: 7, MessageID: messageID}
+	if messageID != "" {
+		payload.MessageSeq = 1
+	}
 	payload.Media.FileInfo = fileInfo
 	return c.post(ctx, groupPath(groupOpenID, "/messages"), payload, nil)
 }

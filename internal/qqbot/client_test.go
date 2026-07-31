@@ -43,6 +43,45 @@ func TestSendGroupTextUsesProactivePayloadOnly(t *testing.T) {
 	}
 }
 
+func TestSendGroupImageUsesProactivePayloadOnly(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "token", "expires_in": "3600"})
+	}))
+	defer tokenServer.Close()
+	var payload map[string]any
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/groups/group/upload_prepare":
+			_ = json.NewEncoder(w).Encode(map[string]any{"upload_id": "upload", "block_size": "8", "parts": []any{}})
+		case "/v2/groups/group/files":
+			_ = json.NewEncoder(w).Encode(map[string]string{"file_info": "file-info"})
+		case "/v2/groups/group/messages":
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer apiServer.Close()
+	client := &Client{AppID: "app", AppSecret: "secret", APIBaseURL: apiServer.URL, TokenURL: tokenServer.URL, HTTP: apiServer.Client()}
+	if err := client.SendGroupImage(context.Background(), "group", []byte("\x89PNG\r\n\x1a\n")); err != nil {
+		t.Fatal(err)
+	}
+	if payload["msg_type"] != float64(7) {
+		t.Fatalf("主动图片消息类型错误: %#v", payload)
+	}
+	media, ok := payload["media"].(map[string]any)
+	if !ok || media["file_info"] != "file-info" {
+		t.Fatalf("主动图片媒体载荷错误: %#v", payload)
+	}
+	for _, forbidden := range []string{"msg_id", "msg_seq", "event_id"} {
+		if _, ok := payload[forbidden]; ok {
+			t.Fatalf("主动图片不应包含 %s: %#v", forbidden, payload)
+		}
+	}
+}
+
 func TestAPIErrorPreservesPermissionCode(t *testing.T) {
 	err := apiResponseError(http.StatusForbidden, []byte(`{"code":40034102,"trace_id":"trace"}`))
 	var apiErr *APIError

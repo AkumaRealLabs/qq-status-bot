@@ -37,9 +37,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/settings", s.auth(s.settings))
 	mux.HandleFunc("PATCH /api/settings", s.auth(s.updateSettings))
 	mux.HandleFunc("GET /api/status-preview", s.auth(s.statusPreview))
+	mux.HandleFunc("POST /api/status/send", s.auth(s.statusSend))
 	mux.HandleFunc("GET /api/logs", s.auth(s.logs))
 	mux.HandleFunc("GET /api/groups/discovered", s.auth(s.discoveredGroups))
 	mux.HandleFunc("POST /api/alerts/test", s.auth(s.alertTest))
+	mux.HandleFunc("POST /api/alerts/simulate", s.auth(s.alertSimulate))
 	mux.HandleFunc("POST /qqbot/events", s.qqBotEvents)
 	mux.Handle("GET /admin/", s.static())
 	mux.Handle("GET /assets/", s.static())
@@ -150,6 +152,20 @@ func (s *Server) statusPreview(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(image)
 }
 
+func (s *Server) statusSend(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		GroupOpenID string `json:"group_openid"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := s.App.SendStatus(r.Context(), input.GroupOpenID); err != nil {
+		writeError(w, activeActionStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 200 {
@@ -178,6 +194,28 @@ func (s *Server) alertTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) alertSimulate(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		GroupOpenID string `json:"group_openid"`
+		Kind        string `json:"kind"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := s.App.SimulateAlert(r.Context(), input.GroupOpenID, input.Kind); err != nil {
+		writeError(w, activeActionStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func activeActionStatus(err error) int {
+	if errors.Is(err, app.ErrActiveGroupNotAvailable) || errors.Is(err, app.ErrInvalidAlertSimulation) {
+		return http.StatusBadRequest
+	}
+	return http.StatusBadGateway
 }
 
 func (s *Server) qqBotEvents(w http.ResponseWriter, r *http.Request) {
