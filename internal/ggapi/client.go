@@ -19,7 +19,15 @@ const (
 	pageSize         = 100
 )
 
-var ErrNotFound = errors.New("GGAPI 账号不存在")
+var (
+	ErrNotFound           = errors.New("GGAPI 账号不存在")
+	ErrEmailNotFound      = errors.New("GGAPI 未找到对应邮箱")
+	ErrEmailAmbiguous     = errors.New("GGAPI 邮箱对应多个账号")
+	ErrAccountDeleted     = errors.New("GGAPI 账号已删除")
+	ErrAccountDisabled    = errors.New("GGAPI 账号未启用")
+	ErrAccountRoleInvalid = errors.New("GGAPI 账号角色无效")
+	ErrIdentityMismatch   = errors.New("GGAPI 账号身份不匹配")
+)
 
 // Client 只实现 GGAPI 管理端的只读 GET 接口。
 type Client struct {
@@ -62,8 +70,11 @@ func (c Client) VerifyEmail(ctx context.Context, email string) (User, error) {
 			matches = append(matches, user)
 		}
 	}
-	if len(matches) != 1 {
-		return User{}, errors.New("GGAPI 邮箱对应的账号数量不符合要求")
+	if len(matches) == 0 {
+		return User{}, ErrEmailNotFound
+	}
+	if len(matches) > 1 {
+		return User{}, ErrEmailAmbiguous
 	}
 	user := matches[0]
 	if err := validateUser(user, email); err != nil {
@@ -230,10 +241,16 @@ func normalizeEmail(raw string) string { return strings.ToLower(strings.TrimSpac
 
 func validateUser(user User, expectedEmail string) error {
 	if user.ID == "" || normalizeEmail(user.Email) != expectedEmail {
-		return errors.New("GGAPI 账号身份不匹配")
+		return ErrIdentityMismatch
 	}
-	if user.Deleted || !enabledStatus(user.Status) || !normalRole(user.Role) {
-		return errors.New("GGAPI 账号不是启用中的普通用户")
+	if user.Deleted {
+		return ErrAccountDeleted
+	}
+	if !enabledStatus(user.Status) {
+		return ErrAccountDisabled
+	}
+	if !eligibleRole(user.Role) {
+		return ErrAccountRoleInvalid
 	}
 	return nil
 }
@@ -249,12 +266,11 @@ func enabledStatus(status string) bool {
 	}
 }
 
-func normalRole(role string) bool {
+func eligibleRole(role string) bool {
 	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "1", "user", "normal", "普通用户", "common":
+	case "1", "10", "100", "user", "normal", "普通用户", "common",
+		"admin", "administrator", "root", "superadmin", "管理员":
 		return true
-	case "admin", "administrator", "root", "superadmin", "管理员":
-		return false
 	default:
 		return false
 	}

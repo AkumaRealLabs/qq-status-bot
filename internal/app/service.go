@@ -502,6 +502,17 @@ func (s *Service) DeleteAccountBinding(id string) error {
 	}
 	return nil
 }
+
+func (s *Service) TestSMTP(ctx context.Context, recipient string) error {
+	s.accountMu.Lock()
+	account := s.account
+	s.accountMu.Unlock()
+	if account == nil {
+		return ErrAccountNotConfigured
+	}
+	return account.TestEmail(ctx, recipient)
+}
+
 func (s *Service) Health() map[string]string {
 	return map[string]string{"status": "ok", "service": "qq-status-bot"}
 }

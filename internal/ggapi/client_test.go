@@ -56,6 +56,24 @@ func TestClientSearchesPagesAndConvertsBalance(t *testing.T) {
 	}
 }
 
+func TestClientAllowsEnabledAdminAccount(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/user/search" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{
+			"id": 10, "email": "admin@example.com", "role": 10, "status": 1,
+		}}})
+	}))
+	defer server.Close()
+	client := Client{BaseURL: server.URL, AdminToken: "secret", HTTP: server.Client()}
+	user, err := client.VerifyEmail(context.Background(), "admin@example.com")
+	if err != nil || user.ID != "10" || user.Role != "10" {
+		t.Fatalf("启用管理员账号应允许绑定: user=%+v err=%v", user, err)
+	}
+}
+
 func TestClientBalanceMatchesGGAPIDisplayModes(t *testing.T) {
 	status := map[string]any{}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -101,7 +119,6 @@ func TestClientVerifyEmailRejectsAmbiguousOrInvalidUsers(t *testing.T) {
 		{name: "重复邮箱", users: []map[string]any{active(1), active(2)}},
 		{name: "禁用账号", users: []map[string]any{{"id": 1, "email": "name@example.com", "role": 1, "status": 2}}},
 		{name: "删除账号", users: []map[string]any{{"id": 1, "email": "name@example.com", "role": 1, "status": 1, "DeletedAt": "2026-07-31T00:00:00Z"}}},
-		{name: "管理员账号", users: []map[string]any{{"id": 1, "email": "name@example.com", "role": 10, "status": 1}}},
 		{name: "缺少角色", users: []map[string]any{{"id": 1, "email": "name@example.com", "status": 1}}},
 		{name: "缺少状态", users: []map[string]any{{"id": 1, "email": "name@example.com", "role": 1}}},
 	}

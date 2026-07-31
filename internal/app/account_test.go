@@ -145,6 +145,36 @@ func TestAccountServiceBindsAndReusesMemberAcrossGroups(t *testing.T) {
 	}
 }
 
+func TestAccountServiceHandlesHelpWithoutGGAPIConfiguration(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.json"), domain.Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := NewAccountService(state, state, nil, nil)
+	handled, response := workflow.Handle(context.Background(), accountMessage("group-a", "member-1", "@机器人 帮助"))
+	if !handled || !strings.Contains(response, "绑定示例：@机器人 绑定") || !strings.Contains(response, "余额示例：@机器人 余额") {
+		t.Fatalf("帮助响应错误: handled=%v response=%q", handled, response)
+	}
+}
+
+func TestAccountServiceTestEmailDoesNotCreateBinding(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.json"), domain.Settings{GGAPIBalanceEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mailer := &accountMailer{}
+	workflow := NewAccountService(state, state, nil, mailer)
+	if err := workflow.TestEmail(context.Background(), "name@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if len(mailer.codes) != 1 || !sixDigits.MatchString(mailer.codes[0]) {
+		t.Fatalf("测试邮件验证码错误: %v", mailer.codes)
+	}
+	if bindings := state.AccountBindings(); len(bindings) != 0 {
+		t.Fatalf("测试邮件不应创建绑定: %+v", bindings)
+	}
+}
+
 func TestAccountServiceCodeAttemptsAndCancelKeepOldBinding(t *testing.T) {
 	state, err := store.Open(filepath.Join(t.TempDir(), "state.json"), domain.Settings{GGAPIBalanceEnabled: true})
 	if err != nil {
@@ -258,7 +288,7 @@ func TestAccountServiceLimitsCodeSendsByMemberAndEmail(t *testing.T) {
 	})
 }
 
-func TestEnabledUserRequiresExplicitNormalActiveIdentity(t *testing.T) {
+func TestEnabledUserRequiresExplicitActiveIdentityAndKnownRole(t *testing.T) {
 	tests := []struct {
 		name string
 		user ggapi.User
@@ -268,7 +298,7 @@ func TestEnabledUserRequiresExplicitNormalActiveIdentity(t *testing.T) {
 		{name: "文本普通用户", user: ggapi.User{Role: "user", Status: "active"}, want: true},
 		{name: "缺少角色", user: ggapi.User{Status: "1"}},
 		{name: "缺少状态", user: ggapi.User{Role: "1"}},
-		{name: "管理员", user: ggapi.User{Role: "10", Status: "1"}},
+		{name: "管理员", user: ggapi.User{Role: "10", Status: "1"}, want: true},
 		{name: "禁用", user: ggapi.User{Role: "1", Status: "2"}},
 		{name: "已删除", user: ggapi.User{Role: "1", Status: "1", Deleted: true}},
 	}

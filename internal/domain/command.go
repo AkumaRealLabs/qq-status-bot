@@ -18,11 +18,12 @@ const (
 	CommandUnbind  = "解绑"
 	CommandCancel  = "取消"
 	CommandResend  = "重发"
+	CommandHelp    = "帮助"
 )
 
 func IsAccountCommand(content string) bool {
 	switch NormalizeContent(content) {
-	case CommandBind, CommandBalance, CommandUnbind, CommandCancel, CommandResend:
+	case CommandBind, CommandBalance, CommandUnbind, CommandCancel, CommandResend, CommandHelp:
 		return true
 	default:
 		return false

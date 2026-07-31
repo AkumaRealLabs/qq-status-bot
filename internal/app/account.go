@@ -65,6 +65,7 @@ type AccountService struct {
 var (
 	ErrAccountNotConfigured   = errors.New("账号绑定功能未启用")
 	ErrAccountBindingNotFound = errors.New("账号绑定不存在")
+	ErrInvalidTestRecipient   = errors.New("测试收件邮箱格式无效")
 )
 
 func NewAccountService(settings SettingsStore, store AccountBindingStore, verify AccountVerifier, sender mailer.Mailer) *AccountService {
@@ -131,6 +132,9 @@ func (a *AccountService) Handle(ctx context.Context, message domain.GroupMessage
 	if !hasPending && !expiredPending && !domain.IsAccountCommand(content) {
 		return false, ""
 	}
+	if content == domain.CommandHelp {
+		return true, accountHelp()
+	}
 	if content == domain.CommandCancel {
 		return true, a.cancel(key)
 	}
@@ -163,6 +167,32 @@ func (a *AccountService) Handle(ctx context.Context, message domain.GroupMessage
 		return true, a.unbind(key.member)
 	}
 	return false, ""
+}
+
+func accountHelp() string {
+	return "可用命令示例：@机器人 状态；绑定示例：@机器人 绑定；余额示例：@机器人 余额；解绑示例：@机器人 解绑；绑定流程控制示例：@机器人 取消、@机器人 重发"
+}
+
+// TestEmail 发送一次性验证码样式邮件，不创建绑定流程。
+func (a *AccountService) TestEmail(ctx context.Context, recipient string) error {
+	if !validEmail(recipient) {
+		return ErrInvalidTestRecipient
+	}
+	_, sender := a.dependencies()
+	if sender == nil {
+		return ErrAccountNotConfigured
+	}
+	code, err := randomCode()
+	if err != nil {
+		a.logAction(accountKey{}, "ACCOUNT_SMTP_TEST", "failed")
+		return errors.New("测试邮件发送失败")
+	}
+	if err := sender.SendVerificationCode(ctx, recipient, code, a.now().Add(10*time.Minute)); err != nil {
+		a.logAction(accountKey{}, "ACCOUNT_SMTP_TEST", "failed")
+		return err
+	}
+	a.logAction(accountKey{}, "ACCOUNT_SMTP_TEST", "sent")
+	return nil
 }
 
 func (a *AccountService) startBinding(key accountKey) string {
@@ -294,9 +324,13 @@ func (a *AccountService) pendingInputCode(ctx context.Context, key accountKey, p
 		return "账号功能暂时不可用，旧绑定未受影响。稍后重试示例：@机器人 绑定"
 	}
 	user, err := verifier.VerifyEmail(ctx, pending.Email)
-	if err != nil || user.ID == "" || normalizeEmail(user.Email) != normalizeEmail(pending.Email) || !enabledUser(user) {
+	if err != nil {
 		a.logAction(key, "ACCOUNT_BIND_RESULT", "rejected")
-		return "邮箱对应的 GGAPI 账号无法验证，旧绑定未受影响。重新绑定示例：@机器人 绑定"
+		return verificationFailureReply(err)
+	}
+	if user.ID == "" || normalizeEmail(user.Email) != normalizeEmail(pending.Email) || !enabledUser(user) {
+		a.logAction(key, "ACCOUNT_BIND_RESULT", "rejected")
+		return "邮箱对应的 GGAPI 账号状态或角色不符合绑定要求，旧绑定未受影响。请确认账号已启用且角色有效。重新绑定示例：@机器人 绑定"
 	}
 	if err := a.saveBinding(key, pending.Email, user); err != nil {
 		a.logAction(key, "ACCOUNT_BIND_RESULT", "failed")
@@ -304,6 +338,23 @@ func (a *AccountService) pendingInputCode(ctx context.Context, key accountKey, p
 	}
 	a.logAction(key, "ACCOUNT_BIND_RESULT", "success")
 	return fmt.Sprintf("绑定成功：%s。查询示例：@机器人 余额", domain.MaskEmail(pending.Email))
+}
+
+func verificationFailureReply(err error) string {
+	switch {
+	case errors.Is(err, ggapi.ErrEmailNotFound):
+		return "未找到该邮箱对应的 GGAPI 账号，旧绑定未受影响。请确认邮箱后重试。重新绑定示例：@机器人 绑定"
+	case errors.Is(err, ggapi.ErrEmailAmbiguous):
+		return "该邮箱对应多个 GGAPI 账号，无法安全绑定，旧绑定未受影响。请使用只对应一个账号的邮箱。重新绑定示例：@机器人 绑定"
+	case errors.Is(err, ggapi.ErrAccountRoleInvalid):
+		return "该邮箱对应的 GGAPI 账号角色不受支持，旧绑定未受影响。请确认账号角色有效。重新绑定示例：@机器人 绑定"
+	case errors.Is(err, ggapi.ErrAccountDisabled):
+		return "该 GGAPI 账号未启用，旧绑定未受影响。请启用账号后重试。重新绑定示例：@机器人 绑定"
+	case errors.Is(err, ggapi.ErrAccountDeleted):
+		return "该 GGAPI 账号已删除，旧绑定未受影响。请使用有效的 GGAPI 邮箱。重新绑定示例：@机器人 绑定"
+	default:
+		return "邮箱对应的 GGAPI 账号无法验证，旧绑定未受影响。重新绑定示例：@机器人 绑定"
+	}
 }
 
 func (a *AccountService) pendingInput(ctx context.Context, key accountKey, pending pendingAccount, content string) string {
@@ -469,7 +520,8 @@ func enabledUser(user ggapi.User) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(user.Role)) {
-	case "1", "user", "normal", "普通用户", "common":
+	case "1", "10", "100", "user", "normal", "普通用户", "common",
+		"admin", "administrator", "root", "superadmin", "管理员":
 		return true
 	default:
 		return false

@@ -46,6 +46,9 @@ p { margin: 7px 0 0; } .muted { color: #7d899d; font-size: 13px; }
 .alert-group button { padding: 7px 11px; font-size: 12px; }
 .action-target { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .action-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+.smtp-test { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; margin-top: 16px; }
+.smtp-test label { margin: 0; }
+.smtp-test button { white-space: nowrap; }
 .action-failure { background: #b33b3b; }
 .action-recovery { background: #147a55; }
 .test-ok { color: #15805a; font-size: 12px; }
@@ -70,5 +73,5 @@ p { margin: 7px 0 0; } .muted { color: #7d899d; font-size: 13px; }
 .binding p { margin: 6px 0 0; }
 .binding time { display: block; margin-top: 7px; color: #8792a5; font-size: 12px; }
 .danger { background: #b33b3b; white-space: nowrap; }
-@media (max-width: 760px) { header { padding: 0 18px; } .header-actions .health { display: none; } .tabs { padding: 0 18px; } .content { width: min(100% - 28px, 1160px); margin: 24px auto; } .grid { grid-template-columns: 1fr; } .title-row { align-items: start; flex-direction: column; } .title-actions { width: 100%; } .title-actions button { flex: 1; } .discovered-picker { grid-template-columns: 1fr 1fr; } .discovered-picker select { grid-column: 1 / -1; } .action-buttons { display: grid; grid-template-columns: 1fr; } .log-top time { margin-left: 0; width: 100%; } .card { padding: 18px; } }
+@media (max-width: 760px) { header { padding: 0 18px; } .header-actions .health { display: none; } .tabs { padding: 0 18px; } .content { width: min(100% - 28px, 1160px); margin: 24px auto; } .grid { grid-template-columns: 1fr; } .title-row { align-items: start; flex-direction: column; } .title-actions { width: 100%; } .title-actions button { flex: 1; } .discovered-picker { grid-template-columns: 1fr 1fr; } .discovered-picker select { grid-column: 1 / -1; } .action-buttons { display: grid; grid-template-columns: 1fr; } .smtp-test { grid-template-columns: 1fr; align-items: stretch; } .smtp-test button { width: 100%; } .log-top time { margin-left: 0; width: 100%; } .card { padding: 18px; } }
 @media (max-width: 560px) { .binding { align-items: start; flex-direction: column; } .binding button { width: 100%; } }

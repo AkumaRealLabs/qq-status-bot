@@ -42,6 +42,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/groups/discovered", s.auth(s.discoveredGroups))
 	mux.HandleFunc("GET /api/account-bindings", s.auth(s.accountBindings))
 	mux.HandleFunc("DELETE /api/account-bindings/{id}", s.auth(s.deleteAccountBinding))
+	mux.HandleFunc("POST /api/ggapi/smtp-test", s.auth(s.smtpTest))
 	mux.HandleFunc("POST /api/alerts/test", s.auth(s.alertTest))
 	mux.HandleFunc("POST /api/alerts/simulate", s.auth(s.alertSimulate))
 	mux.HandleFunc("POST /qqbot/events", s.qqBotEvents)
@@ -195,6 +196,24 @@ func (s *Server) deleteAccountBinding(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, app.ErrAccountBindingNotFound) {
 			status = http.StatusNotFound
 		} else if errors.Is(err, app.ErrAccountNotConfigured) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) smtpTest(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Recipient string `json:"recipient"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := s.App.TestSMTP(r.Context(), input.Recipient); err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, app.ErrInvalidTestRecipient) || errors.Is(err, app.ErrAccountNotConfigured) {
 			status = http.StatusBadRequest
 		}
 		writeError(w, status, err.Error())

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"qq-status-bot/internal/app"
 	"qq-status-bot/internal/domain"
@@ -30,6 +31,17 @@ type noopReplier struct{}
 
 func (noopReplier) ReplyGroupImage(context.Context, string, string, []byte) error { return nil }
 func (noopReplier) ReplyGroupText(context.Context, string, string, string, int) error {
+	return nil
+}
+
+type smtpTestMailer struct {
+	recipients []string
+	codes      []string
+}
+
+func (m *smtpTestMailer) SendVerificationCode(_ context.Context, recipient, code string, _ time.Time) error {
+	m.recipients = append(m.recipients, recipient)
+	m.codes = append(m.codes, code)
 	return nil
 }
 
@@ -322,6 +334,58 @@ func TestAccountBindingsRequireAuthenticationAndReturnMaskedEmail(t *testing.T) 
 	handler.ServeHTTP(removeResponse, remove)
 	if removeResponse.Code != http.StatusOK {
 		t.Fatalf("撤销绑定失败: %d %s", removeResponse.Code, removeResponse.Body.String())
+	}
+}
+
+func TestSMTPTestRequiresAuthenticationAndSendsToRequestedRecipient(t *testing.T) {
+	defaults := domain.Settings{GGAPIBalanceEnabled: true, Commands: []string{"状态"}, StatusURL: "https://status.example", StatusPageID: "default", StatusPeriod: "1y", ScreenshotTimeout: 90, QueueSize: 3}
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.json"), defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = state.Close() })
+	mailer := &smtpTestMailer{}
+	service := app.New(state, previewGenerator{}, noopReplier{}, 3)
+	service.ConfigureAccounts(nil, mailer)
+	handler := (&Server{App: service}).Routes()
+
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodPost, "/api/ggapi/smtp-test", bytes.NewBufferString(`{"recipient":"name@example.com"}`)))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("SMTP 测试接口应要求鉴权: %d", unauthenticated.Code)
+	}
+
+	setup := httptest.NewRequest(http.MethodPost, "/api/setup", bytes.NewBufferString(`{"password":"password8"}`))
+	setup.Header.Set("Content-Type", "application/json")
+	setupResponse := httptest.NewRecorder()
+	handler.ServeHTTP(setupResponse, setup)
+	if setupResponse.Code != http.StatusOK {
+		t.Fatalf("初始化失败: %d %s", setupResponse.Code, setupResponse.Body.String())
+	}
+	cookies := setupResponse.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("初始化未返回会话 Cookie")
+	}
+
+	invalid := httptest.NewRequest(http.MethodPost, "/api/ggapi/smtp-test", bytes.NewBufferString(`{"recipient":"not-an-email"}`))
+	invalid.Header.Set("Content-Type", "application/json")
+	invalid.AddCookie(cookies[0])
+	invalidResponse := httptest.NewRecorder()
+	handler.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("无效测试收件邮箱应返回 400: %d %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/ggapi/smtp-test", bytes.NewBufferString(`{"recipient":"name@example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookies[0])
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || len(mailer.codes) != 1 || len(mailer.recipients) != 1 || mailer.recipients[0] != "name@example.com" {
+		t.Fatalf("SMTP 测试发送错误: code=%d body=%s recipients=%v codes=%v", response.Code, response.Body.String(), mailer.recipients, mailer.codes)
+	}
+	if bindings := state.AccountBindings(); len(bindings) != 0 {
+		t.Fatalf("SMTP 测试不应创建账号绑定: %+v", bindings)
 	}
 }
 
