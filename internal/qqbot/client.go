@@ -163,7 +163,7 @@ func (c *Client) ReplyGroupText(ctx context.Context, groupOpenID, messageID, con
 	return c.post(ctx, groupPath(groupOpenID, "/messages"), payload, nil)
 }
 
-// ReplyGroupTextWithKeyboard 回复带内嵌键盘的群文本，messageID 与 eventID 二选一。
+// ReplyGroupTextWithKeyboard 回复带内嵌键盘的群 Markdown 消息，messageID 与 eventID 二选一。
 func (c *Client) ReplyGroupTextWithKeyboard(ctx context.Context, groupOpenID, messageID, eventID, content string, messageSeq int, keyboard Keyboard) error {
 	if err := validateReplyTarget(groupOpenID, messageID, eventID); err != nil {
 		return err
@@ -175,13 +175,16 @@ func (c *Client) ReplyGroupTextWithKeyboard(ctx context.Context, groupOpenID, me
 		return errors.New("回复消息键盘不能为空")
 	}
 	payload := struct {
-		Content     string   `json:"content"`
-		MessageType int      `json:"msg_type"`
-		MessageID   string   `json:"msg_id,omitempty"`
-		EventID     string   `json:"event_id,omitempty"`
-		MessageSeq  int      `json:"msg_seq,omitempty"`
-		Keyboard    Keyboard `json:"keyboard"`
-	}{Content: content, MessageType: 0, MessageID: messageID, EventID: eventID, Keyboard: keyboard}
+		MessageType int    `json:"msg_type"`
+		MessageID   string `json:"msg_id,omitempty"`
+		EventID     string `json:"event_id,omitempty"`
+		MessageSeq  int    `json:"msg_seq,omitempty"`
+		Markdown    struct {
+			Content string `json:"content"`
+		} `json:"markdown"`
+		Keyboard Keyboard `json:"keyboard"`
+	}{MessageType: 2, MessageID: messageID, EventID: eventID, Keyboard: keyboard}
+	payload.Markdown.Content = content
 	if messageID != "" {
 		payload.MessageSeq = messageSeq
 	}
@@ -232,7 +235,7 @@ func (c *Client) SendGroupText(ctx context.Context, groupOpenID, content string)
 	return c.post(ctx, groupPath(groupOpenID, "/messages"), payload, nil)
 }
 
-// SendGroupTextWithKeyboard 主动发送带内嵌键盘的群文本。
+// SendGroupTextWithKeyboard 主动发送带内嵌键盘的群 Markdown 消息。
 func (c *Client) SendGroupTextWithKeyboard(ctx context.Context, groupOpenID, content string, keyboard Keyboard) error {
 	if strings.TrimSpace(groupOpenID) == "" {
 		return errors.New("目标群 OpenID 不能为空")
@@ -247,10 +250,13 @@ func (c *Client) SendGroupTextWithKeyboard(ctx context.Context, groupOpenID, con
 		return err
 	}
 	payload := struct {
-		Content     string   `json:"content"`
-		MessageType int      `json:"msg_type"`
-		Keyboard    Keyboard `json:"keyboard"`
-	}{Content: content, MessageType: 0, Keyboard: keyboard}
+		MessageType int `json:"msg_type"`
+		Markdown    struct {
+			Content string `json:"content"`
+		} `json:"markdown"`
+		Keyboard Keyboard `json:"keyboard"`
+	}{MessageType: 2, Keyboard: keyboard}
+	payload.Markdown.Content = content
 	return c.post(ctx, groupPath(groupOpenID, "/messages"), payload, nil)
 }
 

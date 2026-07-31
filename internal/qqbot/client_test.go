@@ -63,7 +63,8 @@ func TestSendGroupTextWithKeyboardUsesProactivePayload(t *testing.T) {
 	if err := client.SendGroupTextWithKeyboard(t.Context(), "group", "hello", testKeyboard()); err != nil {
 		t.Fatal(err)
 	}
-	if payload["content"] != "hello" || payload["msg_type"] != float64(0) || payload["keyboard"] == nil {
+	markdown, ok := payload["markdown"].(map[string]any)
+	if payload["msg_type"] != float64(2) || !ok || markdown["content"] != "hello" || payload["keyboard"] == nil {
 		t.Fatalf("主动键盘消息载荷错误: %#v", payload)
 	}
 	for _, forbidden := range []string{"msg_id", "event_id", "msg_seq"} {
@@ -132,7 +133,8 @@ func TestReplyGroupTextWithKeyboardUsesEventID(t *testing.T) {
 	if err := client.ReplyGroupTextWithKeyboard(t.Context(), "group", "", "event-1", "请选择", 1, testKeyboard()); err != nil {
 		t.Fatal(err)
 	}
-	if payload["event_id"] != "event-1" || payload["content"] != "请选择" || payload["msg_type"] != float64(0) {
+	markdown, ok := payload["markdown"].(map[string]any)
+	if payload["event_id"] != "event-1" || payload["msg_type"] != float64(2) || !ok || markdown["content"] != "请选择" {
 		t.Fatalf("互动回复载荷错误: %#v", payload)
 	}
 	for _, forbidden := range []string{"msg_id", "msg_seq"} {

@@ -26,7 +26,7 @@ QQ 官方 Webhook
 4. 按开放平台要求配置服务器出口 IP 白名单。
 5. 将机器人添加到测试群；群里发送 `@机器人 状态`，收到状态图后点击“查看状态”验证互动回调。
 
-按钮使用消息内直接定义的 `keyboard.content`，无需在管理端维护键盘模板。固定动作采用回调按钮：QQ 推送 `INTERACTION_CREATE` 后，服务先调用 `PUT /interactions/{interaction_id}` 结束客户端 loading，再通过事件 ID 返回业务结果。邮箱和验证码属于用户输入，仍需按回复提示通过 `@机器人 + 内容` 发送。
+按钮使用消息内直接定义的 `keyboard.content`，键盘消息按 QQ 官方要求使用 `msg_type=2` 的 Markdown 载荷，无需在管理端维护键盘模板。固定动作采用回调按钮：QQ 推送 `INTERACTION_CREATE` 后，服务先调用 `PUT /interactions/{interaction_id}` 结束客户端 loading，再通过事件 ID 返回业务结果。邮箱和验证码属于用户输入，仍需按回复提示通过 `@机器人 + 内容` 发送。
 
 QQ 官方只允许 Webhook 使用 HTTPS，且回调端口必须是 `80`、`443`、`8080` 或 `8443`。Compose 默认仅在宿主机 `127.0.0.1:8090` 监听，请使用现有反向代理提供 HTTPS。
 
