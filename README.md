@@ -1,6 +1,6 @@
 # QQ 状态图机器人
 
-一个专注于官方群聊状态查询和 GGAPI 账号余额查询的 QQ 开放平台机器人。群成员发送 `@机器人 状态`（或 `status`）后，服务读取 [GGAPI 状态页](https://status.ggapi.cc) 的公开 JSON API，用 Go 原生生成中文 PNG，并通过 QQ 官方消息接口回复。启用账号功能后，还支持 `@机器人 绑定`、`余额`、`解绑`、`取消` 和 `重发`。
+一个专注于官方群聊状态查询和 GGAPI 账号余额查询的 QQ 开放平台机器人。群成员发送 `@机器人 状态`（或 `status`）后，服务读取 [GGAPI 状态页](https://status.ggapi.cc) 的公开 JSON API，用 Go 原生生成中文 PNG，并通过 QQ 官方消息接口回复。回复会附带 QQ 原生按钮，可继续查看状态、打开帮助或进入账号操作；文字命令仍保持兼容。启用账号功能后，还支持 `@机器人 绑定`、`余额`、`解绑`、`取消` 和 `重发`。
 
 项目包含一个本地管理端，用于配置机器人、查看收发摘要日志和预览状态图；不依赖 Chromium、CDP、OneBot、LLBot 或数据库。
 
@@ -8,11 +8,12 @@
 
 ```text
 QQ 官方 Webhook
-  -> Ed25519 验签并立即 ACK
+  -> Ed25519 验签；普通消息入队并 ACK
+  -> 消息按钮在 3 秒内调用互动响应接口
   -> 单工作线程读取状态页 config 与 monitor API
   -> Go 原生生成 1280px 中文 PNG
-  -> 官方分片上传图片
-  -> 使用原消息 msg_id 被动回复群图片
+  -> 官方分片上传图片并附带内嵌键盘
+  -> 使用原消息 msg_id 或互动 event_id 被动回复群图片
 ```
 
 状态 API 的两次请求并发执行，单次生成最多等待 15 秒、每个响应最多读取 2 MiB。PNG 字节直接上传到 QQ 官方预签名存储地址，不需要额外提供公网图片 URL。
@@ -20,10 +21,12 @@ QQ 官方 Webhook
 ## QQ 开放平台配置
 
 1. 在 [QQ 开放平台](https://q.qq.com/) 创建机器人，取得 `AppID` 与 `AppSecret`。
-2. 在事件订阅中启用 `GROUP_AT_MESSAGE_CREATE`；如果 QQ 群开启了“接收所有消息”全量模式，也要允许 `GROUP_MESSAGE_CREATE`，程序会通过 `mentions` 确认消息确实 @ 了机器人。
+2. 在事件订阅中启用 `GROUP_AT_MESSAGE_CREATE` 和 `INTERACTION_CREATE`（Intent 为 `INTERACTION (1<<26)`）；如果 QQ 群开启了“接收所有消息”全量模式，也要允许 `GROUP_MESSAGE_CREATE`，程序会通过 `mentions` 确认消息确实 @ 了机器人。
 3. 将 HTTPS 回调地址设为 `https://你的域名/qqbot/events`。
 4. 按开放平台要求配置服务器出口 IP 白名单。
-5. 将机器人添加到测试群；群里发送 `@机器人 状态`。
+5. 将机器人添加到测试群；群里发送 `@机器人 状态`，收到状态图后点击“查看状态”验证互动回调。
+
+按钮使用消息内直接定义的 `keyboard.content`，无需在管理端维护键盘模板。固定动作采用回调按钮：QQ 推送 `INTERACTION_CREATE` 后，服务先调用 `PUT /interactions/{interaction_id}` 结束客户端 loading，再通过事件 ID 返回业务结果。邮箱和验证码属于用户输入，仍需按回复提示通过 `@机器人 + 内容` 发送。
 
 QQ 官方只允许 Webhook 使用 HTTPS，且回调端口必须是 `80`、`443`、`8080` 或 `8443`。Compose 默认仅在宿主机 `127.0.0.1:8090` 监听，请使用现有反向代理提供 HTTPS。
 
@@ -109,8 +112,8 @@ QQBOT_APP_ID=... QQBOT_APP_SECRET=... go run .
 - 每个官方 Webhook 请求都使用 `AppSecret` 派生的 Ed25519 公钥验签。
 - 回调请求体、签名、Access Token 和 AppSecret 不写日志。
 - Access Token 仅缓存在内存中，过期前自动更新，收到 `401` 时刷新一次。
-- 相同 `msg_id` 保留 10 分钟去重，避免 QQ 官方重复投递导致重复生成。
-- 账号功能仅处理带机器人提及的群消息（兼容 `GROUP_AT_MESSAGE_CREATE` 和全量模式的 `GROUP_MESSAGE_CREATE`）；验证码摘要只在内存保存，10 分钟过期且最多尝试 5 次。SMTP 每成员及邮箱每小时最多发送 5 次，重发间隔 60 秒。
+- 相同 `msg_id` 或互动事件 ID 保留 10 分钟去重，避免 QQ 官方重复投递导致重复执行。
+- 状态与账号功能仅处理带机器人提及的群消息（兼容 `GROUP_AT_MESSAGE_CREATE` 和全量模式的 `GROUP_MESSAGE_CREATE`）；验证码摘要只在内存保存，10 分钟过期且最多尝试 5 次。SMTP 每成员及邮箱每小时最多发送 5 次，重发间隔 60 秒。
 - GGAPI 管理端只调用 HTTPS GET；绑定查询会复核邮箱、角色和启用状态，身份变化时自动撤销本地绑定。
 - 状态数据源只允许 HTTP/HTTPS，API 请求有固定超时和响应大小上限。
 - 状态图预览必须经过管理端会话鉴权，并返回 `Cache-Control: no-store`。

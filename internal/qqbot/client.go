@@ -76,7 +76,18 @@ type uploadPart struct {
 }
 
 func (c *Client) ReplyGroupImage(ctx context.Context, groupOpenID, messageID string, image []byte) error {
-	return c.sendGroupImage(ctx, groupOpenID, messageID, image)
+	return c.sendGroupImage(ctx, groupOpenID, messageID, "", image, nil)
+}
+
+// ReplyGroupImageWithKeyboard 回复带内嵌键盘的群图片，eventID 用于互动事件被动回复。
+func (c *Client) ReplyGroupImageWithKeyboard(ctx context.Context, groupOpenID, messageID, eventID string, image []byte, keyboard Keyboard) error {
+	if err := validateReplyTarget(groupOpenID, messageID, eventID); err != nil {
+		return err
+	}
+	if keyboard.Empty() {
+		return errors.New("图片消息键盘不能为空")
+	}
+	return c.sendGroupImage(ctx, groupOpenID, messageID, eventID, image, &keyboard)
 }
 
 // SendGroupImage 上传并发送主动群图片，不携带被动回复字段。
@@ -87,10 +98,24 @@ func (c *Client) SendGroupImage(ctx context.Context, groupOpenID string, image [
 	if err := c.waitActiveRate(ctx, groupOpenID); err != nil {
 		return err
 	}
-	return c.sendGroupImage(ctx, groupOpenID, "", image)
+	return c.sendGroupImage(ctx, groupOpenID, "", "", image, nil)
 }
 
-func (c *Client) sendGroupImage(ctx context.Context, groupOpenID, messageID string, image []byte) error {
+// SendGroupImageWithKeyboard 主动发送带内嵌键盘的群图片。
+func (c *Client) SendGroupImageWithKeyboard(ctx context.Context, groupOpenID string, image []byte, keyboard Keyboard) error {
+	if strings.TrimSpace(groupOpenID) == "" {
+		return errors.New("目标群 OpenID 不能为空")
+	}
+	if keyboard.Empty() {
+		return errors.New("图片消息键盘不能为空")
+	}
+	if err := c.waitActiveRate(ctx, groupOpenID); err != nil {
+		return err
+	}
+	return c.sendGroupImage(ctx, groupOpenID, "", "", image, &keyboard)
+}
+
+func (c *Client) sendGroupImage(ctx context.Context, groupOpenID, messageID, eventID string, image []byte, keyboard *Keyboard) error {
 	if len(image) == 0 || len(image) > maxImageBytes {
 		return errors.New("截图大小不符合 QQ 图片限制")
 	}
@@ -103,13 +128,15 @@ func (c *Client) sendGroupImage(ctx context.Context, groupOpenID, messageID stri
 		return err
 	}
 	payload := struct {
-		MessageType int    `json:"msg_type"`
-		MessageID   string `json:"msg_id,omitempty"`
-		MessageSeq  int    `json:"msg_seq,omitempty"`
+		MessageType int       `json:"msg_type"`
+		MessageID   string    `json:"msg_id,omitempty"`
+		EventID     string    `json:"event_id,omitempty"`
+		MessageSeq  int       `json:"msg_seq,omitempty"`
+		Keyboard    *Keyboard `json:"keyboard,omitempty"`
 		Media       struct {
 			FileInfo string `json:"file_info"`
 		} `json:"media"`
-	}{MessageType: 7, MessageID: messageID}
+	}{MessageType: 7, MessageID: messageID, EventID: eventID, Keyboard: keyboard}
 	if messageID != "" {
 		payload.MessageSeq = 1
 	}
@@ -127,6 +154,57 @@ func (c *Client) ReplyGroupText(ctx context.Context, groupOpenID, messageID, con
 	return c.post(ctx, groupPath(groupOpenID, "/messages"), payload, nil)
 }
 
+// ReplyGroupTextWithKeyboard 回复带内嵌键盘的群文本，messageID 与 eventID 二选一。
+func (c *Client) ReplyGroupTextWithKeyboard(ctx context.Context, groupOpenID, messageID, eventID, content string, messageSeq int, keyboard Keyboard) error {
+	if err := validateReplyTarget(groupOpenID, messageID, eventID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(content) == "" {
+		return errors.New("回复消息内容不能为空")
+	}
+	if keyboard.Empty() {
+		return errors.New("回复消息键盘不能为空")
+	}
+	payload := struct {
+		Content     string   `json:"content"`
+		MessageType int      `json:"msg_type"`
+		MessageID   string   `json:"msg_id,omitempty"`
+		EventID     string   `json:"event_id,omitempty"`
+		MessageSeq  int      `json:"msg_seq,omitempty"`
+		Keyboard    Keyboard `json:"keyboard"`
+	}{Content: content, MessageType: 0, MessageID: messageID, EventID: eventID, Keyboard: keyboard}
+	if messageID != "" {
+		payload.MessageSeq = messageSeq
+	}
+	return c.post(ctx, groupPath(groupOpenID, "/messages"), payload, nil)
+}
+
+func validateReplyTarget(groupOpenID, messageID, eventID string) error {
+	if strings.TrimSpace(groupOpenID) == "" {
+		return errors.New("目标群 OpenID 不能为空")
+	}
+	hasMessage := strings.TrimSpace(messageID) != ""
+	hasEvent := strings.TrimSpace(eventID) != ""
+	if hasMessage == hasEvent {
+		return errors.New("msg_id 与 event_id 必须二选一")
+	}
+	return nil
+}
+
+// RespondInteraction 告知 QQ 客户端按钮操作结果，避免按钮持续 loading。
+func (c *Client) RespondInteraction(ctx context.Context, interactionID string, code int) error {
+	interactionID = strings.TrimSpace(interactionID)
+	if interactionID == "" {
+		return errors.New("互动事件 ID 不能为空")
+	}
+	if code < 0 || code > 5 {
+		return errors.New("互动事件响应码无效")
+	}
+	return c.request(ctx, http.MethodPut, "/interactions/"+url.PathEscape(interactionID), struct {
+		Code int `json:"code"`
+	}{Code: code}, nil)
+}
+
 // SendGroupText 发送主动群消息；该接口不需要被动回复字段，因此只提交内容和消息类型。
 func (c *Client) SendGroupText(ctx context.Context, groupOpenID, content string) error {
 	if strings.TrimSpace(groupOpenID) == "" {
@@ -142,6 +220,28 @@ func (c *Client) SendGroupText(ctx context.Context, groupOpenID, content string)
 		Content     string `json:"content"`
 		MessageType int    `json:"msg_type"`
 	}{Content: content, MessageType: 0}
+	return c.post(ctx, groupPath(groupOpenID, "/messages"), payload, nil)
+}
+
+// SendGroupTextWithKeyboard 主动发送带内嵌键盘的群文本。
+func (c *Client) SendGroupTextWithKeyboard(ctx context.Context, groupOpenID, content string, keyboard Keyboard) error {
+	if strings.TrimSpace(groupOpenID) == "" {
+		return errors.New("目标群 OpenID 不能为空")
+	}
+	if strings.TrimSpace(content) == "" {
+		return errors.New("主动消息内容不能为空")
+	}
+	if keyboard.Empty() {
+		return errors.New("主动消息键盘不能为空")
+	}
+	if err := c.waitActiveRate(ctx, groupOpenID); err != nil {
+		return err
+	}
+	payload := struct {
+		Content     string   `json:"content"`
+		MessageType int      `json:"msg_type"`
+		Keyboard    Keyboard `json:"keyboard"`
+	}{Content: content, MessageType: 0, Keyboard: keyboard}
 	return c.post(ctx, groupPath(groupOpenID, "/messages"), payload, nil)
 }
 
@@ -291,6 +391,10 @@ func (c *Client) putPart(ctx context.Context, rawURL string, chunk []byte) error
 }
 
 func (c *Client) post(ctx context.Context, path string, payload, out any) error {
+	return c.request(ctx, http.MethodPost, path, payload, out)
+}
+
+func (c *Client) request(ctx context.Context, method, path string, payload, out any) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -300,7 +404,7 @@ func (c *Client) post(ctx context.Context, path string, payload, out any) error 
 		if err != nil {
 			return err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.APIBaseURL, "/")+path, bytes.NewReader(encoded))
+		req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.APIBaseURL, "/")+path, bytes.NewReader(encoded))
 		if err != nil {
 			return err
 		}

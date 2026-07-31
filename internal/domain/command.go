@@ -4,6 +4,7 @@ import "strings"
 
 type GroupMessage struct {
 	ID          string `json:"id"`
+	EventID     string `json:"-"`
 	GroupOpenID string `json:"group_openid"`
 	Content     string `json:"content"`
 	Author      struct {
@@ -15,13 +16,15 @@ type GroupMessage struct {
 
 // GroupMention 是 QQ 全量群消息中的被提及用户摘要。
 type GroupMention struct {
-	Bot bool `json:"bot"`
+	ID    string `json:"id"`
+	Bot   bool   `json:"bot"`
+	IsYou bool   `json:"is_you"`
 }
 
-// MentionsBot 判断全量群消息是否明确提及了机器人。
+// MentionsBot 判断全量群消息的结构化提及列表是否明确包含当前机器人。
 func (m GroupMessage) MentionsBot() bool {
 	for _, mention := range m.Mentions {
-		if mention.Bot {
+		if mention.IsYou {
 			return true
 		}
 	}
@@ -29,17 +32,31 @@ func (m GroupMessage) MentionsBot() bool {
 }
 
 const (
-	CommandBind    = "绑定"
-	CommandBalance = "余额"
-	CommandUnbind  = "解绑"
-	CommandCancel  = "取消"
-	CommandResend  = "重发"
-	CommandHelp    = "帮助"
+	CommandStatus   = "状态"
+	CommandBind     = "绑定"
+	CommandBalance  = "余额"
+	CommandUnbind   = "解绑"
+	CommandCancel   = "取消"
+	CommandResend   = "重发"
+	CommandHelp     = "帮助"
+	CommandMenu     = "菜单"
+	CommandHowTo    = "怎么用"
+	CommandChatHelp = "聊天帮助"
 )
 
 func IsAccountCommand(content string) bool {
 	switch NormalizeContent(content) {
-	case CommandBind, CommandBalance, CommandUnbind, CommandCancel, CommandResend, CommandHelp:
+	case CommandBind, CommandBalance, CommandUnbind, CommandCancel, CommandResend,
+		CommandHelp, CommandMenu, CommandHowTo, CommandChatHelp:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsHelpCommand(content string) bool {
+	switch NormalizeContent(content) {
+	case CommandHelp, CommandMenu, CommandHowTo, CommandChatHelp:
 		return true
 	default:
 		return false

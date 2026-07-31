@@ -89,6 +89,16 @@ func (a *AccountService) HasPending(group, member string) bool {
 	return ok
 }
 
+func (a *AccountService) CanResend(group, member string) bool {
+	if a == nil {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	pending, ok := a.pending[accountKey{group: strings.TrimSpace(group), member: strings.TrimSpace(member)}]
+	return ok && pending.Email != "" && !a.now().After(pending.ExpiresAt)
+}
+
 func (a *AccountService) Configured() bool {
 	if a == nil || a.store == nil || a.settings == nil || !a.settings.Settings().GGAPIBalanceEnabled {
 		return false
@@ -132,7 +142,7 @@ func (a *AccountService) Handle(ctx context.Context, message domain.GroupMessage
 	if !hasPending && !expiredPending && !domain.IsAccountCommand(content) {
 		return false, ""
 	}
-	if content == domain.CommandHelp {
+	if domain.IsHelpCommand(content) {
 		return true, accountHelp()
 	}
 	if content == domain.CommandCancel {

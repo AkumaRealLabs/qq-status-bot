@@ -61,6 +61,7 @@ type Service struct {
 	generator     StatusImageGenerator
 	replier       GroupReplier
 	jobs          chan domain.GroupMessage
+	helpJobs      chan domain.GroupMessage
 	accountJobs   chan domain.GroupMessage
 	accountMu     sync.Mutex
 	account       *AccountService
@@ -81,7 +82,7 @@ func New(settings SettingsStore, generator StatusImageGenerator, replier GroupRe
 	}
 	service := &Service{
 		settings: settings, generator: generator, replier: replier,
-		jobs: make(chan domain.GroupMessage, queueSize), seen: make(map[string]time.Time),
+		jobs: make(chan domain.GroupMessage, queueSize), helpJobs: make(chan domain.GroupMessage, queueSize), seen: make(map[string]time.Time),
 		alertInterval: alertPollInterval,
 	}
 	if bindingStore, ok := settings.(AccountBindingStore); ok {
@@ -120,6 +121,16 @@ func (s *Service) Start(ctx context.Context) {
 			}
 		}()
 	}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case message := <-s.helpJobs:
+				s.processHelpMessage(ctx, message)
+			}
+		}
+	}()
 	s.startAlerts(ctx)
 }
 
@@ -129,12 +140,8 @@ func (s *Service) TestAlert(ctx context.Context, groupOpenID string) error {
 	if groupOpenID == "" || !contains(settings.AlertGroups, groupOpenID) {
 		return ErrAlertGroupNotConfigured
 	}
-	sender, ok := s.replier.(ActiveMessageSender)
-	if !ok {
-		return errors.New("QQ 客户端不支持主动消息")
-	}
 	content := "[测试通知] 故障通知发送测试，当前时间：" + shanghaiNow().Format("2006-01-02 15:04:05 -0700")
-	err := sender.SendGroupText(ctx, groupOpenID, content)
+	err := s.sendActiveText(ctx, groupOpenID, content)
 	status := "sent"
 	if err != nil {
 		status = "failed"
@@ -148,13 +155,18 @@ func (s *Service) SendStatus(ctx context.Context, groupOpenID string) error {
 	if !s.activeGroupAvailable(groupOpenID) {
 		return ErrActiveGroupNotAvailable
 	}
-	sender, ok := s.replier.(ActiveImageSender)
-	if !ok {
+	sender, activeOK := s.replier.(ActiveImageSender)
+	interactiveSender, interactiveOK := s.replier.(activeInteractiveImageSender)
+	if !activeOK && !interactiveOK {
 		return errors.New("QQ 客户端不支持主动图片消息")
 	}
 	image, err := s.generateStatusImage(ctx)
 	if err == nil {
-		err = sender.SendGroupImage(ctx, groupOpenID, image)
+		if interactiveOK {
+			err = interactiveSender.SendGroupImageWithKeyboard(ctx, groupOpenID, image, mainKeyboard(s.settings.Settings(), ""))
+		} else {
+			err = sender.SendGroupImage(ctx, groupOpenID, image)
+		}
 	}
 	status := "sent"
 	message := "状态图已主动发送"
@@ -175,17 +187,13 @@ func (s *Service) SimulateAlert(ctx context.Context, groupOpenID, kind string) e
 	if kind != "offline" && kind != "recovery" {
 		return ErrInvalidAlertSimulation
 	}
-	sender, ok := s.replier.(ActiveMessageSender)
-	if !ok {
-		return errors.New("QQ 客户端不支持主动消息")
-	}
 	now := shanghaiNow()
 	sample := alertSample{
 		key: "simulation", groupName: "控制台测试", nodeName: "模拟节点",
 		incident: now.Add(-5 * time.Minute).Format(time.RFC3339), recovery: now.Format(time.RFC3339),
 	}
 	content := "[模拟测试] " + formatAlertMessage(kind, []alertSample{sample})
-	err := sender.SendGroupText(ctx, groupOpenID, content)
+	err := s.sendActiveText(ctx, groupOpenID, content)
 	status := "sent"
 	if err != nil {
 		status = "failed"
@@ -206,11 +214,18 @@ func errorOrMessage(err error, fallback string) string {
 }
 
 func (s *Service) HandleWebhook(timestamp, signature string, body []byte) ([]byte, error) {
+	return s.HandleWebhookContext(context.Background(), timestamp, signature, body)
+}
+
+func (s *Service) HandleWebhookContext(ctx context.Context, timestamp, signature string, body []byte) ([]byte, error) {
+	settings := s.settings.Settings()
+	if !qqbot.VerifyWebhook(settings.QQBotAppSecret, timestamp, signature, body) {
+		return nil, ErrUnauthorized
+	}
 	var payload qqbot.Payload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, ErrBadPayload
 	}
-	settings := s.settings.Settings()
 	if payload.Op == qqbot.OpValidation {
 		var request qqbot.ValidationRequest
 		if err := json.Unmarshal(payload.Data, &request); err != nil {
@@ -223,9 +238,6 @@ func (s *Service) HandleWebhook(timestamp, signature string, body []byte) ([]byt
 		_ = s.settings.AppendLog(domain.EventLog{Direction: "receive", EventType: "CALLBACK_VALIDATION", Status: "ok"})
 		return response, nil
 	}
-	if !qqbot.VerifyWebhook(settings.QQBotAppSecret, timestamp, signature, body) {
-		return nil, ErrUnauthorized
-	}
 	switch payload.Op {
 	case qqbot.OpHeartbeat:
 		var seq uint64
@@ -234,13 +246,20 @@ func (s *Service) HandleWebhook(timestamp, signature string, body []byte) ([]byt
 		}
 		return qqbot.HeartbeatACK(seq), nil
 	case qqbot.OpDispatch:
-		return s.handleDispatch(payload, settings), nil
+		return s.handleDispatchContext(ctx, payload, settings), nil
 	default:
 		return nil, nil
 	}
 }
 
 func (s *Service) handleDispatch(payload qqbot.Payload, settings domain.Settings) []byte {
+	return s.handleDispatchContext(context.Background(), payload, settings)
+}
+
+func (s *Service) handleDispatchContext(ctx context.Context, payload qqbot.Payload, settings domain.Settings) []byte {
+	if payload.Type == qqbot.EventInteractionCreate {
+		return s.handleInteraction(ctx, payload, settings)
+	}
 	if payload.Type != qqbot.EventGroupAtMessage && payload.Type != qqbot.EventGroupMessage {
 		return qqbot.CallbackACK(true)
 	}
@@ -257,7 +276,31 @@ func (s *Service) handleDispatch(payload qqbot.Payload, settings domain.Settings
 		s.logEvent(payload.Type, message, "ignored", "群不在白名单")
 		return qqbot.CallbackACK(true)
 	}
-	if botMentioned(payload.Type, message) && strings.TrimSpace(message.Author.MemberOpenID) != "" {
+	if !botMentioned(payload.Type, message) {
+		s.logEvent(payload.Type, message, "ignored", "未提及机器人")
+		return qqbot.CallbackACK(true)
+	}
+	if domain.IsHelpCommand(message.Content) {
+		s.accountMu.Lock()
+		account := s.account
+		s.accountMu.Unlock()
+		if account == nil {
+			if s.duplicate(message.ID) {
+				s.logEvent(payload.Type, message, "duplicate", "重复消息")
+				return qqbot.CallbackACK(true)
+			}
+			select {
+			case s.helpJobs <- message:
+				s.markSeen(message.ID)
+				s.logEvent(payload.Type, message, "queued", "已加入帮助队列")
+				return qqbot.CallbackACK(true)
+			default:
+				s.logEvent(payload.Type, message, "busy", "帮助队列已满")
+				return qqbot.CallbackACK(false)
+			}
+		}
+	}
+	if strings.TrimSpace(message.Author.MemberOpenID) != "" {
 		s.accountMu.Lock()
 		account := s.account
 		s.accountMu.Unlock()
@@ -307,7 +350,7 @@ func (s *Service) handleDispatch(payload qqbot.Payload, settings domain.Settings
 }
 
 // botMentioned 同时兼容 QQ 的 @ 专用事件和开启全量群消息后的事件。
-// 全量事件只有 mentions 中的 bot=true 能证明消息确实提及了机器人。
+// 全量事件只有 mentions 中的结构化标记能证明消息确实提及了当前机器人。
 func botMentioned(eventType string, message domain.GroupMessage) bool {
 	if eventType == qqbot.EventGroupAtMessage {
 		return true
@@ -326,21 +369,29 @@ func (s *Service) processMessage(parent context.Context, message domain.GroupMes
 
 	image, err := s.generator.Generate(ctx, settings.StatusURL, settings.StatusPageID, settings.StatusPeriod)
 	if err == nil {
-		err = s.replier.ReplyGroupImage(ctx, message.GroupOpenID, message.ID, image)
+		err = s.replyImageWithMenu(ctx, message, image)
 	}
 	if err == nil {
-		s.logEventDirection("send", qqbot.EventGroupAtMessage, message, "sent", "状态图已回复")
+		eventType := qqbot.EventGroupAtMessage
+		if message.EventID != "" {
+			eventType = qqbot.EventInteractionCreate
+		}
+		s.logEventDirection("send", eventType, message, "sent", "状态图已回复")
 		return
 	}
 	log.Printf("状态图回复失败 group=%s: %v", message.GroupOpenID, err)
-	s.logEventDirection("send", qqbot.EventGroupAtMessage, message, "failed", err.Error())
+	eventType := qqbot.EventGroupAtMessage
+	if message.EventID != "" {
+		eventType = qqbot.EventInteractionCreate
+	}
+	s.logEventDirection("send", eventType, message, "failed", err.Error())
 	errorCtx, errorCancel := context.WithTimeout(parent, 15*time.Second)
 	defer errorCancel()
 	errorText := "状态图生成失败，请稍后再试。"
 	if strings.TrimSpace(message.Author.MemberOpenID) != "" || domain.NormalizeContent(message.Content) != "" {
 		errorText += "重试示例：@机器人 状态"
 	}
-	if replyErr := s.replier.ReplyGroupText(errorCtx, message.GroupOpenID, message.ID, errorText, 2); replyErr != nil {
+	if replyErr := s.replyTextWithMenu(errorCtx, message, errorText, 2, mainKeyboard(settings, message.Author.MemberOpenID)); replyErr != nil {
 		log.Printf("状态图错误提示发送失败 group=%s: %v", message.GroupOpenID, replyErr)
 	}
 }
@@ -358,8 +409,24 @@ func (s *Service) processAccountMessage(parent context.Context, message domain.G
 	if !handled || reply == "" {
 		return
 	}
-	if err := s.replier.ReplyGroupText(ctx, message.GroupOpenID, message.ID, reply, 1); err != nil {
+	keyboard := mainKeyboard(s.settings.Settings(), message.Author.MemberOpenID)
+	if account.HasPending(message.GroupOpenID, message.Author.MemberOpenID) {
+		keyboard = pendingKeyboard(message.Author.MemberOpenID, account.CanResend(message.GroupOpenID, message.Author.MemberOpenID))
+	}
+	if err := s.replyTextWithMenu(ctx, message, reply, 1, keyboard); err != nil {
 		log.Printf("账号功能回复失败 group=%s: %v", message.GroupOpenID, err)
+	}
+}
+
+func (s *Service) processHelpMessage(parent context.Context, message domain.GroupMessage) {
+	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
+	defer cancel()
+	content := "可用命令示例：@机器人 状态\n查看状态：@机器人 状态\n文字命令也可以直接点击下方按钮。"
+	if s.settings.Settings().GGAPIBalanceEnabled {
+		content = accountHelp()
+	}
+	if err := s.replyTextWithMenu(ctx, message, content, 1, mainKeyboard(s.settings.Settings(), message.Author.MemberOpenID)); err != nil {
+		log.Printf("帮助回复失败 group=%s: %v", message.GroupOpenID, err)
 	}
 }
 

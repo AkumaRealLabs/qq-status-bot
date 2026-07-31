@@ -39,7 +39,7 @@ func TestAccountDispatchRequiresBotMentionAndMemberOpenID(t *testing.T) {
 	}
 	fullMode := accountMessage("group-a", "member-1", "绑定")
 	fullMode.ID = "full-mode-account"
-	fullMode.Mentions = []domain.GroupMention{{Bot: true}}
+	fullMode.Mentions = []domain.GroupMention{{IsYou: true}}
 	fullModeData, _ := json.Marshal(fullMode)
 	if ack := service.handleDispatch(qqbot.Payload{Type: qqbot.EventGroupMessage, Data: fullModeData}, state.Settings()); len(ack) == 0 || len(service.accountJobs) != 1 {
 		t.Fatalf("全量模式下提及机器人应进入账号队列: ack=%s queue=%d", ack, len(service.accountJobs))
@@ -55,6 +55,7 @@ func TestAccountDispatchRequiresBotMentionAndMemberOpenID(t *testing.T) {
 	}
 	status := accountMessage("group-a", "member-1", "状态")
 	status.ID = "status-message"
+	status.Mentions = []domain.GroupMention{{IsYou: true}}
 	statusData, _ := json.Marshal(status)
 	if ack := service.handleDispatch(qqbot.Payload{Type: qqbot.EventGroupMessage, Data: statusData}, state.Settings()); len(ack) == 0 || len(service.jobs) != 1 {
 		t.Fatalf("现有状态命令应继续入队: ack=%s queue=%d", ack, len(service.jobs))
@@ -86,6 +87,50 @@ func TestAccountDispatchHonorsWhitelistAndRetriesWhenQueueIsFull(t *testing.T) {
 	second.ID = "account-2"
 	if ack := service.handleDispatch(qqbot.Payload{Type: qqbot.EventGroupAtMessage, Data: encode(second)}, state.Settings()); !strings.Contains(string(ack), `"d":1`) {
 		t.Fatalf("账号队列满时应要求 QQ 重试: %s", ack)
+	}
+}
+
+func TestAccountButtonUsesClickingMemberAndPendingKeyboard(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.json"), domain.Settings{
+		GGAPIBalanceEnabled: true, AllowedGroups: []string{"group-a"}, Commands: []string{"状态"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = state.Close() })
+	replier := &fakeReplier{}
+	service := New(state, &fakeGenerator{}, replier, 2)
+	service.ConfigureAccounts(accountVerifier{}, &accountMailer{})
+	interaction := qqbot.Interaction{
+		ID: "bind-interaction", Type: qqbot.InteractionTypeMessageButton, Scene: "group",
+		GroupOpenID: "group-a", GroupMemberOpenID: "member-a",
+		Data: qqbot.InteractionData{Resolved: qqbot.InteractionResolved{ButtonData: interactionDataPrefix + interactionBind}},
+	}
+	data, err := json.Marshal(interaction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.handleDispatchContext(t.Context(), qqbot.Payload{ID: "bind-event", Type: qqbot.EventInteractionCreate, Data: data}, state.Settings())
+	if replier.interactionCode != 0 || len(service.accountJobs) != 1 {
+		t.Fatalf("绑定按钮未成功进入账号队列: code=%d queue=%d", replier.interactionCode, len(service.accountJobs))
+	}
+	message := <-service.accountJobs
+	service.processAccountMessage(t.Context(), message)
+	if !strings.Contains(replier.text, "请发送要绑定的邮箱") || replier.messageID != "" || replier.eventID != "bind-event" {
+		t.Fatalf("绑定按钮回复错误: text=%q message=%q event=%q", replier.text, replier.messageID, replier.eventID)
+	}
+	if replier.keyboard.Content == nil || len(replier.keyboard.Content.Rows) == 0 || len(replier.keyboard.Content.Rows[0].Buttons) != 1 || replier.keyboard.Content.Rows[0].Buttons[0].ID != "cancel" {
+		t.Fatalf("等待邮箱时应只显示取消流程按钮: %+v", replier.keyboard)
+	}
+	for _, button := range replier.keyboard.Content.Rows[0].Buttons {
+		if button.Action.Permission.Type != qqbot.ButtonPermissionUser || len(button.Action.Permission.SpecifyUserIDs) != 1 || button.Action.Permission.SpecifyUserIDs[0] != "member-a" {
+			t.Fatalf("绑定流程按钮未限制到发起成员: %+v", button)
+		}
+	}
+	emailMessage := accountMessage("group-a", "member-a", "name@example.com")
+	service.processAccountMessage(t.Context(), emailMessage)
+	if !strings.Contains(replier.text, "验证码已发送") || len(replier.keyboard.Content.Rows[0].Buttons) != 2 || replier.keyboard.Content.Rows[0].Buttons[0].ID != "resend" {
+		t.Fatalf("验证码发送后应显示重发和取消按钮: text=%q keyboard=%+v", replier.text, replier.keyboard)
 	}
 }
 

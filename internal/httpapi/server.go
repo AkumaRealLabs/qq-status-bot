@@ -269,7 +269,7 @@ func (s *Server) qqBotEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "请求体无效")
 		return
 	}
-	response, err := s.App.HandleWebhook(r.Header.Get(qqbot.HeaderTimestamp), r.Header.Get(qqbot.HeaderSignature), body)
+	response, err := s.App.HandleWebhookContext(r.Context(), r.Header.Get(qqbot.HeaderTimestamp), r.Header.Get(qqbot.HeaderSignature), body)
 	if errors.Is(err, app.ErrUnauthorized) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return

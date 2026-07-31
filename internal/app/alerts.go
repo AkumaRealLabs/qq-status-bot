@@ -344,8 +344,9 @@ func addDeliveryNode(groups map[string]map[string][]alertSample, group, kind str
 }
 
 func (s *Service) sendAlertDeliveries(ctx context.Context, state *domain.AlertState, deliveries []alertDelivery) {
-	sender, ok := s.replier.(ActiveMessageSender)
-	if !ok {
+	_, textOK := s.replier.(ActiveMessageSender)
+	_, keyboardTextOK := s.replier.(activeInteractiveTextSender)
+	if !textOK && !keyboardTextOK {
 		for _, delivery := range deliveries {
 			s.appendAlertLog("send", alertEventType(delivery.kind), "failed", "QQ 客户端不支持主动消息", delivery.group)
 		}
@@ -353,7 +354,7 @@ func (s *Service) sendAlertDeliveries(ctx context.Context, state *domain.AlertSt
 	}
 	for _, delivery := range deliveries {
 		content := formatAlertMessage(delivery.kind, delivery.nodes)
-		err := sender.SendGroupText(ctx, delivery.group, content)
+		err := s.sendActiveText(ctx, delivery.group, content)
 		if err == nil {
 			for _, sample := range delivery.nodes {
 				node := state.Nodes[sample.key]

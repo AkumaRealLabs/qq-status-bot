@@ -23,3 +23,11 @@ func TestNormalizeContentRemovesLeadingBotMention(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpCommandAliases(t *testing.T) {
+	for _, input := range []string{"帮助", "菜单", "怎么用", "聊天帮助", "@机器人 菜单"} {
+		if !IsHelpCommand(input) || !IsAccountCommand(input) {
+			t.Fatalf("帮助别名未识别: %q", input)
+		}
+	}
+}
