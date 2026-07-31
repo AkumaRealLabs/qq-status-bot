@@ -38,6 +38,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/settings", s.auth(s.updateSettings))
 	mux.HandleFunc("GET /api/status-preview", s.auth(s.statusPreview))
 	mux.HandleFunc("GET /api/logs", s.auth(s.logs))
+	mux.HandleFunc("GET /api/groups/discovered", s.auth(s.discoveredGroups))
+	mux.HandleFunc("POST /api/alerts/test", s.auth(s.alertTest))
 	mux.HandleFunc("POST /qqbot/events", s.qqBotEvents)
 	mux.Handle("GET /admin/", s.static())
 	mux.Handle("GET /assets/", s.static())
@@ -62,7 +64,7 @@ func (s *Server) setupStatus(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Username string `json:"username"`
+		Username string `json:"username,omitempty"`
 		Password string `json:"password"`
 	}
 	if !decodeJSON(w, r, &input) {
@@ -77,7 +79,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Username string `json:"username"`
+		Username string `json:"username,omitempty"`
 		Password string `json:"password"`
 	}
 	if !decodeJSON(w, r, &input) {
@@ -154,6 +156,28 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 	writeJSON(w, http.StatusOK, s.App.Logs(limit))
+}
+
+func (s *Server) discoveredGroups(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.App.DiscoveredGroups())
+}
+
+func (s *Server) alertTest(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		GroupOpenID string `json:"group_openid"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := s.App.TestAlert(r.Context(), input.GroupOpenID); err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, app.ErrAlertGroupNotConfigured) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) qqBotEvents(w http.ResponseWriter, r *http.Request) {

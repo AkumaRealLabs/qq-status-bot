@@ -34,7 +34,9 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-首次打开 `/admin/` 创建管理员账号；随后在「机器人配置」页填写 AppID、AppSecret、群白名单与状态图数据源。配置保存到 `./data/qq-status.json`，不会写入前端或日志。管理端的「生成预览」会先保存当前配置，再调用已鉴权的 `GET /api/status-preview` 返回实际 PNG。
+首次打开 `/admin/` 设置管理密码，无需用户名；随后在「机器人配置」页填写 AppID、AppSecret、群白名单与状态图数据源。配置保存到 `./data/qq-status.json`，不会写入前端或日志。管理端的「生成预览」会先保存当前配置，再调用已鉴权的 `GET /api/status-preview` 返回实际 PNG。
+
+「故障通知」区域可配置独立告警群、连续故障/恢复样本阈值，并在每个已保存的告警群旁直接测试发送。目标群向机器人发送一次消息后会出现在“已发现群”下拉框中，无需手动复制 `group_openid`。正式告警默认关闭，首次启用或更换数据源时只建立心跳基线。
 
 健康检查：`GET /api/health`
 

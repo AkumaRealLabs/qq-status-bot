@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	ErrUnauthorized = errors.New("QQ Webhook 签名无效")
-	ErrBadPayload   = errors.New("QQ Webhook 请求无效")
+	ErrUnauthorized            = errors.New("QQ Webhook 签名无效")
+	ErrBadPayload              = errors.New("QQ Webhook 请求无效")
+	ErrAlertGroupNotConfigured = errors.New("只能测试已保存的告警群")
 )
 
 type StatusImageGenerator interface {
@@ -39,24 +40,42 @@ type SettingsStore interface {
 	Logs(limit int) []domain.EventLog
 }
 
+type AlertStateStore interface {
+	AlertState() domain.AlertState
+	UpdateAlertState(domain.AlertState) error
+}
+
+type DiscoveredGroupStore interface {
+	DiscoveredGroups() []string
+}
+
 type Service struct {
-	settings  SettingsStore
-	generator StatusImageGenerator
-	replier   GroupReplier
-	jobs      chan domain.GroupMessage
+	settings      SettingsStore
+	generator     StatusImageGenerator
+	replier       GroupReplier
+	jobs          chan domain.GroupMessage
+	alertFetcher  StatusFetcher
+	alertInterval time.Duration
+	alertStateMu  sync.Mutex
+	alertState    domain.AlertState
 
 	dedupMu sync.Mutex
 	seen    map[string]time.Time
 }
 
-func New(settings SettingsStore, generator StatusImageGenerator, replier GroupReplier, queueSize int) *Service {
+func New(settings SettingsStore, generator StatusImageGenerator, replier GroupReplier, queueSize int, fetcher ...StatusFetcher) *Service {
 	if queueSize < 1 {
 		queueSize = 3
 	}
-	return &Service{
+	service := &Service{
 		settings: settings, generator: generator, replier: replier,
 		jobs: make(chan domain.GroupMessage, queueSize), seen: make(map[string]time.Time),
+		alertInterval: alertPollInterval,
 	}
+	if len(fetcher) > 0 {
+		service.alertFetcher = fetcher[0]
+	}
+	return service
 }
 
 func (s *Service) Start(ctx context.Context) {
@@ -70,6 +89,34 @@ func (s *Service) Start(ctx context.Context) {
 			}
 		}
 	}()
+	s.startAlerts(ctx)
+}
+
+func (s *Service) TestAlert(ctx context.Context, groupOpenID string) error {
+	settings := s.settings.Settings()
+	groupOpenID = strings.TrimSpace(groupOpenID)
+	if groupOpenID == "" || !contains(settings.AlertGroups, groupOpenID) {
+		return ErrAlertGroupNotConfigured
+	}
+	sender, ok := s.replier.(ActiveMessageSender)
+	if !ok {
+		return errors.New("QQ 客户端不支持主动消息")
+	}
+	content := "[测试通知] 故障通知发送测试，当前时间：" + time.Now().Format("2006-01-02 15:04:05 -0700")
+	err := sender.SendGroupText(ctx, groupOpenID, content)
+	status := "sent"
+	if err != nil {
+		status = "failed"
+	}
+	s.appendAlertLog("send", "ALERT_TEST", status, trimLog(errorOrMessage(err, content)), groupOpenID)
+	return err
+}
+
+func errorOrMessage(err error, fallback string) string {
+	if err != nil {
+		return err.Error()
+	}
+	return fallback
 }
 
 func (s *Service) HandleWebhook(timestamp, signature string, body []byte) ([]byte, error) {
@@ -211,6 +258,25 @@ func (s *Service) Login(username, password string) (string, error) {
 func (s *Service) Authenticated(token string) bool  { return s.settings.Authenticated(token) }
 func (s *Service) Logout(token string)              { s.settings.Logout(token) }
 func (s *Service) Logs(limit int) []domain.EventLog { return s.settings.Logs(limit) }
+func (s *Service) DiscoveredGroups() []string {
+	if store, ok := s.settings.(DiscoveredGroupStore); ok {
+		return store.DiscoveredGroups()
+	}
+	seen := make(map[string]struct{})
+	groups := []string{}
+	for _, item := range s.settings.Logs(500) {
+		group := strings.TrimSpace(item.GroupOpenID)
+		if item.Direction != "receive" || group == "" {
+			continue
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		groups = append(groups, group)
+	}
+	return groups
+}
 func (s *Service) Health() map[string]string {
 	return map[string]string{"status": "ok", "service": "qq-status-bot"}
 }

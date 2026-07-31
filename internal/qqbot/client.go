@@ -37,6 +37,23 @@ type Client struct {
 	accessToken string
 	tokenExpiry time.Time
 	tokenAppID  string
+	rateMu      sync.Mutex
+	nextAccount time.Time
+	nextGroup   map[string]time.Time
+}
+
+// APIError 保留 QQ HTTP 状态和结构化错误码，供调用方区分权限错误与临时错误。
+type APIError struct {
+	HTTPStatus int
+	Code       int
+	TraceID    string
+}
+
+func (e *APIError) Error() string {
+	if e.Code != 0 {
+		return fmt.Sprintf("QQ API 错误：HTTP %d，错误码 %d，trace_id=%s", e.HTTPStatus, e.Code, e.TraceID)
+	}
+	return fmt.Sprintf("QQ API 错误：HTTP %d", e.HTTPStatus)
 }
 
 type tokenResponse struct {
@@ -90,6 +107,54 @@ func (c *Client) ReplyGroupText(ctx context.Context, groupOpenID, messageID, con
 		MessageSeq  int    `json:"msg_seq"`
 	}{Content: content, MessageType: 0, MessageID: messageID, MessageSeq: messageSeq}
 	return c.post(ctx, groupPath(groupOpenID, "/messages"), payload, nil)
+}
+
+// SendGroupText 发送主动群消息；该接口不需要被动回复字段，因此只提交内容和消息类型。
+func (c *Client) SendGroupText(ctx context.Context, groupOpenID, content string) error {
+	if strings.TrimSpace(groupOpenID) == "" {
+		return errors.New("告警群 OpenID 不能为空")
+	}
+	if strings.TrimSpace(content) == "" {
+		return errors.New("主动消息内容不能为空")
+	}
+	if err := c.waitActiveRate(ctx, groupOpenID); err != nil {
+		return err
+	}
+	payload := struct {
+		Content     string `json:"content"`
+		MessageType int    `json:"msg_type"`
+	}{Content: content, MessageType: 0}
+	return c.post(ctx, groupPath(groupOpenID, "/messages"), payload, nil)
+}
+
+func (c *Client) waitActiveRate(ctx context.Context, groupOpenID string) error {
+	c.rateMu.Lock()
+	if c.nextGroup == nil {
+		c.nextGroup = make(map[string]time.Time)
+	}
+	now := time.Now()
+	ready := now
+	if c.nextAccount.After(ready) {
+		ready = c.nextAccount
+	}
+	if groupReady := c.nextGroup[groupOpenID]; groupReady.After(ready) {
+		ready = groupReady
+	}
+	c.nextAccount = ready.Add(2 * time.Second)
+	c.nextGroup[groupOpenID] = ready.Add(3 * time.Second)
+	wait := time.Until(ready)
+	c.rateMu.Unlock()
+	if wait <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (c *Client) uploadGroupImage(ctx context.Context, groupOpenID string, image []byte) (string, error) {
@@ -338,13 +403,14 @@ func readResponse(resp *http.Response) ([]byte, error) {
 func apiResponseError(status int, body []byte) error {
 	var result struct {
 		Code    int    `json:"err_code"`
+		CodeAlt int    `json:"code"`
 		TraceID string `json:"trace_id"`
 	}
 	_ = json.Unmarshal(body, &result)
-	if result.Code != 0 {
-		return fmt.Errorf("QQ API 错误：HTTP %d，错误码 %d，trace_id=%s", status, result.Code, result.TraceID)
+	if result.Code == 0 {
+		result.Code = result.CodeAlt
 	}
-	return fmt.Errorf("QQ API 错误：HTTP %d", status)
+	return &APIError{HTTPStatus: status, Code: result.Code, TraceID: result.TraceID}
 }
 
 func groupPath(groupOpenID, suffix string) string {

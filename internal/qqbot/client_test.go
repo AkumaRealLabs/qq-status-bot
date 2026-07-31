@@ -2,13 +2,54 @@ package qqbot
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 )
+
+func TestSendGroupTextUsesProactivePayloadOnly(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "token", "expires_in": "3600"})
+	}))
+	defer tokenServer.Close()
+	var payload map[string]any
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2/groups/group/messages" {
+			t.Fatalf("主动消息路径错误: %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer apiServer.Close()
+	client := &Client{AppID: "app", AppSecret: "secret", APIBaseURL: apiServer.URL, TokenURL: tokenServer.URL, HTTP: apiServer.Client()}
+	if err := client.SendGroupText(context.Background(), "group", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) != 2 || payload["content"] != "hello" || payload["msg_type"] != float64(0) {
+		t.Fatalf("主动消息载荷错误: %#v", payload)
+	}
+	for _, forbidden := range []string{"msg_id", "event_id", "msg_seq"} {
+		if _, ok := payload[forbidden]; ok {
+			t.Fatalf("主动消息不应包含 %s: %#v", forbidden, payload)
+		}
+	}
+}
+
+func TestAPIErrorPreservesPermissionCode(t *testing.T) {
+	err := apiResponseError(http.StatusForbidden, []byte(`{"code":40034102,"trace_id":"trace"}`))
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != 40034102 || !strings.Contains(err.Error(), "40034102") {
+		t.Fatalf("错误码未保留: %v", err)
+	}
+}
 
 func TestUploadPartsUsesOneBasedIndexesAndPartSize(t *testing.T) {
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
