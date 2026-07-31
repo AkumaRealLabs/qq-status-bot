@@ -10,6 +10,22 @@ type GroupMessage struct {
 		Bot          bool   `json:"bot"`
 		MemberOpenID string `json:"member_openid"`
 	} `json:"author"`
+	Mentions []GroupMention `json:"mentions,omitempty"`
+}
+
+// GroupMention 是 QQ 全量群消息中的被提及用户摘要。
+type GroupMention struct {
+	Bot bool `json:"bot"`
+}
+
+// MentionsBot 判断全量群消息是否明确提及了机器人。
+func (m GroupMessage) MentionsBot() bool {
+	for _, mention := range m.Mentions {
+		if mention.Bot {
+			return true
+		}
+	}
+	return false
 }
 
 const (

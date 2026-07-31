@@ -21,7 +21,7 @@ type accountMailer struct {
 	err   error
 }
 
-func TestAccountDispatchRequiresAtEventAndMemberOpenID(t *testing.T) {
+func TestAccountDispatchRequiresBotMentionAndMemberOpenID(t *testing.T) {
 	state, err := store.Open(filepath.Join(t.TempDir(), "state.json"), domain.Settings{GGAPIBalanceEnabled: true, Commands: []string{"状态"}})
 	if err != nil {
 		t.Fatal(err)
@@ -37,10 +37,20 @@ func TestAccountDispatchRequiresAtEventAndMemberOpenID(t *testing.T) {
 	if ack := service.handleDispatch(qqbot.Payload{Type: qqbot.EventGroupMessage, Data: data("member-1")}, state.Settings()); string(ack) == "" || len(service.accountJobs) != 0 {
 		t.Fatalf("非提及消息不应进入账号队列: ack=%s queue=%d", ack, len(service.accountJobs))
 	}
-	if ack := service.handleDispatch(qqbot.Payload{Type: qqbot.EventGroupAtMessage, Data: data("")}, state.Settings()); string(ack) == "" || len(service.accountJobs) != 0 {
-		t.Fatalf("缺少成员 OpenID 不应进入账号队列: ack=%s queue=%d", ack, len(service.accountJobs))
+	fullMode := accountMessage("group-a", "member-1", "绑定")
+	fullMode.ID = "full-mode-account"
+	fullMode.Mentions = []domain.GroupMention{{Bot: true}}
+	fullModeData, _ := json.Marshal(fullMode)
+	if ack := service.handleDispatch(qqbot.Payload{Type: qqbot.EventGroupMessage, Data: fullModeData}, state.Settings()); len(ack) == 0 || len(service.accountJobs) != 1 {
+		t.Fatalf("全量模式下提及机器人应进入账号队列: ack=%s queue=%d", ack, len(service.accountJobs))
 	}
-	if ack := service.handleDispatch(qqbot.Payload{Type: qqbot.EventGroupAtMessage, Data: data("member-1")}, state.Settings()); len(ack) == 0 || len(service.accountJobs) != 1 {
+	if ack := service.handleDispatch(qqbot.Payload{Type: qqbot.EventGroupAtMessage, Data: data("")}, state.Settings()); string(ack) == "" || len(service.accountJobs) != 1 {
+		t.Fatalf("缺少成员 OpenID 不应新增账号队列任务: ack=%s queue=%d", ack, len(service.accountJobs))
+	}
+	valid := accountMessage("group-a", "member-1", "绑定")
+	valid.ID = "at-account"
+	validData, _ := json.Marshal(valid)
+	if ack := service.handleDispatch(qqbot.Payload{Type: qqbot.EventGroupAtMessage, Data: validData}, state.Settings()); len(ack) == 0 || len(service.accountJobs) != 2 {
 		t.Fatalf("有效账号消息未入队: ack=%s queue=%d", ack, len(service.accountJobs))
 	}
 	status := accountMessage("group-a", "member-1", "状态")

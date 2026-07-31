@@ -20,7 +20,7 @@ QQ 官方 Webhook
 ## QQ 开放平台配置
 
 1. 在 [QQ 开放平台](https://q.qq.com/) 创建机器人，取得 `AppID` 与 `AppSecret`。
-2. 在事件订阅中启用 `GROUP_AT_MESSAGE_CREATE`。
+2. 在事件订阅中启用 `GROUP_AT_MESSAGE_CREATE`；如果 QQ 群开启了“接收所有消息”全量模式，也要允许 `GROUP_MESSAGE_CREATE`，程序会通过 `mentions` 确认消息确实 @ 了机器人。
 3. 将 HTTPS 回调地址设为 `https://你的域名/qqbot/events`。
 4. 按开放平台要求配置服务器出口 IP 白名单。
 5. 将机器人添加到测试群；群里发送 `@机器人 状态`。
@@ -110,7 +110,7 @@ QQBOT_APP_ID=... QQBOT_APP_SECRET=... go run .
 - 回调请求体、签名、Access Token 和 AppSecret 不写日志。
 - Access Token 仅缓存在内存中，过期前自动更新，收到 `401` 时刷新一次。
 - 相同 `msg_id` 保留 10 分钟去重，避免 QQ 官方重复投递导致重复生成。
-- 账号功能仅处理带机器人提及的群消息；验证码摘要只在内存保存，10 分钟过期且最多尝试 5 次。SMTP 每成员及邮箱每小时最多发送 5 次，重发间隔 60 秒。
+- 账号功能仅处理带机器人提及的群消息（兼容 `GROUP_AT_MESSAGE_CREATE` 和全量模式的 `GROUP_MESSAGE_CREATE`）；验证码摘要只在内存保存，10 分钟过期且最多尝试 5 次。SMTP 每成员及邮箱每小时最多发送 5 次，重发间隔 60 秒。
 - GGAPI 管理端只调用 HTTPS GET；绑定查询会复核邮箱、角色和启用状态，身份变化时自动撤销本地绑定。
 - 状态数据源只允许 HTTP/HTTPS，API 请求有固定超时和响应大小上限。
 - 状态图预览必须经过管理端会话鉴权，并返回 `Cache-Control: no-store`。

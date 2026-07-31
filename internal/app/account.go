@@ -112,7 +112,7 @@ func (a *AccountService) logAction(key accountKey, eventType, status string) {
 		GroupOpenID: key.group, Status: status})
 }
 
-// Handle 处理一条已经确认来自 GROUP_AT_MESSAGE_CREATE 的成员消息。
+// Handle 处理一条已经确认提及机器人的成员消息。
 // 返回 handled=false 表示它不是账号命令或流程输入，应交给其他业务处理。
 func (a *AccountService) Handle(ctx context.Context, message domain.GroupMessage) (bool, string) {
 	if a == nil || strings.TrimSpace(message.Author.MemberOpenID) == "" {

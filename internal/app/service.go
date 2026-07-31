@@ -257,7 +257,7 @@ func (s *Service) handleDispatch(payload qqbot.Payload, settings domain.Settings
 		s.logEvent(payload.Type, message, "ignored", "群不在白名单")
 		return qqbot.CallbackACK(true)
 	}
-	if payload.Type == qqbot.EventGroupAtMessage && strings.TrimSpace(message.Author.MemberOpenID) != "" {
+	if botMentioned(payload.Type, message) && strings.TrimSpace(message.Author.MemberOpenID) != "" {
 		s.accountMu.Lock()
 		account := s.account
 		s.accountMu.Unlock()
@@ -304,6 +304,15 @@ func (s *Service) handleDispatch(payload qqbot.Payload, settings domain.Settings
 		s.logEvent(payload.Type, message, "busy", "状态图队列已满")
 		return qqbot.CallbackACK(false)
 	}
+}
+
+// botMentioned 同时兼容 QQ 的 @ 专用事件和开启全量群消息后的事件。
+// 全量事件只有 mentions 中的 bot=true 能证明消息确实提及了机器人。
+func botMentioned(eventType string, message domain.GroupMessage) bool {
+	if eventType == qqbot.EventGroupAtMessage {
+		return true
+	}
+	return eventType == qqbot.EventGroupMessage && message.MentionsBot()
 }
 
 func (s *Service) processMessage(parent context.Context, message domain.GroupMessage) {
