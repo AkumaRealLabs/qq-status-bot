@@ -25,7 +25,7 @@ const (
 )
 
 type interactiveGroupReplier interface {
-	ReplyGroupImageWithKeyboard(context.Context, string, string, string, []byte, qqbot.Keyboard) error
+	ReplyGroupImageWithTarget(context.Context, string, string, string, []byte) error
 	ReplyGroupTextWithKeyboard(context.Context, string, string, string, string, int, qqbot.Keyboard) error
 	RespondInteraction(context.Context, string, int) error
 }
@@ -189,7 +189,10 @@ func (s *Service) replyImageWithMenu(ctx context.Context, message domain.GroupMe
 		if message.EventID != "" {
 			messageID = ""
 		}
-		return replier.ReplyGroupImageWithKeyboard(ctx, message.GroupOpenID, messageID, message.EventID, image, keyboard)
+		if err := replier.ReplyGroupImageWithTarget(ctx, message.GroupOpenID, messageID, message.EventID, image); err != nil {
+			return err
+		}
+		return replier.ReplyGroupTextWithKeyboard(ctx, message.GroupOpenID, messageID, message.EventID, "请选择操作：", 2, keyboard)
 	}
 	if message.EventID != "" {
 		return errors.New("QQ 客户端不支持互动事件图片回复")

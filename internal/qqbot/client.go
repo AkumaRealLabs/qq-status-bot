@@ -79,6 +79,15 @@ func (c *Client) ReplyGroupImage(ctx context.Context, groupOpenID, messageID str
 	return c.sendGroupImage(ctx, groupOpenID, messageID, "", image, nil)
 }
 
+// ReplyGroupImageWithTarget 回复不带键盘的群图片，messageID 与 eventID 二选一。
+// 图片消息与内嵌键盘分开发送，以兼容 QQ 客户端对富媒体消息的展示限制。
+func (c *Client) ReplyGroupImageWithTarget(ctx context.Context, groupOpenID, messageID, eventID string, image []byte) error {
+	if err := validateReplyTarget(groupOpenID, messageID, eventID); err != nil {
+		return err
+	}
+	return c.sendGroupImage(ctx, groupOpenID, messageID, eventID, image, nil)
+}
+
 // ReplyGroupImageWithKeyboard 回复带内嵌键盘的群图片，eventID 用于互动事件被动回复。
 func (c *Client) ReplyGroupImageWithKeyboard(ctx context.Context, groupOpenID, messageID, eventID string, image []byte, keyboard Keyboard) error {
 	if err := validateReplyTarget(groupOpenID, messageID, eventID); err != nil {

@@ -66,6 +66,10 @@ func (f *fakeReplier) ReplyGroupImageWithKeyboard(_ context.Context, _, messageI
 	f.image, f.messageID, f.eventID, f.keyboard = image, messageID, eventID, keyboard
 	return nil
 }
+func (f *fakeReplier) ReplyGroupImageWithTarget(_ context.Context, _, messageID, eventID string, image []byte) error {
+	f.image, f.messageID, f.eventID = image, messageID, eventID
+	return nil
+}
 func (f *fakeReplier) ReplyGroupTextWithKeyboard(_ context.Context, _, messageID, eventID, content string, _ int, keyboard qqbot.Keyboard) error {
 	f.text, f.messageID, f.eventID, f.keyboard = content, messageID, eventID, keyboard
 	return nil
@@ -100,13 +104,19 @@ func (r *activeTestReplier) SendGroupText(_ context.Context, group, content stri
 	return nil
 }
 
+func (r *activeTestReplier) SendGroupTextWithKeyboard(_ context.Context, group, content string, keyboard qqbot.Keyboard) error {
+	r.activeGroup, r.keyboard = group, keyboard
+	r.activeTexts = append(r.activeTexts, content)
+	return nil
+}
+
 func TestProcessMessageUploadsGeneratedPNG(t *testing.T) {
 	store := &fakeSettingsStore{settings: domain.Settings{StatusURL: "https://status.example", StatusPageID: "default", StatusPeriod: "1y", ScreenshotTimeout: 15}}
 	generator := &fakeGenerator{image: []byte("png")}
 	replier := &fakeReplier{}
 	service := New(store, generator, replier, 3)
 	service.processMessage(t.Context(), domain.GroupMessage{ID: "message", GroupOpenID: "group"})
-	if string(replier.image) != "png" || replier.text != "" || generator.calls != 1 {
+	if string(replier.image) != "png" || replier.text != "请选择操作：" || generator.calls != 1 {
 		t.Fatalf("成功流程错误: image=%q text=%q calls=%d", replier.image, replier.text, generator.calls)
 	}
 	if replier.keyboard.Empty() || replier.messageID != "message" || replier.eventID != "" {
@@ -248,6 +258,9 @@ func TestSendStatusRequiresKnownGroupAndSendsGeneratedImage(t *testing.T) {
 	}
 	if replier.activeGroup != "alert-group" || string(replier.activeImage) != "png" || generator.calls != 1 {
 		t.Fatalf("主动状态发送错误: group=%q image=%q calls=%d", replier.activeGroup, replier.activeImage, generator.calls)
+	}
+	if len(replier.activeTexts) != 1 || replier.activeTexts[0] != "请选择操作：" || replier.keyboard.Empty() {
+		t.Fatalf("主动状态菜单发送错误: texts=%q keyboard=%+v", replier.activeTexts, replier.keyboard)
 	}
 	if len(store.logs) != 1 || store.logs[0].EventType != "STATUS_ACTIVE" || store.logs[0].Status != "sent" {
 		t.Fatalf("主动状态日志错误: %+v", store.logs)

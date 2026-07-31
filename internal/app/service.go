@@ -155,18 +155,17 @@ func (s *Service) SendStatus(ctx context.Context, groupOpenID string) error {
 	if !s.activeGroupAvailable(groupOpenID) {
 		return ErrActiveGroupNotAvailable
 	}
-	sender, activeOK := s.replier.(ActiveImageSender)
-	interactiveSender, interactiveOK := s.replier.(activeInteractiveImageSender)
-	if !activeOK && !interactiveOK {
+	sender, imageOK := s.replier.(ActiveImageSender)
+	menuSender, menuOK := s.replier.(activeInteractiveTextSender)
+	if !imageOK {
 		return errors.New("QQ 客户端不支持主动图片消息")
 	}
 	image, err := s.generateStatusImage(ctx)
 	if err == nil {
-		if interactiveOK {
-			err = interactiveSender.SendGroupImageWithKeyboard(ctx, groupOpenID, image, mainKeyboard(s.settings.Settings(), ""))
-		} else {
-			err = sender.SendGroupImage(ctx, groupOpenID, image)
-		}
+		err = sender.SendGroupImage(ctx, groupOpenID, image)
+	}
+	if err == nil && menuOK {
+		err = menuSender.SendGroupTextWithKeyboard(ctx, groupOpenID, "请选择操作：", mainKeyboard(s.settings.Settings(), ""))
 	}
 	status := "sent"
 	message := "状态图已主动发送"

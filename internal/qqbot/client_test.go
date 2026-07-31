@@ -181,6 +181,36 @@ func TestReplyGroupImageWithKeyboardUsesEventID(t *testing.T) {
 	}
 }
 
+func TestReplyGroupImageWithTargetUsesEventID(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "token", "expires_in": "3600"})
+	}))
+	defer tokenServer.Close()
+	var payload map[string]any
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/groups/group/upload_prepare":
+			_ = json.NewEncoder(w).Encode(map[string]any{"upload_id": "upload", "block_size": "8", "parts": []any{}})
+		case "/v2/groups/group/files":
+			_ = json.NewEncoder(w).Encode(map[string]string{"file_info": "file-info"})
+		case "/v2/groups/group/messages":
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer apiServer.Close()
+	client := &Client{AppID: "app", AppSecret: "secret", APIBaseURL: apiServer.URL, TokenURL: tokenServer.URL, HTTP: apiServer.Client()}
+	if err := client.ReplyGroupImageWithTarget(t.Context(), "group", "", "event-1", []byte("\x89PNG\r\n\x1a\n")); err != nil {
+		t.Fatal(err)
+	}
+	if payload["event_id"] != "event-1" || payload["msg_type"] != float64(7) || payload["keyboard"] != nil {
+		t.Fatalf("互动图片目标载荷错误: %#v", payload)
+	}
+}
+
 func TestInteractiveReplyRequiresExactlyOneReference(t *testing.T) {
 	client := &Client{}
 	for _, ids := range [][2]string{{}, {"message", "event"}} {
