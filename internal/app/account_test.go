@@ -162,7 +162,7 @@ func TestAccountServiceHandlesHelpWithoutGGAPIConfiguration(t *testing.T) {
 	}
 	workflow := NewAccountService(state, state, nil, nil)
 	handled, response := workflow.Handle(context.Background(), accountMessage("group-a", "member-1", "@机器人 帮助"))
-	if !handled || !strings.Contains(response, "绑定示例：@机器人 绑定") || !strings.Contains(response, "余额示例：@机器人 余额") {
+	if !handled || !strings.Contains(response, "\n绑定示例：@机器人 绑定") || !strings.Contains(response, "\n余额示例：@机器人 余额") {
 		t.Fatalf("帮助响应错误: handled=%v response=%q", handled, response)
 	}
 }

@@ -170,7 +170,7 @@ func (a *AccountService) Handle(ctx context.Context, message domain.GroupMessage
 }
 
 func accountHelp() string {
-	return "可用命令示例：@机器人 状态；绑定示例：@机器人 绑定；余额示例：@机器人 余额；解绑示例：@机器人 解绑；绑定流程控制示例：@机器人 取消、@机器人 重发"
+	return "可用命令示例：@机器人 状态\n绑定示例：@机器人 绑定\n余额示例：@机器人 余额\n解绑示例：@机器人 解绑\n绑定流程控制示例：@机器人 取消、@机器人 重发"
 }
 
 // TestEmail 发送一次性验证码样式邮件，不创建绑定流程。
