@@ -155,11 +155,11 @@ func TestInteractionStatusAcknowledgesAndQueuesEventReply(t *testing.T) {
 		t.Fatalf("状态按钮未进入状态队列: %d", len(service.jobs))
 	}
 	message := <-service.jobs
-	if message.ID != "interaction-1" || message.EventID != "interaction-1" || message.GroupOpenID != "group-a" || message.Author.MemberOpenID != "member-a" {
+	if message.ID != "interaction-1" || message.EventID != "event-1" || message.GroupOpenID != "group-a" || message.Author.MemberOpenID != "member-a" {
 		t.Fatalf("互动任务字段错误: %+v", message)
 	}
 	service.processMessage(t.Context(), message)
-	if replier.messageID != "" || replier.eventID != "interaction-1" || replier.keyboard.Empty() {
+	if replier.messageID != "" || replier.eventID != "event-1" || replier.keyboard.Empty() {
 		t.Fatalf("互动结果应使用 event_id 并携带按钮: message=%q event=%q keyboard=%+v", replier.messageID, replier.eventID, replier.keyboard)
 	}
 }
@@ -179,6 +179,10 @@ func TestInteractionUsesPayloadIDFallbackWithoutEventPrefix(t *testing.T) {
 	service.handleDispatchContext(t.Context(), qqbot.Payload{ID: "INTERACTION_CREATE:fallback-id", Type: qqbot.EventInteractionCreate, Data: data}, settings)
 	if replier.interactionID != "fallback-id" {
 		t.Fatalf("应去掉事件类型前缀后确认互动: %q", replier.interactionID)
+	}
+	message := <-service.jobs
+	if message.ID != "fallback-id" || message.EventID != "INTERACTION_CREATE:fallback-id" {
+		t.Fatalf("互动回复应保留外层 event_id: %+v", message)
 	}
 }
 

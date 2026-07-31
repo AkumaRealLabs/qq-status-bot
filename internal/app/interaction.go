@@ -54,14 +54,15 @@ func (s *Service) handleInteraction(ctx context.Context, payload qqbot.Payload, 
 	if err := json.Unmarshal(payload.Data, &interaction); err != nil {
 		return qqbot.CallbackACK(true)
 	}
-	// QQ 互动事件的 d.id 同时用于互动确认和被动消息回复；外层 ID 只作异常回调的兜底。
+	// 互动确认使用 d.id；被动消息回复使用网关外层 event_id，QQ 要求两者分开传递。
 	interactionID := firstNonempty(strings.TrimSpace(interaction.ID), interactionIDFromPayload(payload))
-	if interactionID == "" {
+	eventID := firstNonempty(strings.TrimSpace(payload.ID), strings.TrimSpace(interaction.ID))
+	if interactionID == "" || eventID == "" {
 		return qqbot.CallbackACK(true)
 	}
 	message := domain.GroupMessage{
 		ID:          interactionID,
-		EventID:     interactionID,
+		EventID:     eventID,
 		GroupOpenID: strings.TrimSpace(interaction.GroupOpenID),
 	}
 	message.Author.MemberOpenID = strings.TrimSpace(interaction.GroupMemberOpenID)
