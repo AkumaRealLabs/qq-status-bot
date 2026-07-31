@@ -116,7 +116,7 @@ func TestAccountButtonUsesClickingMemberAndPendingKeyboard(t *testing.T) {
 	}
 	message := <-service.accountJobs
 	service.processAccountMessage(t.Context(), message)
-	if !strings.Contains(replier.text, "请发送要绑定的邮箱") || replier.messageID != "" || replier.eventID != "bind-event" {
+	if !strings.Contains(replier.text, "请发送要绑定的邮箱") || replier.messageID != "" || replier.eventID != "bind-interaction" {
 		t.Fatalf("绑定按钮回复错误: text=%q message=%q event=%q", replier.text, replier.messageID, replier.eventID)
 	}
 	if replier.keyboard.Content == nil || len(replier.keyboard.Content.Rows) == 0 || len(replier.keyboard.Content.Rows[0].Buttons) != 1 || replier.keyboard.Content.Rows[0].Buttons[0].ID != "cancel" {

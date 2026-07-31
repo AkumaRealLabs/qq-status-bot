@@ -148,19 +148,37 @@ func TestInteractionStatusAcknowledgesAndQueuesEventReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	ack := service.handleDispatchContext(t.Context(), qqbot.Payload{ID: "event-1", Type: qqbot.EventInteractionCreate, Data: data}, settings)
-	if !strings.Contains(string(ack), `"d":0`) || replier.interactionCalled != 1 || replier.interactionID != "event-1" || replier.interactionCode != 0 {
+	if !strings.Contains(string(ack), `"d":0`) || replier.interactionCalled != 1 || replier.interactionID != "interaction-1" || replier.interactionCode != 0 {
 		t.Fatalf("互动确认错误: ack=%s replier=%+v", ack, replier)
 	}
 	if len(service.jobs) != 1 {
 		t.Fatalf("状态按钮未进入状态队列: %d", len(service.jobs))
 	}
 	message := <-service.jobs
-	if message.ID != "event-1" || message.EventID != "event-1" || message.GroupOpenID != "group-a" || message.Author.MemberOpenID != "member-a" {
+	if message.ID != "interaction-1" || message.EventID != "interaction-1" || message.GroupOpenID != "group-a" || message.Author.MemberOpenID != "member-a" {
 		t.Fatalf("互动任务字段错误: %+v", message)
 	}
 	service.processMessage(t.Context(), message)
-	if replier.messageID != "" || replier.eventID != "event-1" || replier.keyboard.Empty() {
+	if replier.messageID != "" || replier.eventID != "interaction-1" || replier.keyboard.Empty() {
 		t.Fatalf("互动结果应使用 event_id 并携带按钮: message=%q event=%q keyboard=%+v", replier.messageID, replier.eventID, replier.keyboard)
+	}
+}
+
+func TestInteractionUsesPayloadIDFallbackWithoutEventPrefix(t *testing.T) {
+	settings := domain.Settings{AllowedGroups: []string{"group-a"}, Commands: []string{"状态"}}
+	service := New(&fakeSettingsStore{settings: settings}, &fakeGenerator{}, &fakeReplier{}, 1)
+	interaction := qqbot.Interaction{
+		Type: qqbot.InteractionTypeMessageButton, Scene: "group", GroupOpenID: "group-a", GroupMemberOpenID: "member-a",
+		Data: qqbot.InteractionData{Resolved: qqbot.InteractionResolved{ButtonData: interactionDataPrefix + interactionStatus}},
+	}
+	data, err := json.Marshal(interaction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replier := service.replier.(*fakeReplier)
+	service.handleDispatchContext(t.Context(), qqbot.Payload{ID: "INTERACTION_CREATE:fallback-id", Type: qqbot.EventInteractionCreate, Data: data}, settings)
+	if replier.interactionID != "fallback-id" {
+		t.Fatalf("应去掉事件类型前缀后确认互动: %q", replier.interactionID)
 	}
 }
 

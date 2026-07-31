@@ -54,7 +54,8 @@ func (s *Service) handleInteraction(ctx context.Context, payload qqbot.Payload, 
 	if err := json.Unmarshal(payload.Data, &interaction); err != nil {
 		return qqbot.CallbackACK(true)
 	}
-	interactionID := firstNonempty(strings.TrimSpace(payload.ID), strings.TrimSpace(interaction.ID))
+	// QQ 互动事件的 d.id 同时用于互动确认和被动消息回复；外层 ID 只作异常回调的兜底。
+	interactionID := firstNonempty(strings.TrimSpace(interaction.ID), interactionIDFromPayload(payload))
 	if interactionID == "" {
 		return qqbot.CallbackACK(true)
 	}
@@ -66,7 +67,7 @@ func (s *Service) handleInteraction(ctx context.Context, payload qqbot.Payload, 
 	message.Author.MemberOpenID = strings.TrimSpace(interaction.GroupMemberOpenID)
 	if interaction.Type != qqbot.InteractionTypeMessageButton {
 		if interaction.Type == qqbot.InteractionTypeQuickMenu {
-			s.respondInteraction(ctx, interactionID, 1, message)
+			s.respondInteraction(interactionID, 1, message)
 		}
 		return qqbot.CallbackACK(true)
 	}
@@ -101,8 +102,9 @@ func (s *Service) handleInteraction(ctx context.Context, payload qqbot.Payload, 
 	if actionName == "" {
 		actionName = "unknown"
 	}
+	// 先确认互动，避免磁盘日志或请求上下文取消让客户端一直 loading。
+	s.respondInteraction(interactionID, resultCode, message)
 	s.logEvent(qqbot.EventInteractionCreate, message, status, "按钮动作 "+actionName)
-	s.respondInteraction(ctx, interactionID, resultCode, message)
 	return qqbot.CallbackACK(true)
 }
 
@@ -168,13 +170,14 @@ func (s *Service) enqueueInteractionAccount(message domain.GroupMessage) int {
 	}
 }
 
-func (s *Service) respondInteraction(parent context.Context, interactionID string, code int, message domain.GroupMessage) {
+func (s *Service) respondInteraction(interactionID string, code int, message domain.GroupMessage) {
 	replier, ok := s.replier.(interactiveGroupReplier)
 	if !ok {
 		s.logEvent(qqbot.EventInteractionCreate, message, "failed", "QQ 客户端不支持互动确认")
 		return
 	}
-	ctx, cancel := context.WithTimeout(parent, 2500*time.Millisecond)
+	// Webhook 请求可能在 QQ 收到 ACK 后立即断开，不能继承请求上下文。
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel()
 	if err := replier.RespondInteraction(ctx, interactionID, code); err != nil {
 		log.Printf("QQ 按钮互动确认失败 group=%s: %v", message.GroupOpenID, err)
@@ -272,4 +275,16 @@ func firstNonempty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func interactionIDFromPayload(payload qqbot.Payload) string {
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return ""
+	}
+	prefix := strings.TrimSpace(payload.Type) + ":"
+	if strings.HasPrefix(id, prefix) {
+		return strings.TrimSpace(strings.TrimPrefix(id, prefix))
+	}
+	return id
 }
