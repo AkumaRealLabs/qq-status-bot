@@ -65,10 +65,10 @@ func TestAlertPollUsesNewHeartbeatsAndSendsRecovery(t *testing.T) {
 	if len(replier.messages) != 2 || replier.groups[0] != "alert-group" || replier.groups[1] != "alert-group" {
 		t.Fatalf("告警发送次数错误: groups=%v messages=%v", replier.groups, replier.messages)
 	}
-	if want := "首次离线：2026-07-31T10:00:00Z"; !containsText(replier.messages[0], want) {
+	if want := "首次离线：2026-07-31 18:00:00 +0800"; !containsText(replier.messages[0], want) {
 		t.Fatalf("故障消息缺少首次离线时间: %q", replier.messages[0])
 	}
-	if want := "恢复时间：2026-07-31T10:09:00Z"; !containsText(replier.messages[1], want) {
+	if want := "恢复时间：2026-07-31 18:09:00 +0800"; !containsText(replier.messages[1], want) {
 		t.Fatalf("恢复消息缺少恢复时间: %q", replier.messages[1])
 	}
 }

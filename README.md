@@ -40,6 +40,8 @@ docker compose up -d --build
 
 「主动测试」区域可向已发现或已配置的群主动发送真实状态图，也可发送带“模拟测试”标识的故障与恢复通知。模拟操作只验证主动消息权限、通知内容和目标群可达性，不修改告警基线或节点故障状态。对应的已鉴权接口为 `POST /api/status/send` 和 `POST /api/alerts/simulate`。
 
+告警消息中的时间统一按 `Asia/Shanghai`（UTC+08:00）显示，状态 API 返回的 UTC 时间也会转换后再发送。
+
 健康检查：`GET /api/health`
 
 ### 环境变量

@@ -69,6 +69,8 @@ type Service struct {
 	seen    map[string]time.Time
 }
 
+var shanghaiLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
+
 func New(settings SettingsStore, generator StatusImageGenerator, replier GroupReplier, queueSize int, fetcher ...StatusFetcher) *Service {
 	if queueSize < 1 {
 		queueSize = 3
@@ -108,7 +110,7 @@ func (s *Service) TestAlert(ctx context.Context, groupOpenID string) error {
 	if !ok {
 		return errors.New("QQ 客户端不支持主动消息")
 	}
-	content := "[测试通知] 故障通知发送测试，当前时间：" + time.Now().Format("2006-01-02 15:04:05 -0700")
+	content := "[测试通知] 故障通知发送测试，当前时间：" + shanghaiNow().Format("2006-01-02 15:04:05 -0700")
 	err := sender.SendGroupText(ctx, groupOpenID, content)
 	status := "sent"
 	if err != nil {
@@ -154,7 +156,7 @@ func (s *Service) SimulateAlert(ctx context.Context, groupOpenID, kind string) e
 	if !ok {
 		return errors.New("QQ 客户端不支持主动消息")
 	}
-	now := time.Now()
+	now := shanghaiNow()
 	sample := alertSample{
 		key: "simulation", groupName: "控制台测试", nodeName: "模拟节点",
 		incident: now.Add(-5 * time.Minute).Format(time.RFC3339), recovery: now.Format(time.RFC3339),
@@ -304,6 +306,10 @@ func (s *Service) activeGroupAvailable(group string) bool {
 		}
 	}
 	return false
+}
+
+func shanghaiNow() time.Time {
+	return time.Now().In(shanghaiLocation)
 }
 
 func (s *Service) logEvent(eventType string, message domain.GroupMessage, status, detail string) {

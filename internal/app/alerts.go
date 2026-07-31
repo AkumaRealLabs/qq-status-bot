@@ -285,7 +285,7 @@ func chooseIncidentStart(previous, heartbeat string) string {
 	if strings.TrimSpace(heartbeat) != "" {
 		return heartbeat
 	}
-	return time.Now().Format(time.RFC3339)
+	return shanghaiNow().Format(time.RFC3339)
 }
 
 func collectAlertDeliveries(state domain.AlertState, samples []alertSample) []alertDelivery {
@@ -430,7 +430,7 @@ func alertEventType(kind string) string {
 }
 
 func formatAlertMessage(kind string, nodes []alertSample) string {
-	now := time.Now().Format("2006-01-02 15:04:05 -0700")
+	now := shanghaiNow().Format("2006-01-02 15:04:05 -0700")
 	var b strings.Builder
 	if kind == "recovery" {
 		b.WriteString("[恢复通知] ")
@@ -445,10 +445,10 @@ func formatAlertMessage(kind string, nodes []alertSample) string {
 		b.WriteString(node.nodeName)
 		if kind == "offline" {
 			b.WriteString("\n首次离线：")
-			b.WriteString(node.incident)
+			b.WriteString(formatDisplayTime(node.incident))
 		} else {
 			b.WriteString("\n恢复时间：")
-			b.WriteString(node.recovery)
+			b.WriteString(formatDisplayTime(node.recovery))
 			if started, ok := parseHeartbeatTime(node.incident); ok {
 				if recovered, recoveredOK := parseHeartbeatTime(node.recovery); recoveredOK {
 					b.WriteString(fmt.Sprintf("\n故障持续：%s", formatDuration(recovered.Sub(started))))
@@ -462,6 +462,14 @@ func formatAlertMessage(kind string, nodes []alertSample) string {
 		b.WriteString("\n")
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func formatDisplayTime(raw string) string {
+	parsed, ok := parseHeartbeatTime(raw)
+	if !ok {
+		return raw
+	}
+	return parsed.In(shanghaiLocation).Format("2006-01-02 15:04:05 -0700")
 }
 
 func formatDuration(duration time.Duration) string {
